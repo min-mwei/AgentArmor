@@ -1,0 +1,2 @@
+# vllm-metal 0.32.0 pins this mlx-lm commit. Fetch its source archive so Git is optional.
+mlx-lm @ https://github.com/ml-explore/mlx-lm/archive/9e6acca691e64d6d8bb808c328fcdea459099cca.tar.gz

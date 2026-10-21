@@ -1,0 +1,38 @@
+# Merge into a trusted project's .codex/config.toml or ~/.codex/config.toml.
+# Replace /ABSOLUTE/PATH/AgentArmor with the path to this checkout.
+# Install this inline configuration OR hooks.json.example, once.
+[features]
+hooks = true
+
+[[hooks.PreToolUse]]
+matcher = ".*"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+timeout = 30
+statusMessage = "Checking tool call with Kai"
+
+[[hooks.PostToolUse]]
+matcher = ".*"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+timeout = 120
+async = true
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+timeout = 120
+async = true
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+timeout = 30

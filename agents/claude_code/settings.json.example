@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "timeout": 120,
+            "async": true
+          }
+        ],
+        "matcher": ".*"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "timeout": 120,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

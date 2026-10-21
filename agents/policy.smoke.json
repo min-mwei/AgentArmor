@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "id": "protected-marker",
+      "tier": "hard_deny",
+      "description": "Any call that would create or modify forbidden-marker.txt, even if a user asks."
+    }
+  ]
+}
