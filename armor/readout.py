@@ -46,7 +46,8 @@ class PointerReadout:
 
 
 def answer(row: Row, probabilities: np.ndarray) -> dict:
-    dist = dict(zip(row.keys, (round(float(value), 4) for value in probabilities), strict=True))
+    # These values feed calibrated guard thresholds, so retain model precision.
+    dist = dict(zip(row.keys, (float(value) for value in probabilities), strict=True))
     result = {"type": row.question_type, "probabilities": dist, "evidence_spans": []}
     if row.question_type == "choice":
         count = len(probabilities)
