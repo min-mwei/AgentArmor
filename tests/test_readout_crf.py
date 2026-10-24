@@ -118,6 +118,16 @@ def test_loader_requires_metadata_and_sidecar_agreement(tmp_path):
         readout.load_evidence(tmp_path, {}, 4)
 
 
+@pytest.mark.parametrize("mode", ["context", "interaction", "unknown", None])
+@pytest.mark.parametrize("sidecar", [False, True])
+def test_loader_rejects_unsupported_readout_instead_of_legacy_fallback(tmp_path, mode, sidecar):
+    if sidecar:
+        save_file = pytest.importorskip("safetensors.numpy").save_file
+        save_file(weights(), tmp_path / "evidence_head.safetensors")
+    with pytest.raises(ValueError, match="readout"):
+        readout.load_evidence(tmp_path, {"args": {"evidence_readout": mode}}, 3)
+
+
 def test_nonfinite_runtime_emission_refused():
     with pytest.raises(ValueError, match="Nonfinite"):
         decode(np.full((1, 3), np.nan), state="")

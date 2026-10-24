@@ -123,6 +123,9 @@ def load_evidence(snapshot, meta: dict, hidden_size: int):
     objective = args.get("evidence_objective", "tags") if isinstance(args, dict) else None
     if objective not in ("tags", "crf"):
         raise ValueError(f"Unknown evidence objective {objective!r}")
+    readout = args.get("evidence_readout", "linear")
+    if readout != "linear":
+        raise ValueError(f"Unsupported evidence readout {readout!r}; expected 'linear'")
     path = snapshot / "evidence_head.safetensors"
     if not path.exists():
         if objective == "crf":

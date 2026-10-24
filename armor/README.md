@@ -48,7 +48,10 @@ The native integration follows the Kai core checkpoint layout:
   backbone (`config.json`, `model*.safetensors`). LoRA is passed to vLLM with
   `LoRARequest`. Full Qwen3.5 text checkpoints use the causal architecture adapter.
 - Optionally, `evidence_head.safetensors` containing the `q_b`, `q_i`, `q_o`, and
-  `k` projections, each with a weight and bias.
+  `k` projections, each with a weight and bias. An explicit `crf` evidence
+  objective also requires its three-by-three transition tensor. Evidence readout
+  metadata must be `linear` or absent; other readouts require a matching serving
+  implementation and are rejected even when the sidecar is missing.
 
 The initial backend supports causal pointer checkpoints. It explicitly refuses
 code readouts, bidirectional attention, option isolation, pause layouts, and
