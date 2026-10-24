@@ -143,6 +143,8 @@ Poll its status URL until it is `completed` or `failed`. A completed result has:
 
 ```json
 {
+  "profile": "xpia-document-v0",
+  "policy_task_applied": false,
   "suspicious": true,
   "suspicious_probability": 0.98,
   "chunks_scanned": 1,
@@ -161,8 +163,11 @@ Each chunk asks v0's exact `is_xpia_attempt` question and applies its frozen
 logit cutoff, rather than using a generic 0.5 threshold. The initial checkpoint
 serves no evidence spans. Chat-log and generic tool-output scans reuse this
 indirect-document detector and report `experimental: true`; v0 has no validated
-multi-turn or direct-chat detector. The scan API retains policy/task metadata,
-but v0's canonical document question does not consume those fields.
+multi-turn or direct-chat detector. Every completed result identifies the
+`xpia-document-v0` profile and reports `policy_task_applied: false`: the submitted
+policy and task do not affect this detector's verdict. Synchronous tool guards
+do use those fields. Contextual document and session detection still require
+separate qualification.
 Text is scanned in overlapping character windows (4,000 characters with 400
 overlap by default). Context across wider separations is not preserved. A chunk
 that exceeds the model's token window fails the job; lower the chunk size rather

@@ -56,6 +56,8 @@ def test_async_scan_submit_status_and_result(settings, scan_body):
         job = completed(client, job_id)
         assert job["status"] == "completed"
         result = client.get(f"/v1/scans/{job_id}/result").json()
+        assert result["profile"] == "xpia-document-v0"
+        assert result["policy_task_applied"] is False
         assert result["suspicious"] is True
         assert result["chunks_scanned"] == 1
         assert result["backend"] == "stub"

@@ -68,6 +68,8 @@ class ScanRequest(StrictModel):
 
 
 class ScanResult(StrictModel):
+    profile: Literal["xpia-document-v0"] = "xpia-document-v0"
+    policy_task_applied: Literal[False] = False
     suspicious: bool
     suspicious_probability: float = Field(ge=0, le=1)
     chunks_scanned: int
