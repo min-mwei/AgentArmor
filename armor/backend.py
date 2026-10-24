@@ -11,7 +11,7 @@ from typing import Protocol
 
 from armor.config import Settings
 from armor.encoding import encode_rows
-from armor.readout import EvidenceReadout, PointerReadout, answer
+from armor.readout import PointerReadout, answer, load_evidence
 from armor.schemas import DecisionRequest
 from armor.v0 import contract
 
@@ -95,12 +95,7 @@ class VLLMBackend:
             )
         weights = {key: tensor.detach().float().numpy() for key, tensor in meta["head"].items()}
         self.pointer = PointerReadout(weights, float(meta.get("temperature", 1.0)))
-        evidence_path = snapshot / "evidence_head.safetensors"
-        self.evidence = None
-        if evidence_path.exists():
-            from safetensors.numpy import load_file
-
-            self.evidence = EvidenceReadout(load_file(evidence_path), self.pointer.hidden_size)
+        self.evidence = load_evidence(snapshot, meta, self.pointer.hidden_size)
         self.evidence_available = self.evidence is not None
         self.lora_request = None
         adapter_path = snapshot / "adapter_config.json"

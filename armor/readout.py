@@ -66,8 +66,18 @@ def answer(row: Row, probabilities: np.ndarray) -> dict:
 class EvidenceReadout:
     """Kai's B/I/O evidence head, with offsets into the exact submitted state."""
 
-    def __init__(self, weights: dict[str, np.ndarray], hidden_size: int):
-        self.dp, hidden = validate_weights(weights, ("q_b", "q_i", "q_o", "k"))
+    def __init__(self, weights: dict[str, np.ndarray], hidden_size: int, objective: str = "tags"):
+        if objective not in ("tags", "crf"):
+            raise ValueError(f"Unknown evidence objective {objective!r}")
+        emissions = dict(weights)
+        self.transitions = emissions.pop("transitions", None) if objective == "crf" else None
+        if objective == "crf" and (
+            self.transitions is None
+            or self.transitions.shape != (3, 3)
+            or not np.isfinite(self.transitions).all()
+        ):
+            raise ValueError("CRF transitions must be finite with shape (3, 3)")
+        self.dp, hidden = validate_weights(emissions, ("q_b", "q_i", "q_o", "k"))
         if hidden != hidden_size:
             raise ValueError("Evidence and pointer hidden sizes differ")
         self.weights = weights
@@ -77,7 +87,12 @@ class EvidenceReadout:
         queries = np.stack(
             [linear(hidden[-1], self.weights, name) for name in ("q_b", "q_i", "q_o")]
         )
-        tags = (keys @ queries.T).argmax(axis=-1)
+        logits = keys @ queries.T
+        tags = (
+            logits.argmax(axis=-1)
+            if self.transitions is None
+            else bio_viterbi(logits * (1 / math.sqrt(self.dp)), self.transitions)
+        )
         spans, start, end = [], None, None
 
         def finish() -> None:
@@ -100,3 +115,44 @@ class EvidenceReadout:
                 start = end = None
         finish()
         return spans
+
+
+def load_evidence(snapshot, meta: dict, hidden_size: int):
+    """Missing legacy metadata means tags; an explicit CRF needs its exact sidecar."""
+    args = meta.get("args", {})
+    objective = args.get("evidence_objective", "tags") if isinstance(args, dict) else None
+    if objective not in ("tags", "crf"):
+        raise ValueError(f"Unknown evidence objective {objective!r}")
+    path = snapshot / "evidence_head.safetensors"
+    if not path.exists():
+        if objective == "crf":
+            raise ValueError("CRF metadata requires an evidence sidecar")
+        return None
+    from safetensors.numpy import load_file
+
+    return EvidenceReadout(load_file(path), hidden_size, objective)
+
+
+def bio_viterbi(logits, transitions):
+    """Kai's complete legal BIO path; first-index argmax breaks ties, marker fixed O."""
+    z = np.asarray(logits, dtype=np.float64)
+    a = np.array(transitions, dtype=np.float64, copy=True)
+    if z.ndim != 2 or z.shape[1] != 3 or a.shape != (3, 3) or len(z) < 1:
+        raise ValueError("BIO shape mismatch")
+    if not np.isfinite(z).all() or not np.isfinite(a).all():
+        raise ValueError("Nonfinite CRF parameter or emission")
+    a[2, 1] = -np.inf
+    score, parents = np.array([-np.inf, -np.inf, 0.0]), []
+    for row in z[1:]:
+        edge = score[:, None] + a
+        parent = edge.argmax(axis=0)
+        score = edge[parent, np.arange(3)] + row
+        parents.append(parent)
+    tags = [2] * len(z)
+    if parents:
+        tag = int(score.argmax())
+        for pos in range(len(z) - 1, 0, -1):
+            tags[pos] = tag
+            tag = int(parents[pos - 1][tag])
+        assert tag == 2
+    return tags
