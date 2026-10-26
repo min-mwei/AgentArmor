@@ -34,6 +34,7 @@ def compare(case, response, cutoffs, tolerance=0.001):
     if response.get("usage", {}).get("output_tokens") != 0:
         raise ValueError("Kai must not generate output tokens")
     gap, span_count = 0.0, 0
+    probabilities = {}
     state = case["request"]["state"]
     for qid, reference in expected.items():
         answer = answers[qid]
@@ -47,6 +48,7 @@ def compare(case, response, cutoffs, tolerance=0.001):
         if abs(sum(distribution.values()) - 1) > 1e-6 or distribution["true"] != p:
             raise ValueError("Inconsistent binary probabilities")
         gap = max(gap, abs(p - reference))
+        probabilities[qid] = {"actual": p, "expected": reference, "abs_dp": abs(p - reference)}
         last = 0
         for span in answer["evidence_spans"]:
             if (
@@ -71,6 +73,7 @@ def compare(case, response, cutoffs, tolerance=0.001):
         "id": case["id"],
         "questions": len(answers),
         "max_abs_dp": gap,
+        "probabilities": probabilities,
         "decision": decision,
         "expected_decision": case["decision"],
         "decision_agreed": agrees,
@@ -135,6 +138,7 @@ def read(package, fixtures, out, repeats=20, max_model_len=8192):
         "reference_identity": fixture["reference_identity"],
         "runtime": {},
         "rows": [],
+        "repeats": [],
         "latency": {},
         "probability_tolerance": 0.001,
         "span_scope": "Offset validity and diagnostic status only; no span-quality claim",
@@ -160,29 +164,50 @@ def read(package, fixtures, out, repeats=20, max_model_len=8192):
                 response.raise_for_status()
                 row = compare(case, response.json(), cutoffs)
                 report["rows"].append({**row, "seconds": elapsed})
+            first_pass = {row["id"]: row for row in report["rows"]}
             for case in fixture["cases"]:
                 if not case.get("latency_probe"):
                     continue
                 durations = []
-                for _ in range(repeats):
+                for repeat in range(1, repeats + 1):
                     started = time.perf_counter()
                     response = client.post(
                         "/v1/systemone", json={**case["request"], "model": "kai"}
                     )
                     durations.append(time.perf_counter() - started)
                     response.raise_for_status()
-                    if not compare(case, response.json(), cutoffs)["ok"]:
-                        raise ValueError("Repeated request lost parity")
-                report["latency"][case["id"]] = timing_summary(durations)
-        report["ok"] = all(row["ok"] for row in report["rows"])
-        report["records"] = len(report["rows"])
-        report["questions"] = sum(row["questions"] for row in report["rows"])
-        report["max_abs_dp"] = max(row["max_abs_dp"] for row in report["rows"])
-        report["decision_disagreements"] = sum(not row["decision_agreed"] for row in report["rows"])
+                    row = compare(case, response.json(), cutoffs)
+                    first = first_pass[case["id"]]
+                    drift = max(
+                        abs(p["actual"] - first["probabilities"][qid]["actual"])
+                        for qid, p in row["probabilities"].items()
+                    )
+                    stable = (
+                        drift <= report["probability_tolerance"]
+                        and row["decision"] == first["decision"]
+                    )
+                    report["repeats"].append(
+                        {
+                            **row,
+                            "repeat": repeat,
+                            "seconds": durations[-1],
+                            "max_abs_dp_from_first": drift,
+                            "decision_agreed_with_first": row["decision"] == first["decision"],
+                            "stable_against_first": stable,
+                        }
+                    )
+                    report["latency"][case["id"]] = timing_summary(durations)
+        report["ok"] = all(row["ok"] for row in report["rows"]) and all(
+            row["ok"] and row["stable_against_first"] for row in report["repeats"]
+        )
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
         raise
     finally:
+        report["records"] = len(report["rows"])
+        report["questions"] = sum(row["questions"] for row in report["rows"])
+        report["max_abs_dp"] = max((row["max_abs_dp"] for row in report["rows"]), default=None)
+        report["decision_disagreements"] = sum(not row["decision_agreed"] for row in report["rows"])
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     return report
