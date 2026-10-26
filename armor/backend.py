@@ -82,7 +82,12 @@ class VLLMBackend:
             enable_token_embeddings()
 
         snapshot = resolve_snapshot(settings)
-        contract(snapshot)
+        if settings.candidate_package:
+            from armor.candidate import verify_snapshot
+
+            verify_snapshot(settings.candidate_package, snapshot)
+        else:
+            contract(snapshot)
         meta = torch.load(snapshot / "head.pt", map_location="cpu", weights_only=True)
         if (
             meta.get("readout", "pointer") != "pointer"
@@ -180,6 +185,7 @@ class VLLMBackend:
             "answers": answers,
             "usage": {"input_tokens": token_count, "output_tokens": 0},
             "evidence_available": self.evidence_available,
+            "evidence_status": "diagnostic" if self.evidence_available else "unavailable",
         }
 
 
@@ -213,6 +219,11 @@ class ReferenceBackend:
     evidence_available = False
 
     def __init__(self, settings: Settings):
+        if settings.candidate_package:
+            raise ValueError(
+                "The reference endpoint does not expose a verifiable checkpoint identity; "
+                "serve candidate packages with the pinned local vLLM backend"
+            )
         self.url = settings.reference_url.rstrip("/")
         if urllib.parse.urlsplit(self.url).scheme not in ("http", "https"):
             raise ValueError("ARMOR_REFERENCE_URL must be an HTTP(S) URL")

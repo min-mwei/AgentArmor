@@ -122,6 +122,32 @@ from a coding-agent event is marked `experimental: true`; it supplies a static
 operator task rather than the full authorization history. Evidence spans index
 the returned state. Hook clients abstain on allow, retaining normal agent permissions.
 
+### Experimental Kai packages
+
+Set `ARMOR_CANDIDATE_PACKAGE` to a Kai package directory containing `manifest.json`
+and its pinned `cutoffs.json`. Set `ARMOR_MODEL` to that package's local adapter
+or merged BF16 directory and use `ARMOR_BACKEND=vllm`. The loader verifies the
+snapshot against the manifest, including an evidence sidecar when present.
+The guard uses the package's policy standard and cutoffs. Under v2.2, a standing
+user boundary takes precedence over an allow rule. The default configuration
+continues to use the frozen v0 contract.
+
+Candidate System One responses are marked `experimental: true`. The reference
+HTTP bridge refuses candidate packages because its endpoint does not expose a
+checkpoint identity that AgentArmor can verify. Local file verification does
+not establish numerical parity across runtimes; validate the chosen vLLM runtime
+against the registered Kai reference before deployment.
+
+The evidence loader supports the linear BIO heads and Kai's `joint_pairs` and
+`joint_pairs_memory` heads. The latter use the state, decision token and, for
+memory heads, only the current question's branch. Both decision and evidence
+readouts consume the same backbone forward for that question. Evidence is
+marked `evidence_status: "diagnostic"`; an absent head is `"unavailable"`.
+Diagnostic spans are not a claim that the decision has a complete explanation.
+CPU tests compare the pair readouts with saved outputs from Kai's synthetic CPU
+reference. Model-backed runtime parity, evidence quality and end-to-end latency
+remain separate validation steps.
+
 ## Asynchronous scans
 
 Submit UTF-8 file contents, serialized conversation logs, or tool output:
@@ -168,6 +194,31 @@ multi-turn or direct-chat detector. Every completed result identifies the
 policy and task do not affect this detector's verdict. Synchronous tool guards
 do use those fields. Contextual document and session detection still require
 separate qualification.
+
+### Contextual scan profile
+
+`ARMOR_SCAN_PROFILE=xpia-context-v1` renders the supplied policy, task, optional
+`history`, source description and current text chunk into the model input.
+The response reports `policy_task_applied: true` and `experimental: true`.
+`armor.scans.render_context` is the versioned renderer that calibration and
+evaluation must also use.
+
+This profile requires a separately registered cutoff. In a **new** candidate
+package's pinned `cutoffs.json`, `xpia_context.profile` must be
+`"xpia-context-v1"` and `xpia_context.cutoff` must contain that procedure's finite
+logit-margin cutoff. An absent or mismatched binding refuses startup or the scan
+before inference. The current numeric-v3 package has no contextual cutoff, so
+it cannot yet activate this profile. A document-only BIPIA cutoff is not silently
+reused, and existing frozen packages must not be edited in place.
+
+For contextual scans, `evidence_locations` maps diagnostic spans to Unicode
+code-point offsets in the original `policy`, `task`, `history` or `text` strings.
+The existing `evidence_spans` contains only locations in the original submitted
+text, including chunk offsets. A span crossing rendered fields is projected
+onto each copied field. `unmapped_evidence_spans` counts spans that also cover
+renderer headings or separators; those characters are not presented as document
+evidence. No scan truncates its policy, history or text to fit a model window.
+
 Text is scanned in overlapping character windows (4,000 characters with 400
 overlap by default). Context across wider separations is not preserved. A chunk
 that exceeds the model's token window fails the job; lower the chunk size rather

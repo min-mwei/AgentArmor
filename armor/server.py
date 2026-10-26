@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException
 
 from armor.backend import Backend, ReferenceBackend, StubBackend, VLLMBackend
+from armor.candidate import load_contract
 from armor.config import Settings
 from armor.scans import ScanQueue
 from armor.schemas import (
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 def create_app(settings: Settings | None = None, backend: Backend | None = None) -> FastAPI:
     settings = settings or Settings()
+    cutoffs = load_contract(settings.candidate_package)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -91,7 +93,9 @@ def create_app(settings: Settings | None = None, backend: Backend | None = None)
             "created": int(time.time()),
             "model": settings.served_model_name,
             "backend": settings.backend,
+            "experimental": bool(settings.candidate_package) or settings.backend == "reference",
             **result,
+            "evidence_status": "diagnostic" if result["evidence_available"] else "unavailable",
         }
 
     @app.post("/v1/systemone", dependencies=[Depends(authorize)])
@@ -135,10 +139,11 @@ def create_app(settings: Settings | None = None, backend: Backend | None = None)
                 detail="Kai v0 requires a JSON policy with explicit rule IDs and tiers",
             ) from exc
         result = await run_decision(decision_request)
-        score, cutoff = toolcall_score(result["answers"], tiers)
+        score, cutoff = toolcall_score(result["answers"], tiers, cutoffs)
         denied = score > cutoff
         reason = (
-            f"AgentArmor denied this tool call (v0 composite {score:.4f} > {cutoff:.4f})."
+            f"AgentArmor denied this tool call ({cutoffs.get('standard', 'v2.1')} "
+            f"composite {score:.4f} > {cutoff:.4f})."
             if denied
             else "AgentArmor found no policy violation; normal agent permissions still apply."
         )
@@ -152,6 +157,7 @@ def create_app(settings: Settings | None = None, backend: Backend | None = None)
             cutoff=cutoff,
             reason=reason,
             evidence_available=result["evidence_available"],
+            evidence_status=result["evidence_status"],
             evidence_spans=sorted(
                 {
                     tuple(span)

@@ -120,20 +120,28 @@ class EvidenceReadout:
 def load_evidence(snapshot, meta: dict, hidden_size: int):
     """Missing legacy metadata means tags; an explicit CRF needs its exact sidecar."""
     args = meta.get("args", {})
-    objective = args.get("evidence_objective", "tags") if isinstance(args, dict) else None
-    if objective not in ("tags", "crf"):
-        raise ValueError(f"Unknown evidence objective {objective!r}")
+    if not isinstance(args, dict):
+        raise ValueError("Evidence objective metadata args must be an object")
+    objective = args.get("evidence_objective", "tags")
     readout = args.get("evidence_readout", "linear")
-    if readout != "linear":
-        raise ValueError(f"Unsupported evidence readout {readout!r}; expected 'linear'")
+    pairs = readout in ("joint_pairs", "joint_pairs_memory")
+    if pairs != (objective == "pairs"):
+        raise ValueError("Pair evidence requires matching readout and objective metadata")
+    if not pairs and (readout != "linear" or objective not in ("tags", "crf")):
+        raise ValueError(f"Unsupported evidence readout/objective {readout!r}/{objective!r}")
     path = snapshot / "evidence_head.safetensors"
     if not path.exists():
-        if objective == "crf":
-            raise ValueError("CRF metadata requires an evidence sidecar")
+        if objective in ("crf", "pairs"):
+            raise ValueError(f"{objective.upper()} metadata requires an evidence sidecar")
         return None
     from safetensors.numpy import load_file
 
-    return EvidenceReadout(load_file(path), hidden_size, objective)
+    weights = load_file(path)
+    if pairs:
+        from armor.readout_pairs import PairEvidenceReadout
+
+        return PairEvidenceReadout(weights, hidden_size, memory=readout == "joint_pairs_memory")
+    return EvidenceReadout(weights, hidden_size, objective)
 
 
 def bio_viterbi(logits, transitions):

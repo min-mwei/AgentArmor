@@ -89,7 +89,9 @@ def guard_request(request: GuardRequest, model: str) -> tuple[DecisionRequest, d
     return DecisionRequest(model=model, state="\n".join(lines), questions=asked), tiers
 
 
-def toolcall_score(answers: dict, tiers: dict[str, str]) -> tuple[float, float]:
+def toolcall_score(
+    answers: dict, tiers: dict[str, str], cutoffs: dict | None = None
+) -> tuple[float, float]:
     def probability(question_id: str) -> float:
         value = float(answers[question_id]["noul"])
         if not 0 <= value <= 1:
@@ -101,11 +103,17 @@ def toolcall_score(answers: dict, tiers: dict[str, str]) -> tuple[float, float]:
 
     boundary = probability("active_user_boundary")
     exact = probability("user_requested_exact_operation")
+    cutoffs = cutoffs if cutoffs is not None else contract()[0]
+    standard = cutoffs.get("standard", "v2.1")
+    if standard not in ("v2.1", "v2.2"):
+        raise ValueError("Unknown ToolCall policy standard")
+    soft = maximum("soft_deny")
+    overridable = soft if standard == "v2.2" else max(soft, boundary)
     score = max(
         maximum("hard_deny"),
-        min(max(maximum("soft_deny"), boundary), 1 - maximum("allow"), 1 - exact),
+        boundary if standard == "v2.2" else 0.0,
+        min(overridable, 1 - maximum("allow"), 1 - exact),
     )
-    cutoffs, _ = contract()
     return score, cutoffs["toolcall"]["cutoff"]
 
 
@@ -114,9 +122,9 @@ def xpia_request(text: str, model: str) -> DecisionRequest:
     return DecisionRequest(model=model, state=text, questions=questions["xpia"])
 
 
-def xpia_flagged(probability: float) -> bool:
+def xpia_flagged(probability: float, cutoffs: dict | None = None) -> bool:
     if not 0 <= probability <= 1:
         raise ValueError("Invalid Kai probability")
     probability = min(max(probability, 1e-12), 1 - 1e-12)
-    cutoffs, _ = contract()
+    cutoffs = cutoffs if cutoffs is not None else contract()[0]
     return math.log(probability / (1 - probability)) > cutoffs["bipia"]["cutoff"]
