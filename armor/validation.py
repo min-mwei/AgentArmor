@@ -107,7 +107,10 @@ def read(package, fixtures, out, repeats=20, max_model_len=8192):
         raise ValueError("Fixture and package manifest differ")
     if repeats < 1:
         raise ValueError("Repeat count must be positive")
-    snapshot = package / "hf"
+    exports = list((package / "hf").rglob("model.safetensors"))
+    if len(exports) != 1:
+        raise ValueError("Package must contain exactly one merged model under hf/")
+    snapshot = exports[0].parent
     verify_snapshot(package, snapshot)
     cutoffs = load_contract(package)
     settings = Settings(

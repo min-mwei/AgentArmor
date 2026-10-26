@@ -89,6 +89,10 @@ def test_read_uses_the_api_and_records_failures_without_a_model(tmp_path, monkey
     import armor.validation
 
     case, response = case_and_response()
+    # Real Kai exports put the BF16 checkpoint below a named export directory.
+    export = tmp_path / "hf" / "candidate-merged" / "bf16"
+    export.mkdir(parents=True)
+    (export / "model.safetensors").write_bytes(b"synthetic test fixture")
     (tmp_path / "cutoffs.json").write_text(json.dumps(CUTOFFS))
     (tmp_path / "manifest.json").write_text(
         json.dumps({"cutoffs": {"sha256": digest(tmp_path / "cutoffs.json")}})
@@ -104,7 +108,11 @@ def test_read_uses_the_api_and_records_failures_without_a_model(tmp_path, monkey
             }
         )
     )
-    monkeypatch.setattr(armor.validation, "verify_snapshot", lambda *a: None)
+
+    def verify_nested_snapshot(package, snapshot):
+        assert package == tmp_path and snapshot == export
+
+    monkeypatch.setattr(armor.validation, "verify_snapshot", verify_nested_snapshot)
     monkeypatch.setattr(
         armor.backend,
         "VLLMBackend",

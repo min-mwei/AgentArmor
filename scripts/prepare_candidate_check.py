@@ -52,6 +52,12 @@ def main():
         response_path = package / "example" / f"{name}.response.json"
         request, response = read_json(request_path), read_json(response_path)
         assert response["request_sha256"] == request_sha256(request)
+        # Saved package decisions expose only these binary probabilities. Question
+        # branches are isolated, so omit auxiliary questions from this parity read.
+        request = {
+            **request,
+            "questions": {qid: request["questions"][qid] for qid in response["probabilities"]},
+        }
         tiers = read_json(package / "example/toolcall.tiers.json") if name == "toolcall" else None
         cases.append(
             {
@@ -66,6 +72,7 @@ def main():
         sources[name] = {
             "request_sha256": digest(request_path),
             "response_sha256": digest(response_path),
+            "question_projection": "decision-driving questions from the package response",
         }
     records = [r for r in read_jsonl(panel) if panel_tiers(r) is not None][:24]
     if len(records) != 24:
