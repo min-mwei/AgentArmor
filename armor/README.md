@@ -241,6 +241,27 @@ the agent may already have consumed the content or taken another action before
 a warning arrives. Keep the synchronous guard enabled when pre-execution
 authorization is needed.
 
+## Candidate integration validation
+
+`scripts/prepare_candidate_check.py` runs in the Kai Python environment and freezes
+the two package examples plus the first 24 ToolCall development process records.
+It uses saved probabilities from the matching checkpoint identity. It loads no
+model and reads no locked test. Supply `--kai-source`, `--package`, the candidate's
+saved `--reads` file and a new `--out` fixture path.
+
+The trainer runs `python -m armor.validation --package PACKAGE --fixtures FIXTURES
+--out REPORT` in the installed Metal or CUDA environment through Kai's guarded
+`evaluate agentarmor` entry point. The binding pins the reader, package manifest,
+fixtures and runtime source files. The reader checks exact decision agreement,
+maximum probability error of .001, diagnostic evidence status, valid Unicode
+offsets and zero generated tokens. It repeats each package example 20 times and
+reports median, p95 and maximum latency for the ASGI request through both heads
+and JSON serialization. Network transport and model loading are reported outside
+that measurement. It refuses to overwrite a report and exits nonzero on failure.
+
+Passing this integration read does not qualify model accuracy or evidence quality.
+The candidate's registered release gates and contextual calibration still apply.
+
 ## Upstream contracts
 
 - [vLLM token embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/token_embed/)
