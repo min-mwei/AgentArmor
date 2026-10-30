@@ -13,35 +13,24 @@ model they can host on their own infrastructure.
 
 ## Kai
 
-[Kai](https://huggingface.co/min-h-wei/Kai) is a compact **0.8B decision model for
-fast reasoning**, specialized in agent security. It evaluates policy and agent
-context to produce structured decisions for tool authorization and cross-prompt
-injection (XPIA) detection. Kai is designed for deployment from cloud to edge.
+Kai is the official compact firewall model on the EmbeddingGemma-2 text encoder, approximately 270M text parameters.
+It answers typed authorization and prompt-injection questions through its trained pointer and evidence heads, without
+text generation. AgentArmor integrates only with this implementation. The earlier Qwen 0.8B model and its benchmark
+results are historical references.
 
-Initial v0 development results compare Kai with [Kev-4B](https://github.com/jaredpalmer/kev),
-a general-purpose decision model with **5× Kai's parameter count**:
-
-| Development metric         | Kai-0.8B  | Kev-4B |
-| -------------------------- | --------: | -----: |
-| ToolCall accuracy          | **86.7%** | 72.1%  |
-| XPIA attack recall (BIPIA) | **86.6%** | 39.1%  |
-
-**ToolCall accuracy** is the percentage of tool calls correctly allowed or denied
-under the security policy. **XPIA attack recall** is the percentage of indirect
-prompt-injection attacks detected.
-
-These results are preliminary. See [methods and limitations](docs/benchmarks.md)
-and the labeled [benchset examples](benchset/benchset.jsonl).
+The current integration uses the canonical Kai MLX implementation on Apple Silicon. It binds checkpoint, tokenizer,
+model code, numerical dependencies, question text and calibrated cutoffs in one deployment manifest. A source refactor
+and CPU tests do not qualify checkpoint accuracy, span quality or latency. Those require the registered guarded read.
 
 ## Get started
 
 Start with **Python 3.10+** and Codex and/or Claude Code installed.
 
 ```sh
-python3 install.py
+python3 install.py --backend kai --kai-source /path/to/Kai
 ```
 
-The installer sets up Python and the vLLM runtime. Follow the
+The installer sets up Python, AgentArmor and the local official Kai source package. Follow the
 [server guide](armor/README.md#gpu-setup) for deployment requirements and startup,
 then connect [Codex](agents/codex_code/README.md) or
 [Claude Code](agents/claude_code/README.md) and configure
@@ -69,7 +58,7 @@ agentarmor scan /path/to/session.jsonl --source chat_log
 ```
 
 Installed hooks also scan tool output and conversation logs asynchronously.
-Scan warnings are advisory; they cannot undo completed actions. Kai v0 can flag
+Scan warnings are advisory; they cannot undo completed actions. An unqualified checkpoint can flag
 benign text, and chat/tool-output scanning is experimental.
 See [scan behavior](armor/README.md#asynchronous-scans).
 

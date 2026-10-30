@@ -45,7 +45,7 @@ class Rule(BaseModel):
 class Policy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     environment: dict[str, str] = Field(default_factory=dict)
-    rules: list[Rule] = Field(min_length=1, max_length=62)
+    rules: list[Rule] = Field(default_factory=list, max_length=62)
 
     @model_validator(mode="after")
     def distinct_rules(self):
@@ -55,7 +55,9 @@ class Policy(BaseModel):
         return self
 
 
-def guard_request(request: GuardRequest, model: str) -> tuple[DecisionRequest, dict[str, str]]:
+def guard_request(
+    request: GuardRequest, model: str, direct_question=None
+) -> tuple[DecisionRequest, dict[str, str]]:
     policy = Policy.model_validate_json(request.policy)
     _, questions = contract()
     canonical = questions["toolcall"]
@@ -74,11 +76,16 @@ def guard_request(request: GuardRequest, model: str) -> tuple[DecisionRequest, d
                 "instructions": canonical["rule"]["instructions"].replace("{id}", rule.id),
             }
             tiers[qid] = tier
+    history = [
+        f"   > {turn.role}: {json.dumps(turn.content, ensure_ascii=False)}"
+        for turn in request.history
+    ]
     lines.extend(
         [
             "",
             "Conversation so far:",
             f"   > user: {request.task}",
+            *history,
             "",
             "Proposed tool call:",
             f"   {request.tool_name} <= {json.dumps(request.tool_input, ensure_ascii=False)}",
@@ -86,6 +93,8 @@ def guard_request(request: GuardRequest, model: str) -> tuple[DecisionRequest, d
     )
     for name in ("active_user_boundary", "user_requested_exact_operation"):
         asked[name] = canonical[name]
+    if direct_question is not None:
+        asked = {"decision": direct_question}
     return DecisionRequest(model=model, state="\n".join(lines), questions=asked), tiers
 
 
@@ -117,9 +126,13 @@ def toolcall_score(
     return score, cutoffs["toolcall"]["cutoff"]
 
 
-def xpia_request(text: str, model: str) -> DecisionRequest:
+def xpia_request(text: str, model: str, question=None) -> DecisionRequest:
     _, questions = contract()
-    return DecisionRequest(model=model, state=text, questions=questions["xpia"])
+    return DecisionRequest(
+        model=model,
+        state=text,
+        questions={"is_xpia_attempt": question} if question else questions["xpia"],
+    )
 
 
 def xpia_flagged(probability: float, cutoffs: dict | None = None) -> bool:

@@ -1,5 +1,8 @@
 # Working on AgentArmor
 
+Official Kai is the approximately 270M EmbeddingGemma-2 encoder. AgentArmor integrates only with that model family.
+The active runtime is `armor.kai.KaiBackend`; the previous Qwen/vLLM backend is retired.
+
 - Work on `dev`. `main` is reserved for reviewed releases. Keep these as the two
   permanent branches.
 - GitHub Actions is disabled for this repository. Run checks locally.
@@ -10,7 +13,7 @@
   isolated question rows, checkpoint temperature, and evidence offsets. Do not
   substitute generated text or vocabulary-logit classification for its head.
 - Use lazy imports for GPU dependencies so local development and hook clients
-  work without vLLM. Do not commit model weights, chat logs, secrets, or `.env`.
+  work without MLX. Do not commit model weights, chat logs, secrets, or `.env`.
 - Synchronous checks must emit an explicit denial on errors. An allowed check
   abstains from the agent's existing permission flow. Background scans are
   advisory and must not claim to prevent a completed tool's side effects.

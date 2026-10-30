@@ -9,22 +9,21 @@ import sys
 
 def diagnostics():
     packages = {}
-    for name in ("agentarmor", "vllm", "vllm-metal", "mlx", "torch"):
+    for name in ("agentarmor", "kai", "mlx", "mlx-lm"):
         try:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             packages[name] = None
-    metal = bool(importlib.util.find_spec("vllm_metal"))
     return {
         "python": sys.version.split()[0],
         "system": platform.system(),
         "machine": platform.machine(),
         "packages": packages,
         "agents": {name: shutil.which(name) for name in ("codex", "claude")},
-        "runtime_installed": packages["vllm"] is not None,
-        "runtime": "metal" if metal else "cuda" if platform.system() == "Linux" else None,
-        "metal_adapter_version_supported": not metal
-        or str(packages["vllm-metal"]).split("+", 1)[0] == "0.32.0",
+        "runtime_installed": packages["kai"] is not None and packages["mlx"] is not None,
+        "runtime": "mlx"
+        if platform.system() == "Darwin" and platform.machine() == "arm64"
+        else None,
         "model_loaded": False,
         "note": "Package/client discovery only; run a model smoke test to validate inference.",
     }

@@ -77,13 +77,12 @@ def test_contextual_profile_cannot_reuse_a_document_cutoff():
         scan_cutoffs(cuts, "xpia-context-v1")
 
 
-def test_reference_bridge_cannot_silently_apply_candidate_cutoffs(tmp_path):
-    from armor.backend import ReferenceBackend
+def test_retired_model_runtimes_are_not_selectable():
     from armor.config import Settings
 
-    package(tmp_path)
-    with pytest.raises(ValueError, match="checkpoint identity"):
-        ReferenceBackend(Settings(_env_file=None, candidate_package=str(tmp_path)))
+    for backend in ("vllm", "reference"):
+        with pytest.raises(ValueError):
+            Settings(_env_file=None, backend=backend)
 
 
 def test_guard_uses_the_packages_standard_and_cutoff(tmp_path, guard_body):

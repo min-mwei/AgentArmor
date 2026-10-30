@@ -30,6 +30,12 @@ def check(event: dict, agent: str) -> dict | None:
         "tool_input": event["tool_input"],
         **operator_context(),
     }
+    if event.get("transcript_path"):
+        from armor.history import transcript_history
+
+        payload["history"] = transcript_history(event["transcript_path"])
+    elif "history" in event:
+        payload["history"] = event["history"]
     result = request_json("/v1/guard", payload, timeout=timeout)
     if not isinstance(result, dict) or result.get("decision") not in ("allow", "deny"):
         raise ValueError("Invalid guard decision")

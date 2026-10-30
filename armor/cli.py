@@ -12,8 +12,9 @@ def main() -> None:
     serve = subparsers.add_parser("serve", help="Start the HTTP service")
     serve.add_argument("--host")
     serve.add_argument("--port", type=int)
-    serve.add_argument("--backend", choices=("vllm", "reference", "stub"))
-    serve.add_argument("--model", help="Hugging Face ID or local Kai checkpoint directory")
+    serve.add_argument("--backend", choices=("kai", "stub"))
+    serve.add_argument("--model", help="served Kai model alias")
+    serve.add_argument("--package", dest="candidate_package", help="registered Kai encoder package")
     subparsers.add_parser("inspect", help="Check checkpoint file names without downloading weights")
     subparsers.add_parser("doctor", help="Inspect installed agent clients and serving runtimes")
     subparsers.add_parser("config", help="Print effective server configuration (secrets redacted)")
@@ -26,7 +27,7 @@ def main() -> None:
     args = parser.parse_args()
     overrides = {
         key: getattr(args, key)
-        for key in ("host", "port", "backend", "model")
+        for key in ("host", "port", "backend", "model", "candidate_package")
         if getattr(args, key, None) is not None
     }
     settings = Settings(**overrides)

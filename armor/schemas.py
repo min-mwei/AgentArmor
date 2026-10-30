@@ -36,6 +36,11 @@ class DecisionRequest(StrictModel):
     questions: dict[str, Question] = Field(min_length=1, max_length=64)
 
 
+class ConversationTurn(StrictModel):
+    role: Literal["system", "developer", "user", "assistant", "tool"]
+    content: str = Field(max_length=100_000)
+
+
 class GuardRequest(StrictModel):
     agent: Literal["codex_code", "claude_code"]
     hook_event_name: Literal["PreToolUse"] = "PreToolUse"
@@ -43,6 +48,7 @@ class GuardRequest(StrictModel):
     task: str = Field(min_length=1, max_length=100_000)
     tool_name: str = Field(min_length=1, max_length=1000)
     tool_input: Any
+    history: list[ConversationTurn] = Field(default_factory=list, max_length=1000)
 
 
 class GuardResponse(StrictModel):

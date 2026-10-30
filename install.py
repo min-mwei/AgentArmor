@@ -1,6 +1,7 @@
 """Bootstrap AgentArmor using only Python 3.10+ and its standard library.
 
-python install.py --backend metal|cuda|cpu
+python install.py --backend kai --kai-source /path/to/Kai
+python install.py --backend cpu
 """
 
 import argparse
@@ -8,7 +9,6 @@ import hashlib
 import io
 import json
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -16,8 +16,6 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-CUDA_VERSION = "0.32.0"
-METAL_VERSION = "0.32.0"
 UV_VERSION = "0.13.4"
 ROOT = Path(__file__).resolve().parent
 
@@ -28,53 +26,16 @@ def fetch_json(url):
         return json.load(response)
 
 
-def metal_wheels(release=METAL_VERSION):
-    data = fetch_json(
-        f"https://api.github.com/repos/vllm-project/vllm-metal/releases/tags/v{release}"
-    )
-    wheels = [
-        item["browser_download_url"]
-        for item in data["assets"]
-        if item["name"].endswith("-cp312-cp312-macosx_15_0_arm64.whl")
-    ]
-    if len(wheels) != 1:
-        raise RuntimeError("Expected one prebuilt Python 3.12 Apple Silicon Metal wheel")
-    metadata_url = (
-        f"https://raw.githubusercontent.com/vllm-project/vllm-metal/v{release}/"
-        ".github/vllm-release-tag.commit"
-    )
-    with urllib.request.urlopen(metadata_url, timeout=30) as response:
-        tag = response.read().decode().strip()
-    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
-        raise RuntimeError("Metal release has invalid vLLM compatibility metadata")
-    version = tag[1:]
-    core = (
-        f"https://github.com/vllm-project/vllm/releases/download/{tag}/"
-        f"vllm-{version}%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl"
-    )
-    return [core, wheels[0]]
-
-
 def choose_backend(requested, system=None, machine=None):
     system = system or platform.system()
     machine = machine or platform.machine()
-    backend = requested
-    if backend == "auto":
-        if (system, machine) == ("Darwin", "arm64"):
-            backend = "metal"
-        elif system == "Linux":
-            backend = "cuda"
-        else:
-            raise ValueError("Use Apple Silicon/macOS for Metal or Linux for CUDA")
-    if system not in ("Darwin", "Linux"):
-        raise ValueError("This installer supports macOS and Linux; use WSL on Windows")
-    if backend == "metal" and (system, machine) != ("Darwin", "arm64"):
-        raise ValueError(
-            "Metal requires an Apple Silicon Mac; use cuda on Linux or cpu for hook tests"
-        )
-    if backend == "cuda" and system != "Linux":
-        raise ValueError("CUDA vLLM requires Linux; use metal on Apple Silicon")
-    return backend
+    if requested == "auto":
+        return "kai" if (system, machine) == ("Darwin", "arm64") else "cpu"
+    if requested == "kai" and (system, machine) != ("Darwin", "arm64"):
+        raise ValueError("The Kai MLX runtime requires Apple Silicon; use cpu for hook/API tests")
+    if requested not in ("kai", "cpu"):
+        raise ValueError("Choose kai or cpu; the previous vLLM integration is retired")
+    return requested
 
 
 def bootstrap_uv(destination):
@@ -102,27 +63,24 @@ def bootstrap_uv(destination):
     destination.chmod(0o755)
 
 
-def install_commands(uv, environment, root, backend, wheels=()):
+def install_commands(uv, environment, root, backend, kai_source=None):
     python = environment / "bin" / "python"
-    create = [str(uv), "venv", "--python", "3.12", "--allow-existing", str(environment)]
     install = [str(uv), "pip", "install", "--python", str(python)]
-    commands = [create]
-    if backend == "cuda":
-        commands.append([*install, f"vllm=={CUDA_VERSION}"])
-    elif backend == "metal":
-        if len(wheels) != 2:
-            raise ValueError("Metal needs its paired vLLM core and plugin wheels")
-        commands.append(
-            [*install, "--override", str(root / "armor/resources/metal-overrides.txt"), *wheels]
-        )
-    # Install the API separately: a Linux PyPI vLLM wheel must not replace Metal's CPU core.
-    commands.append([*install, "-e", str(root)])
+    commands = [
+        [str(uv), "venv", "--python", "3.13", "--allow-existing", str(environment)],
+        [*install, "-e", str(root)],
+    ]
+    if backend == "kai":
+        if kai_source is None or not (Path(kai_source) / "train/kai/decision.py").is_file():
+            raise ValueError("Supply --kai-source pointing to the official Kai encoder repository")
+        commands.append([*install, "-e", str(Path(kai_source).expanduser().resolve())])
     return commands
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("auto", "metal", "cuda", "cpu"), default="auto")
+    parser.add_argument("--backend", choices=("auto", "kai", "cpu"), default="auto")
+    parser.add_argument("--kai-source", type=Path)
     parser.add_argument("--venv", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -132,12 +90,12 @@ def main():
         backend = choose_backend(args.backend)
     except ValueError as error:
         parser.error(str(error))
-    if backend == "metal" and int(platform.mac_ver()[0].split(".")[0]) < 15:
-        parser.error("The prebuilt Metal wheels require macOS 15 or later")
     environment = (args.venv or ROOT / ".agentarmor" / backend).expanduser().resolve()
     uv = ROOT / ".agentarmor" / "bootstrap" / "uv"
-    wheels = metal_wheels() if backend == "metal" else ()
-    commands = install_commands(uv, environment, ROOT, backend, wheels)
+    try:
+        commands = install_commands(uv, environment, ROOT, backend, args.kai_source)
+    except ValueError as error:
+        parser.error(str(error))
     if args.dry_run:
         print(
             json.dumps(
@@ -148,7 +106,7 @@ def main():
         return
     if not uv.is_file():
         bootstrap_uv(uv)
-    # uv supplies a native 3.12 interpreter even when the entry Python is 3.10.
+    # uv supplies a native 3.13 interpreter even when the entry Python is 3.10.
     for command in commands:
         subprocess.run(command, check=True)
     print(

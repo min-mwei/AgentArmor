@@ -1,3 +1,5 @@
+> Historical Qwen 0.8B results. These rows do not describe the official Kai encoder promoted on 2026-10-30.
+
 # Kai v0: initial development results
 
 Kai is the security specialist derived from the [Kev](https://github.com/jaredpalmer/kev)

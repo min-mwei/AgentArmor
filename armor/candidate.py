@@ -79,4 +79,7 @@ def scan_cutoffs(cutoffs: dict, profile: str):
     value = section.get("cutoff")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError("Contextual scan cutoff must be finite")
-    return {"bipia": {"cutoff": value}}
+    result = {"bipia": {"cutoff": value}}
+    if "xpia_question" in cutoffs:
+        result["xpia_question"] = cutoffs["xpia_question"]
+    return result

@@ -86,42 +86,31 @@ def test_nearest_rank_p95():
 
 @pytest.fixture
 def validation_read(tmp_path, monkeypatch):
-    import armor.backend
-    import armor.validation
+    from conftest import make_kai_package
+
+    import armor.kai
 
     case, response = case_and_response()
-    # Real Kai exports put the BF16 checkpoint below a named export directory.
-    export = tmp_path / "hf" / "candidate-merged" / "bf16"
-    export.mkdir(parents=True)
-    (export / "model.safetensors").write_bytes(b"synthetic test fixture")
-    (tmp_path / "cutoffs.json").write_text(json.dumps(CUTOFFS))
-    (tmp_path / "manifest.json").write_text(
-        json.dumps({"cutoffs": {"sha256": digest(tmp_path / "cutoffs.json")}})
-    )
+    package = make_kai_package(tmp_path)
     fixtures = tmp_path / "fixtures.json"
     fixtures.write_text(
         json.dumps(
             {
-                "schema": "agentarmor-candidate-parity-v1",
-                "package_manifest_sha256": digest(tmp_path / "manifest.json"),
+                "schema": "agentarmor-kai-parity-v1",
+                "package_manifest_sha256": digest(package / "manifest.json"),
                 "reference_identity": {"fixture": True},
                 "cases": [case],
             }
         )
     )
-
-    def verify_nested_snapshot(package, snapshot):
-        assert package == tmp_path and snapshot == export
-
-    monkeypatch.setattr(armor.validation, "verify_snapshot", verify_nested_snapshot)
     responses = [response]
 
     def decide(self, request):
         return responses.pop(0) if len(responses) > 1 else responses[0]
 
     monkeypatch.setattr(
-        armor.backend,
-        "VLLMBackend",
+        armor.kai,
+        "KaiBackend",
         lambda settings: type("FixtureBackend", (), {"decide": decide})(),
     )
     return tmp_path, fixtures, responses

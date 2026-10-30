@@ -70,7 +70,9 @@ def scan_text(
             if contextual
             else (text, [("text", 0, len(text), offset)])
         )
-        response = backend.decide(xpia_request(state, settings.served_model_name))
+        response = backend.decide(
+            xpia_request(state, settings.served_model_name, cutoffs.get("xpia_question"))
+        )
         result = response["answers"]["is_xpia_attempt"]
         probability = float(result["noul"])
         if not 0 <= probability <= 1:
@@ -120,11 +122,11 @@ def scan_text(
 
 
 class ScanQueue:
-    def __init__(self, backend: Backend, settings: Settings):
+    def __init__(self, backend: Backend, settings: Settings, cutoffs=None):
         if settings.scan_overlap_chars >= settings.scan_chunk_chars:
             raise ValueError("scan_overlap_chars must be smaller than scan_chunk_chars")
         self.backend, self.settings = backend, settings
-        self.cutoffs = load_contract(settings.candidate_package)
+        self.cutoffs = cutoffs if cutoffs is not None else load_contract(settings.candidate_package)
         scan_cutoffs(self.cutoffs, settings.scan_profile)
         self.queue: asyncio.Queue[tuple[str, ScanRequest]] = asyncio.Queue(settings.scan_queue_size)
         self.jobs: dict[str, ScanJob] = {}

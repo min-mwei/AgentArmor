@@ -13,19 +13,13 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
-    backend: Literal["vllm", "reference", "stub"] = "vllm"
-    model: str = "min-h-wei/Kai"
-    revision: str | None = "d0d6a5694d0001e06b383f936c9bd8ff77271bf7"
-    reference_url: str = "http://127.0.0.1:8009"
+    backend: Literal["kai", "stub"] = "kai"
+    model: str = "kai"
     candidate_package: str | None = None
+    package_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     served_model_name: str = "kai"
     api_key: SecretStr | None = None
-    dtype: Literal["auto", "bfloat16", "float16", "float32"] = "bfloat16"
-    tensor_parallel_size: int = Field(default=1, ge=1)
-    gpu_memory_utilization: float = Field(default=0.85, gt=0, lt=1)
-    kv_cache_memory_mb: int | None = Field(default=None, ge=16)
     max_model_len: int = Field(default=8192, ge=16)
-    max_num_seqs: int = Field(default=8, ge=1)
     scan_chunk_chars: int = Field(default=4000, ge=128, le=100_000)
     scan_profile: Literal["xpia-document-v0", "xpia-context-v1"] = "xpia-document-v0"
     scan_overlap_chars: int = Field(default=400, ge=0)

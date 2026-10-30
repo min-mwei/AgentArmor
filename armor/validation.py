@@ -9,7 +9,7 @@ import statistics
 import time
 from pathlib import Path
 
-from armor.candidate import load_contract, verify_snapshot
+from armor.kai import KaiPackage
 from armor.v0 import toolcall_score, xpia_flagged
 
 
@@ -38,14 +38,16 @@ def compare(case, response, cutoffs, tolerance=0.001):
     state = case["request"]["state"]
     for qid, reference in expected.items():
         answer = answers[qid]
-        p = answer["noul"]
+        choice = case["request"]["questions"][qid]["type"] == "choice"
+        positive = "deny" if choice else "true"
+        p = answer["probabilities"][positive] if choice else answer["noul"]
         distribution = answer["probabilities"]
-        if set(distribution) != {"false", "true"}:
+        if set(distribution) != ({"allow", "deny"} if choice else {"false", "true"}):
             raise ValueError("Expected complete binary probabilities")
         values = [p, reference, *distribution.values()]
         if any(isinstance(x, bool) or not math.isfinite(x) or not 0 <= x <= 1 for x in values):
             raise ValueError("Invalid probability")
-        if abs(sum(distribution.values()) - 1) > 1e-6 or distribution["true"] != p:
+        if abs(sum(distribution.values()) - 1) > 1e-6 or distribution[positive] != p:
             raise ValueError("Inconsistent binary probabilities")
         gap = max(gap, abs(p - reference))
         probabilities[qid] = {"actual": p, "expected": reference, "abs_dp": abs(p - reference)}
@@ -61,7 +63,10 @@ def compare(case, response, cutoffs, tolerance=0.001):
                 raise ValueError("Invalid Unicode code-point evidence offset")
             span_count += 1
             last = span[1]
-    if case.get("tiers") is not None:
+    if "decision" in answers:
+        score, cutoff = answers["decision"]["probabilities"]["deny"], cutoffs["toolcall"]["cutoff"]
+        decision = "deny" if score > cutoff else "allow"
+    elif case.get("tiers") is not None:
         score, cutoff = toolcall_score(answers, case["tiers"], cutoffs)
         decision = "deny" if score > cutoff else "allow"
     else:
@@ -93,42 +98,33 @@ def timing_summary(values):
 
 
 def read(package, fixtures, out, repeats=20, max_model_len=8192):
-    """Run the actual AgentArmor ASGI endpoint with its pinned local vLLM backend."""
+    """Run the actual AgentArmor ASGI endpoint with the registered Kai encoder."""
     from fastapi.testclient import TestClient
 
-    from armor.backend import VLLMBackend
     from armor.config import Settings
+    from armor.kai import KaiBackend
     from armor.server import create_app
 
     package, fixtures, out = Path(package).resolve(), Path(fixtures).resolve(), Path(out)
     if out.exists():
         raise FileExistsError(f"Refusing to overwrite {out}")
     fixture = json.loads(fixtures.read_text())
-    if fixture.get("schema") != "agentarmor-candidate-parity-v1" or not fixture["cases"]:
+    if fixture.get("schema") != "agentarmor-kai-parity-v1" or not fixture["cases"]:
         raise ValueError("A nonempty registered fixture is required")
     if fixture["package_manifest_sha256"] != digest(package / "manifest.json"):
         raise ValueError("Fixture and package manifest differ")
     if repeats < 1:
         raise ValueError("Repeat count must be positive")
-    exports = list((package / "hf").rglob("model.safetensors"))
-    if len(exports) != 1:
-        raise ValueError("Package must contain exactly one merged model under hf/")
-    snapshot = exports[0].parent
-    verify_snapshot(package, snapshot)
-    cutoffs = load_contract(package)
+    binding = KaiPackage(package)
+    cutoffs = binding.cutoffs
     settings = Settings(
         _env_file=None,
-        model=str(snapshot),
-        revision=None,
         candidate_package=str(package),
-        backend="vllm",
+        backend="kai",
         served_model_name="kai",
         api_key=None,
-        dtype="bfloat16",
         max_model_len=max_model_len,
-        max_num_seqs=1,
-        kv_cache_memory_mb=512,
-        scan_profile="xpia-document-v0",
+        scan_profile=binding.branches["xpia"]["profile"],
     )
     report = {
         "ok": False,
@@ -147,14 +143,14 @@ def read(package, fixtures, out, repeats=20, max_model_len=8192):
             "excludes network transport and model load"
         ),
     }
-    for name in ("vllm", "vllm-metal", "mlx", "mlx-lm", "torch", "agentarmor"):
+    for name in ("kai", "mlx", "mlx-lm", "agentarmor"):
         try:
             report["runtime"][name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             report["runtime"][name] = None
     try:
         started = time.perf_counter()
-        backend = VLLMBackend(settings)
+        backend = KaiBackend(settings)
         report["model_load_s"] = time.perf_counter() - started
         with TestClient(create_app(settings, backend=backend)) as client:
             for case in fixture["cases"]:

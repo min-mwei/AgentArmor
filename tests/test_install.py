@@ -14,29 +14,26 @@ SPEC.loader.exec_module(installer)
 
 
 def test_platform_selection_and_rejection():
-    assert installer.choose_backend("auto", "Darwin", "arm64") == "metal"
-    assert installer.choose_backend("auto", "Linux", "x86_64") == "cuda"
+    assert installer.choose_backend("auto", "Darwin", "arm64") == "kai"
+    assert installer.choose_backend("auto", "Linux", "x86_64") == "cpu"
     assert installer.choose_backend("cpu", "Darwin", "x86_64") == "cpu"
-    for backend, system, machine in (
-        ("metal", "Linux", "aarch64"),
-        ("cuda", "Darwin", "arm64"),
-        ("auto", "Windows", "AMD64"),
-    ):
+    for backend, system, machine in (("kai", "Linux", "aarch64"), ("metal", "Darwin", "arm64")):
         with pytest.raises(ValueError):
             installer.choose_backend(backend, system, machine)
 
 
-def test_platform_dependency_plans_are_separate(tmp_path):
+def test_platform_dependency_plans_use_official_kai_source(tmp_path):
     uv, environment, root = tmp_path / "uv", tmp_path / "runtime", tmp_path
-    cuda = installer.install_commands(uv, environment, root, "cuda")
-    assert "vllm==0.32.0" in cuda[1]
-    metal = installer.install_commands(uv, environment, root, "metal", ("core.whl", "metal.whl"))
-    assert metal[1][-2:] == ["core.whl", "metal.whl"]
-    assert "--override" in metal[1]
-    assert not any("[vllm]" in value or "vllm==" in value for command in metal for value in command)
     cpu = installer.install_commands(uv, environment, root, "cpu")
-    assert len(cpu) == 2  # Interpreter + API only; never pull a GPU runtime.
-    assert cuda[0][cuda[0].index("--python") + 1] == "3.12"
+    assert len(cpu) == 2 and cpu[0][cpu[0].index("--python") + 1] == "3.13"
+    source = tmp_path / "Kai"
+    (source / "train/kai").mkdir(parents=True)
+    (source / "train/kai/decision.py").write_text("# CPU fixture")
+    kai = installer.install_commands(uv, environment, root, "kai", source)
+    assert kai[-1][-1] == str(source)
+    assert not any("vllm" in arg for command in kai for arg in command)
+    with pytest.raises(ValueError, match="--kai-source"):
+        installer.install_commands(uv, environment, root, "kai")
 
 
 def test_bootstrap_checks_download_before_executing(monkeypatch, tmp_path):
