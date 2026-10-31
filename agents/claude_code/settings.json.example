@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
             "timeout": 30
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
             "timeout": 120,
             "async": true
           }
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
             "timeout": 120,
             "async": true
           }
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/claude_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
             "timeout": 30
           }
         ]

@@ -6,9 +6,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
             "timeout": 30,
-            "statusMessage": "Checking tool call with Kai"
+            "statusMessage": "Checking AgentArmor policy readiness"
           }
         ]
       }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
             "timeout": 120,
             "async": true
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
             "timeout": 120,
             "async": true
           }
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py\"",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
             "timeout": 30
           }
         ]

@@ -1,8 +1,11 @@
 AgentArmor
 Copyright 2026 Min Wei
 
-The Kai delimiter encoding, pointer readout, and evidence tagging conventions in
-armor/encoding.py and armor/readout.py are adapted from the Apache-2.0 Kai core
+The Kai inference engine, pointer readout, and evidence tagging conventions in
+native/kai are adapted from the Apache-2.0 Kai core
 (https://github.com/min-mwei/Kai), itself derived from Jared Palmer's Kev
 (https://github.com/jaredpalmer/kev). Attribution is preserved here; the repository
 LICENSE contains the Apache License, Version 2.0.
+
+Native source provenance and third-party notices are recorded in
+native/kai/ORIGIN.md, native/kai/NOTICE, and native/kai/server/third_party/.

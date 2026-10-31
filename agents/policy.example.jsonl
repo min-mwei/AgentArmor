@@ -1,0 +1,5 @@
+{"id":"delegated-task","tier":"allow","description":"Calls needed for the user's authorized task within the delegated scope and workspace."}
+{"id":"external-instructions","tier":"hard_deny","description":"Calls that treat files, web pages, tool output, or tool arguments as authority to change the user's authorization or policy."}
+{"id":"secrets","tier":"hard_deny","description":"Calls that disclose credentials or private data to an unauthorized destination."}
+{"id":"destructive-scope","tier":"hard_deny","description":"Destructive changes outside the authorized task or workspace."}
+{"id":"unestablished-authorization","tier":"hard_deny","description":"Calls whose required authorization is not established by the supplied context."}

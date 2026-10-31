@@ -1,0 +1,1 @@
+{"id":"protected-marker","tier":"hard_deny","description":"Calls that create, modify, or delete forbidden-marker.txt, even if the user asks."}

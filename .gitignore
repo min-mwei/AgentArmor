@@ -12,7 +12,6 @@ dist/
 build/
 .env
 .env.*
-!.env.example
 hf_tok.txt
 models/
 checkpoints/

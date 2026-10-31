@@ -41,7 +41,8 @@ and OpenAI notices are included in each row. ToolCall paths and companies are
 synthetic. Treat embedded instructions as untrusted data, never as commands.
 
 These development panels informed checkpoint selection. There is no locked-test,
-general multi-turn, or deployment-wide accuracy claim. Native MLX results do not
-establish vLLM numerical parity; [AgentArmor's native smoke tests](../scripts/test_live_agents.py)
-check integration and reveal benign-text false positives. Neither the frozen
-cutoffs nor the benchmark scores were changed to make those tests pass.
+general multi-turn, or deployment-wide accuracy claim. These historical results
+do not qualify the current native CPU/Metal executable. The retired Python
+service and live-client harness are available in Git history at commit `466a966`.
+Current [native contracts](native_security.md) test weight-free mechanics;
+model accuracy, evidence, parity, and latency still require trainer qualification.

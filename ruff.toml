@@ -1,0 +1,7 @@
+# Optional development/test scripts only; AgentArmor has no Python runtime.
+target-version = "py311"
+line-length = 100
+extend-exclude = [".artifacts", ".agentarmor"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]

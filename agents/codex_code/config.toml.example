@@ -1,5 +1,6 @@
 # Merge into a trusted project's .codex/config.toml or ~/.codex/config.toml.
-# Replace /ABSOLUTE/PATH/AgentArmor with the path to this checkout.
+# Replace /ABSOLUTE/PATH/agentarmor with the trusted installed executable.
+# Native policy evaluation is unqualified: synchronous checks currently deny.
 # Install this inline configuration OR hooks.json.example, once.
 [features]
 hooks = true
@@ -9,16 +10,16 @@ matcher = ".*"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
 timeout = 30
-statusMessage = "Checking tool call with Kai"
+statusMessage = "Checking AgentArmor policy readiness"
 
 [[hooks.PostToolUse]]
 matcher = ".*"
 
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
 timeout = 120
 async = true
 
@@ -26,7 +27,7 @@ async = true
 
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
 timeout = 120
 async = true
 
@@ -34,5 +35,5 @@ async = true
 
 [[hooks.Stop.hooks]]
 type = "command"
-command = 'python3 "/ABSOLUTE/PATH/AgentArmor/agents/codex_code/hook.py"'
+command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
 timeout = 30

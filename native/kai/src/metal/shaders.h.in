@@ -1,0 +1,12 @@
+#pragma once
+namespace kai {
+inline constexpr char legacy_shader_source[] = R"KAI_SHADER(
+@KAI_LEGACY_SHADER_SOURCE@
+)KAI_SHADER";
+inline constexpr char optimized_shader_source[] = R"KAI_SHADER(
+@KAI_OPT_SHADER_SOURCE@
+)KAI_SHADER";
+inline constexpr char tensor_shader_source[] = R"KAI_SHADER(
+@KAI_TENSOR_SHADER_SOURCE@
+)KAI_SHADER";
+}
