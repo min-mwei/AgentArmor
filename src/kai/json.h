@@ -1,6 +1,6 @@
 // Strict, bounded JSON for model metadata. Keep the engine's typed view.
 #pragma once
-#include "../server/third_party/json.hpp"
+#include <json.hpp>
 #include <cmath>
 #include <cstdint>
 #include <limits>

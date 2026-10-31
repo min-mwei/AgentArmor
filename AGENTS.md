@@ -1,7 +1,7 @@
 # Working on AgentArmor
 
 Official Kai is the approximately 270M EmbeddingGemma-2 encoder. AgentArmor integrates only with that model family.
-The runtime is the native `agentarmor` executable in `native/kai`. Python serving,
+The runtime is the native `agentarmor` executable in `src`. Python serving,
 packaging, and agent launchers have been removed; Python is allowed for dev/test
 scripts only. The previous Qwen/vLLM backend is retired.
 
@@ -11,6 +11,9 @@ scripts only. The previous Qwen/vLLM backend is retired.
 - Keep agent-specific templates and guides in `agents/codex_code` and
   `agents/claude_code`; share native adapter and evaluation behavior in the
   executable. Templates must invoke an absolute `agentarmor` path directly.
+- Keep inference in `src/kai`, executable/transport code in `src/server`, C++
+  contracts in `tests/native`, and pinned dependencies in `third_party`.
+  Preserve attribution and the import provenance in `src/ORIGIN.md`.
 - Kai is a decision model. Preserve its pointer readout, delimiter escaping,
   isolated question rows, checkpoint temperature, and evidence offsets. Do not
   substitute generated text or vocabulary-logit classification for its head.

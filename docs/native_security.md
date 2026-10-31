@@ -8,11 +8,16 @@ execute. Numerical correctness and bounded memory take precedence over speed.
 
 ## Current status
 
-`native/kai` imports the Kai engine at the source revision recorded in
-[ORIGIN.md](../native/kai/ORIGIN.md). The upstream Kai tree remains untouched.
+`src` imports the Kai engine at the source revision recorded in
+[ORIGIN.md](../src/ORIGIN.md). The upstream Kai tree remains untouched.
 The native executable supports `doctor`, fail-closed hook checks, and explicitly
 requested encoded diagnostic serving with `--device cpu|gpu|auto`. The native
 text policy path is not qualified and reports `policy_ready: false`.
+
+The engine lives in `src/kai`, executable/transport code in `src/server`, and
+weight-free contracts in `tests/native`. Vendored dependencies are isolated in
+`third_party`. CMake emits the executable and test helpers under
+`build/<config>/bin`.
 
 The Python `armor/` package, HTTP service, agent launchers, installer,
 `.env.example`, and project metadata have been removed. Python remains only in
@@ -144,6 +149,8 @@ Host: Apple M5 Max, macOS 27.0.1, AppleClang 21, macOS SDK 27.0.
 | Protocol mutation runner | 20,000 cases per suite run | Bounded deterministic mutations, not coverage-guided libFuzzer |
 | Python developer tests | 23 passed against each Release, ASan/UBSan, and TSan binary; Ruff lint/format passed | Native templates without Python on PATH, malformed hook input, preserved fixture integrity, and source hygiene |
 | Native dependency inspection | System frameworks/libc++ only; no Python runtime | Release executable |
+| Staged CMake install | Executable and all 5 license/notice files verified | Temporary prefix; `doctor` runs without Python on PATH |
+| Vendored dependency inventory | 4/4 SHA-256 hashes match checked-in files | Header bytes unchanged; license whitespace normalization recorded |
 
 The optional libFuzzer target could not link with this AppleClang distribution
 because its libFuzzer archive is absent; configuration now rejects that option
@@ -156,7 +163,7 @@ unmeasured in this review.
 Prepare assets locally:
 
 ```sh
-bash scripts/package_macos.sh --binary build/release/native/kai/server/agentarmor --version 0.1.0 --out dist/0.1.0
+bash scripts/package_macos.sh --binary build/release/bin/agentarmor --version 0.1.0 --out dist/0.1.0
 ```
 
 This creates `agentarmor-macos-arm64.tar.gz`, its SHA-256 file, and a

@@ -57,8 +57,9 @@ only when the agent calls a synchronous hook before the action.
 
 ## Target distribution: one AgentArmor executable
 
-**Current migration:** `native/kai` now contains the adopted engine, native
-command entry point, encoded diagnostic transport, and security contracts.
+**Current migration:** `src` contains the adopted engine, command entry point,
+and encoded diagnostic transport. Weight-free contracts live in `tests/native`;
+pinned dependencies live in `third_party`.
 The Python `armor/` service/package, agent launchers, `.env.example`,
 `install.py`, and `pyproject.toml` have been removed. Python remains only in
 optional developer tests; training/export/MLX reference tools belong in Kai.
@@ -117,7 +118,7 @@ readout, and failure semantics.
 Installed hook commands should reference the executable by an absolute path:
 `"/trusted/bin/agentarmor" hook --agent claude_code`. They must not invoke
 `python3`, a Python virtual environment, a hidden Python subprocess, or a
-separate `kaiinfer-server`.
+separate inference executable.
 
 Local IPC should authenticate the OS user through a Unix socket or Windows named
 pipe with restrictive permissions. Loopback HTTP is an optional compatibility
@@ -186,7 +187,7 @@ Recommended ownership:
 Use one production source of the native engine. During migration, Kai's parity
 tools may consume a pinned AgentArmor library/build or a temporary compatibility
 path. Coordinate with the trainer before moving files used by active jobs.
-The production snapshot has now been imported into `native/kai`; Kai's source
+The production snapshot has now been imported into `src`; Kai's source
 paths and active trainer working tree were left intact.
 
 ### Installation and release policy
@@ -366,15 +367,15 @@ and host-side effect enforcement.
 
 | Component | Responsibility | Current status/location | Refactoring direction |
 | --- | --- | --- | --- |
-| Agent adapter | Decode native hook input and encode native deny/advisory output | `native/kai/server/main.cpp`; templates in `agents/` | Minimal deny/incomplete behavior implemented; add qualified event-specific adapters |
+| Agent adapter | Decode native hook input and encode native deny/advisory output | `src/server/main.cpp`; templates in `agents/` | Minimal deny/incomplete behavior implemented; add qualified event-specific adapters |
 | Hook client | Bounded local I/O, authenticated transport, fail-closed response handling | Bounded stdin implemented; policy IPC absent | Add authenticated native IPC/HTTP client |
 | Event normalizer | Produce a common typed security event | Not implemented | Add a versioned, lossless contract |
 | Policy loader | Load, validate, layer, and identify user policies | Not implemented; examples in `agents/` | Separate policy trust from environment variables |
 | Effect enricher | Add canonical path, destination, resource, and sensitivity facts | Not yet a distinct component | Add deterministic enrichers with `known/unknown` status |
 | Session state | Preserve provenance and security-relevant flows across calls | Not implemented | Add bounded session/turn state and taint edges |
 | Renderer | Convert structured state into a registered Kai profile | Migration fixtures in `tests/fixtures`; native implementation absent | Version per workload and preserve exact offset maps |
-| Kai backend | Run the pinned encoder, pointer head, and evidence head | `native/kai/src` engine; text frontend absent | Qualify native tokenizer/readout/package path against Kai's MLX reference |
-| Decision service | Authenticate, invoke Kai, apply registered cutoff, return evidence | `native/kai/server` encoded diagnostics only | Add a unified authenticated event decision endpoint; explicitly version any legacy compatibility |
+| Kai backend | Run the pinned encoder, pointer head, and evidence head | `src/kai` engine; text frontend absent | Qualify native tokenizer/readout/package path against Kai's MLX reference |
+| Decision service | Authenticate, invoke Kai, apply registered cutoff, return evidence | `src/server` encoded diagnostics only | Add a unified authenticated event decision endpoint; explicitly version any legacy compatibility |
 | Audit sink | Record redacted decision metadata and coverage | Not implemented | Add opt-in, bounded, privacy-preserving audit events |
 
 The split between agent-specific templates and shared evaluation behavior should
@@ -392,16 +393,16 @@ still installed or available as an operational fallback:
 
 | Retired baseline or source | Native destination | Attack workloads addressed |
 | --- | --- | --- |
-| `armor/hooks.py`, `agents/<agent>/hook.py` | `native/adapters/` plus CLI hook entry point | Native event/denial semantics for every covered action; K03–K05, K08–K13 |
-| `armor/scan_client.py`, environment-backed policy/service config | `native/trust/`, `native/transport/` | Protected policy/task/service identity, no redirects, event-bound replies; K01, K07, K18 |
-| `armor/schemas.py`, `armor/history.py` | `native/events/` | Typed provenance, IDs, authorization boundaries, coverage, and versioned parsing; K08, K11–K14 |
-| Policy parsing/rendering in `armor/v0.py` | `native/policy/`, `native/render/` | User-authored rule precedence, complete rendering, role isolation; K01–K18 when observable |
-| New effect enrichers | `native/effects/` | CWD, canonical targets, symlinks, executable identity, sink/account facts; K02–K06, K09, K15–K17 |
-| `background_scan`, `armor/scans.py` | `native/observations/`, `native/state/` | Exact snapshots, pending observations, complete chunks, ordered cross-tool flows; K07–K13 |
-| `armor/package.py`, `armor/kai.py`, Kai tokenizer/encoder/readout contracts | `native/model/` | Package/branch identity, native tokenization, pointer/evidence readout, strict length limits; all model workloads |
-| `Kai/infer/src`, reusable scheduler/device coordination | `native/kai/`, `native/scheduling/` | CPU/Metal execution with isolated records and bounded guard latency |
-| `armor/server.py`, `armor/cli.py` | `native/service/`, `native/app/` | Same high-level decisions through CLI, hooks, IPC, or authenticated HTTP |
-| New prelaunch checker | `native/launch/` | Bootstrap inventory and protected invocation; K01, K02, K07, K15, K18 |
+| `armor/hooks.py`, `agents/<agent>/hook.py` | `src/adapters/` plus CLI hook entry point | Native event/denial semantics for every covered action; K03–K05, K08–K13 |
+| `armor/scan_client.py`, environment-backed policy/service config | `src/trust/`, `src/transport/` | Protected policy/task/service identity, no redirects, event-bound replies; K01, K07, K18 |
+| `armor/schemas.py`, `armor/history.py` | `src/events/` | Typed provenance, IDs, authorization boundaries, coverage, and versioned parsing; K08, K11–K14 |
+| Policy parsing/rendering in `armor/v0.py` | `src/policy/`, `src/render/` | User-authored rule precedence, complete rendering, role isolation; K01–K18 when observable |
+| New effect enrichers | `src/effects/` | CWD, canonical targets, symlinks, executable identity, sink/account facts; K02–K06, K09, K15–K17 |
+| `background_scan`, `armor/scans.py` | `src/observations/`, `src/state/` | Exact snapshots, pending observations, complete chunks, ordered cross-tool flows; K07–K13 |
+| `armor/package.py`, `armor/kai.py`, Kai tokenizer/encoder/readout contracts | `src/model/` | Package/branch identity, native tokenization, pointer/evidence readout, strict length limits; all model workloads |
+| `Kai/infer/src`, reusable scheduler/device coordination | `src/kai/`, `src/server/` | CPU/Metal execution with isolated records and bounded guard latency |
+| `armor/server.py`, `armor/cli.py` | `src/service/`, `src/app/` | Same high-level decisions through CLI, hooks, IPC, or authenticated HTTP |
+| New prelaunch checker | `src/launch/` | Bootstrap inventory and protected invocation; K01, K02, K07, K15, K18 |
 
 Host-only K06/K10/K14/K16/K17 paths remain external integration work where no
 native event can deny them. Placing an attack in a module's workload column

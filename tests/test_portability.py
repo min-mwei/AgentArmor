@@ -28,16 +28,10 @@ def test_sources_do_not_embed_machine_paths_or_credentials(repo_root):
         ".ini",
     }
     files = [
-        path
-        for path in repo_root.iterdir()
-        if path.is_file() and (not path.name.startswith(".") or path.name == ".env.example")
+        path for path in repo_root.iterdir() if path.is_file() and not path.name.startswith(".")
     ]
-    for name in ("agents", "native", "scripts", "tests", "docs", ".github"):
-        files.extend(
-            path
-            for path in (repo_root / name).rglob("*")
-            if path.is_file() and "third_party" not in path.parts
-        )
+    for name in ("agents", "src", "scripts", "tests", "docs"):
+        files.extend(path for path in (repo_root / name).rglob("*") if path.is_file())
     for path in files:
         if path.suffix not in suffixes:
             continue

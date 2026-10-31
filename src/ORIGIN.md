@@ -4,6 +4,10 @@ Imported production engine and weight-free C++ tests from `Kai/infer` at
 commit `164ef847ea920a5297167e5c078dff6a7d704297`.
 The Kai working tree and trainer-owned files were not moved or edited.
 
+AgentArmor organizes the imported engine in `src/kai`, runtime/transport in
+`src/server`, weight-free tests in `tests/native`, and vendored headers/licenses
+in `third_party`.
+
 Local changes begin with the macOS build, native command surface, model parsing,
 and security regression tests. Preserve this provenance and the accompanying
 NOTICE and third-party license files when updating the snapshot.

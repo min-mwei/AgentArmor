@@ -1,6 +1,6 @@
 #pragma once
 #include "model.h"
-#include "third_party/json.hpp"
+#include <json.hpp>
 
 namespace kai::wire {
 using Json = nlohmann::json;

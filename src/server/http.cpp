@@ -1,7 +1,7 @@
 #include "http.h"
 #include "execution.h"
 #include "protocol.h"
-#include "third_party/httplib.h"
+#include <httplib.h>
 #include <algorithm>
 
 namespace kai::server {

@@ -36,13 +36,17 @@ release assets before it can be used.
 
 ## Build and check
 
+The source layout is `src/kai` for inference, `src/server` for the executable
+and transport, `tests/native` for C++ contracts, and `third_party` for pinned
+dependencies. Executables are built under `build/<config>/bin`.
+
 Use CMake and a native Apple Silicon Xcode toolchain:
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release -j 4
 ctest --test-dir build/release --output-on-failure -LE metal-compile
-build/release/native/kai/server/agentarmor doctor
+build/release/bin/agentarmor doctor
 cmake --install build/release --prefix "$HOME/.local"
 ```
 

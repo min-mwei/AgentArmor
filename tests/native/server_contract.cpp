@@ -2,7 +2,7 @@
 #include "device_lock.h"
 #include "http.h"
 #include "protocol.h"
-#include "third_party/httplib.h"
+#include <httplib.h>
 #include <cstdlib>
 #include <iostream>
 #include <fstream>

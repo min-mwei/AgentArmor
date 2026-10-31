@@ -15,9 +15,7 @@ def repo_root():
 @pytest.fixture(scope="session")
 def native_binary(repo_root, tmp_path_factory):
     source = Path(
-        os.environ.get(
-            "AGENTARMOR_TEST_BINARY", repo_root / "build/release/native/kai/server/agentarmor"
-        )
+        os.environ.get("AGENTARMOR_TEST_BINARY", repo_root / "build/release/bin/agentarmor")
     ).resolve()
     if not source.is_file():
         pytest.fail("Build agentarmor first or set AGENTARMOR_TEST_BINARY to the native executable")

@@ -19,15 +19,15 @@ class ResidentEngine : public Engine {
     std::unique_ptr<Engine> engine_;
   public:
     ResidentEngine(const std::string& weights, const std::string& backend) {
-        DeviceLock lock("kaiinfer-server: load " + backend);
+        DeviceLock lock("agentarmor: load " + backend);
         engine_ = make_engine(weights, backend);
     }
     Response run(const Request& r, bool states) override {
-        DeviceLock lock("kaiinfer-server: " + name());
+        DeviceLock lock("agentarmor: " + name());
         return engine_->run(r, states);
     }
     BatchResponse run_batch(const std::vector<Request>& requests, bool states) override {
-        DeviceLock lock("kaiinfer-server: " + name());
+        DeviceLock lock("agentarmor: " + name());
         return engine_->run_batch(requests, states);
     }
     std::string name() const override { return engine_->name(); }
