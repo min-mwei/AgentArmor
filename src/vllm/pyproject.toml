@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentarmor-vllm"
+version = "0.1.0"
+requires-python = ">=3.11,<3.14"
+dependencies = ["vllm==0.19.0", "numpy>=2,<3", "safetensors>=0.5,<1", "pydantic>=2.9,<3"]
+
+[project.scripts]
+agentarmor-vllm = "agentarmor_vllm.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentarmor_vllm*"]

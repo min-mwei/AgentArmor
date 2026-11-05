@@ -1,9 +1,8 @@
 # Working on AgentArmor
 
-Official Kai is the approximately 270M EmbeddingGemma-2 encoder. AgentArmor integrates only with that model family.
-The runtime is the native `agentarmor` executable in `src`. Python serving,
-packaging, and agent launchers have been removed; Python is allowed for dev/test
-scripts only. The previous Qwen/vLLM backend is retired.
+Kai now uses Qwen3.5-4B-Base. The user requested the Qwen/vLLM and native Metal
+refactor on 2026-11-05; the previous EG2-only and no-Python-serving rules are retired.
+Python serving is isolated in `src/vllm`; the native hook client has no Python dependency.
 
 - Work on `dev`. `main` is reserved for reviewed releases. Keep these as the two
   permanent branches.
@@ -11,8 +10,9 @@ scripts only. The previous Qwen/vLLM backend is retired.
 - Keep agent-specific templates and guides in `agents/codex_code` and
   `agents/claude_code`; share native adapter and evaluation behavior in the
   executable. Templates must invoke an absolute `agentarmor` path directly.
-- Keep inference in `src/kai`, executable/transport code in `src/server`, C++
-  contracts in `tests/native`, and pinned dependencies in `third_party`.
+- Keep the vLLM baseline in `src/vllm`, native code in `src/native`, Apple kernels
+  in `src/native/metal`, C++ contracts in `tests/native`, and vendored dependencies
+  in `third_party`.
   Preserve attribution and the import provenance in `src/ORIGIN.md`.
 - Kai is a decision model. Preserve its pointer readout, delimiter escaping,
   isolated question rows, checkpoint temperature, and evidence offsets. Do not
@@ -25,7 +25,7 @@ scripts only. The previous Qwen/vLLM backend is retired.
 - Preserve whole-input scan coverage. Refuse oversized or unencodable input;
   never silently truncate a document or return a clear verdict after a partial scan.
 - Run `ruff check .`, `ruff format --check .`, and `pytest` with the project
-  environment for retained dev/test scripts. Build and run native CTest contracts
+  environment for the baseline and dev/test scripts. Build and run native CTest contracts
   in Release, ASan/UBSan, and separate TSan configurations; check leaks after
   native lifetime changes. Distinguish CPU contracts from GPU/model validation.
 - Native text policy/tokenizer integration is unqualified. Keep `policy_ready:

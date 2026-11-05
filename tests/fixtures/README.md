@@ -16,3 +16,10 @@ compatibility. A richer trust/event format requires a new profile. The Kai
 trainer must still provide the full tokenizer/layout/readout golden set and
 CPU/Metal parity fixtures specified in
 [Kai_requirements.md](https://github.com/min-mwei/Kai/blob/dev/docs/Kai_requirements.md#native-tokenizerencoding-golden-fixtures).
+
+`qwen_encoding.json` was generated from Kai's unmodified `train/kai/api.py` and
+`train/kai/qwen/encode.py` at `25a73b0fd2bb1d8aced73bb7de5937c0e58f5a59`.
+It uses synthetic text and a character tokenizer defined in `test_vllm_baseline.py`.
+It freezes nested rendering, canonical Choice order, Noul/Score options, Unicode,
+delimiter escaping, pause/no-pause layouts and branch readout offsets. It verifies
+source-port fidelity, not the real Qwen tokenizer or model.

@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr const char* armor_metal_source = R"ARMOR(@ARMOR_METAL_SOURCE@)ARMOR";

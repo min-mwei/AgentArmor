@@ -19,7 +19,6 @@ endif()
 
 option(AGENTARMOR_METAL "Build Apple Metal engines" ON)
 option(AGENTARMOR_BUILD_TESTS "Build weight-free security and contract tests" ON)
-option(AGENTARMOR_BUILD_FUZZERS "Build Clang libFuzzer targets" OFF)
 if(AGENTARMOR_METAL)
   enable_language(OBJCXX)
   set(CMAKE_OBJCXX_STANDARD 17)
@@ -49,12 +48,13 @@ if(AGENTARMOR_BUILD_TESTS)
   enable_testing()
 endif()
 add_subdirectory(src)
-if(AGENTARMOR_BUILD_TESTS OR AGENTARMOR_BUILD_FUZZERS)
+if(AGENTARMOR_BUILD_TESTS)
   add_subdirectory(tests/native)
 endif()
 
 install(TARGETS agentarmor RUNTIME DESTINATION bin)
 install(FILES LICENSE NOTICE DESTINATION share/agentarmor COMPONENT licenses)
 install(FILES src/NOTICE DESTINATION share/agentarmor RENAME Kai-NOTICE COMPONENT licenses)
-install(FILES third_party/httplib.LICENSE third_party/json.LICENSE
+install(FILES third_party/json.LICENSE
+  third_party/splash.LICENSE third_party/splash.NOTICES
   DESTINATION share/agentarmor COMPONENT licenses)

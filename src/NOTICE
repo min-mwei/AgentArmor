@@ -1,3 +1,18 @@
+AgentArmor Qwen runtime
+
+Kai renderer, tokenizer layout and pointer readout adaptations:
+https://github.com/min-mwei/Kai, Apache License 2.0.
+Revision 25a73b0fd2bb1d8aced73bb7de5937c0e58f5a59.
+
+Metal reduction and DeltaNet scan adaptations:
+Splash, https://github.com/incoai/splash, Apache License 2.0.
+Revision 031a25a6125af2d7acf7096580afe56eb33d65bc.
+Modified by AgentArmor for standalone FP32 decision-kernel development.
+License and original third-party notices are in third_party/splash.*.
+
+Historical notices for the removed EG2 engine follow for provenance. The
+GemmaEmbed, Hunch and MLX kernels below are no longer shipped in this source tree.
+
 Small inference kernels
 
 The Metal matrix, attention and elementwise kernels adapt portions of GemmaEmbed:

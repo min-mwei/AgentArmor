@@ -1,4 +1,4 @@
-# Optional development/test scripts only; AgentArmor has no Python runtime.
+# Python serving is isolated to src/vllm; native clients have no Python dependency.
 target-version = "py311"
 line-length = 100
 extend-exclude = [".artifacts", ".agentarmor"]

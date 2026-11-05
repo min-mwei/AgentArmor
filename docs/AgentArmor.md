@@ -1,3 +1,7 @@
+> Historical EG2/native-only architecture proposal. The 2026-11-05 user-directed
+> Qwen refactor supersedes its implementation status, source paths and ban on
+> Python serving. See [current runtime review](runtime_refactor.md) and the root README.
+
 # AgentArmor architecture and refactoring guide
 
 > Design snapshot: 2026-10-30. This document describes both the current

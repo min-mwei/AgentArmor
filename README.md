@@ -1,109 +1,73 @@
 # AgentArmor
 
-AgentArmor is a native policy gate for Codex and Claude Code. Users author the
-policies; Kai, the official approximately 270M EmbeddingGemma-2 decision encoder,
-provides semantic decisions through its trained pointer and evidence heads.
-The architecture is `Codex / Claude <--> agentarmor executable`, with hook,
-CLI, and resident server modes sharing one evaluation implementation.
+AgentArmor is being rebuilt around Kai's Qwen3.5-4B decision model. The old
+EmbeddingGemma engine and encoded server have been removed from `src` (their
+history remains in Git).
 
-**Development status:** the CPU/Apple Metal engine, encoded diagnostic server,
-strict input parsing, and weight-free security contracts are implemented.
-Native text tokenization, policy evaluation, package qualification, and complete
-hook integration remain in progress. `agentarmor doctor` reports
-`policy_ready: false`. Synchronous hooks currently deny every check;
-observation hooks report incomplete coverage without scanning. This build is
-not ready for policy-based production enforcement.
+- `src/vllm`: Python diagnostic baseline, using vLLM's causal token hidden
+  states and Kai's trained pointer head. It serves `POST /v1/systemone`.
+- `src/native`: C++ numerical references and the native `agentarmor` hook client.
+- `src/native/metal`: Apple Silicon kernels and Objective-C++ dispatch for RMSNorm,
+  projected pointer scores, and the 128-dimensional DeltaNet recurrence.
 
-The Python service, `armor/` package, agent launchers, installer, and project
-metadata have been removed. Python is used only for optional developer tests.
-Kai's canonical MLX training/export/parity tools remain in the Kai repository.
+**Status:** this is an unqualified development implementation. The vLLM adapter
+has weight-free tests but has not been run against a Qwen export on supported
+hardware. Native Qwen weight loading, transformer execution, tokenization and
+serving are not implemented. Metal kernels are not yet performance-qualified.
+`policy_ready` remains false, hooks deny synchronous checks, and background
+observations report incomplete coverage. No production attack-prevention claim
+is made. Qwen's current evidence head is frozen and untrained; spans are not returned.
 
-## Install
+## vLLM baseline
 
-The intended release installation command is:
+Use a separate Linux environment supported by vLLM; the native Mac client does
+not depend on it. See [baseline setup and package contract](src/vllm/README.md).
 
 ```sh
-curl -fsSL https://github.com/min-mwei/AgentArmor/releases/latest/download/install.sh | bash
+python -m pip install ./src/vllm
+agentarmor-vllm --package /path/to/qualified-merged-export --port 8009
 ```
 
-The installer downloads a prebuilt arm64 executable, verifies SHA-256, and
-installs it in `~/.local/bin` (override with `AGENTARMOR_INSTALL_DIR`). It needs
-no Python, compiler, sudo, or separate Kai process. The initial platform is
-macOS 15+ on Apple Silicon M4+, with M5 Max Metal optimization as the main
-performance target. Initial releases may be unsigned; notarization is excluded.
-This change does not publish a release, so the command needs prepared GitHub
-release assets before it can be used.
+The listener binds to loopback. It requires the trained, merged model and its
+pointer tensors, not the base model alone. Each question runs as a complete
+independent causal row, preserving both attention and recurrent-state isolation.
+There is no generation, draft model, DFlash, or vocabulary-logit classification.
 
-## Build and check
-
-The source layout is `src/kai` for inference, `src/server` for the executable
-and transport, `tests/native` for C++ contracts, and `third_party` for pinned
-dependencies. Executables are built under `build/<config>/bin`.
-
-Use CMake and a native Apple Silicon Xcode toolchain:
+## Native build
 
 ```sh
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release -j 4
-ctest --test-dir build/release --output-on-failure -LE metal-compile
+ctest --test-dir build/release --output-on-failure -LE gpu
 build/release/bin/agentarmor doctor
-cmake --install build/release --prefix "$HOME/.local"
 ```
 
-`--device cpu|gpu|auto` selects the diagnostic server's startup mode:
+Use `-DAGENTARMOR_METAL=OFF` for CPU-only contracts and clients. The native target
+is macOS 15+ arm64. `agentarmor serve` was removed with the EG2 backend; it now
+fails explicitly. The client remains independent of Python and GPU runtimes.
 
 ```sh
-agentarmor serve --encoded-only --device cpu --weights /path/to/merged-export
-agentarmor serve --encoded-only --device gpu --weights /path/to/merged-export
-```
-
-GPU means Apple Metal; explicit GPU mode never falls back silently. `auto`
-chooses Metal when available, otherwise CPU, at startup. CPU-only builds use
-`-DAGENTARMOR_METAL=OFF`. Encoded diagnostics accept token/layout arrays and
-return logits; they are not the text policy API. Model-backed runs require a
-trainer-approved device window and the exact qualified package.
-
-Optional development checks use Python 3.11+:
-
-```sh
-python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
 .venv/bin/pytest
 ```
 
-These checks exercise shipped templates against the built native executable,
-including paths containing spaces and execution without Python on `PATH`.
-Override the test binary with `AGENTARMOR_TEST_BINARY`. Native security checks
-also require separate ASan/UBSan, TSan, and leak runs; see the
-[security guide](docs/native_security.md). Weight-free contracts do not qualify
-model accuracy, GPU safety, evidence, or latency.
+Run sanitizer, leak and optional Metal checks as described in
+[local validation](docs/native_security.md). Tests use synthetic data, not weights.
 
-## Agent hooks and policies
+## Integration and provenance
 
-[Codex templates](agents/codex_code/README.md) and
-[Claude Code templates](agents/claude_code/README.md) invoke an absolute
-`agentarmor` path directly. They currently block synchronous tool use until the
-native policy frontend is qualified. Installing these development templates
-does not establish attack prevention.
+[Codex](agents/codex_code/README.md) and [Claude Code](agents/claude_code/README.md)
+templates invoke an absolute native executable path. They remain fail-closed
+until an end-to-end policy evaluator is qualified. Diagnostic probabilities
+never grant an agent permission.
 
-[Example policy](agents/policy.example.jsonl) uses one concise rule per JSONL
-line: `id`, `tier`, and `description`. The
-[smoke policy](agents/policy.smoke.jsonl) protects one marker file. AgentArmor
-will parse these files and render valid rules in Kai's registered training
-format; the native policy loader is not yet implemented.
-Qualified allows must abstain from the agent's existing permission flow;
-synchronous errors must deny. Background observations are advisory and cannot
-undo completed actions. Whole inputs must be scanned or explicitly refused.
+The [source review](docs/runtime_refactor.md) records the Kai and Splash findings,
+what was removed, and the remaining integration work.
+[Source provenance](src/ORIGIN.md) and [notices](src/NOTICE) accompany copied code.
+The older [architecture proposal](docs/AgentArmor.md) is historical.
 
-## Design and development
-
-- [Attack research: sources, dates, tactics, and examples](docs/agent_attacks.md)
-- [AgentArmor architecture and attack-by-attack refactoring](docs/AgentArmor.md)
-- [Kai trainer requirements and native qualification](https://github.com/min-mwei/Kai/blob/dev/docs/Kai_requirements.md)
-- [Native security review, local tests, and release gates](docs/native_security.md)
-- [Historical model results](docs/benchmarks.md)
-
-Work on `dev`; `main` is reserved for reviewed releases. GitHub Actions is
-disabled; run checks locally. Do not commit weights, secrets, or raw chat logs.
+Work on `dev`; `main` is reserved for reviewed releases. GitHub Actions is disabled.
+Do not commit model weights, secrets or chat logs. Local packaging scripts remain
+available, but currently package only the unqualified native client.
