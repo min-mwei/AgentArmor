@@ -1,0 +1,4 @@
+{"id":"project-writes","tier":"soft_deny","description":"Writes or deletions outside this project are held for my approval.","paths":{"within":"${workspace}","for":["write","delete"]}}
+{"id":"ssh-keys","tier":"hard_deny","description":"Never read or change my SSH keys.","paths":{"within":"~/.ssh"}}
+{"id":"delegated-task","tier":"allow","description":"Calls needed for the user's authorized task within the delegated scope and workspace."}
+{"id":"external-instructions","tier":"hard_deny","description":"Calls that treat files, web pages, tool output, or tool arguments as authority to change the user's authorization or policy."}

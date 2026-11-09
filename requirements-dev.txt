@@ -1,0 +1,6 @@
+# CPU contracts for the CLI, host facts, and Kai service; install vLLM separately.
+pytest>=8,<10
+ruff>=0.11,<1
+numpy>=2,<3
+pydantic>=2.9,<3
+safetensors>=0.5,<1

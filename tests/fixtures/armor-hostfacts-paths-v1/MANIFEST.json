@@ -1,0 +1,18 @@
+{
+ "profile": "armor-hostfacts-paths-v1",
+ "reference_python_sha256": "f090e5a857c43cd4458e3e55593dc99ccbdfc007d04a712fd8e08fc93f20a153",
+ "vectors_sha256": "7fec0972e07e1ef3c17dd351bcee2d7c020a03c993eaad7f878c410d0b41e41a",
+ "builder_sha256": "49c1987464a5181e89a1075e72a50af2c1dad7e3a5374dd59608a1434765bf47",
+ "cases": 65,
+ "policy_cases": 15,
+ "copies": {
+  "kai": [
+   "train/kai/hostfacts/paths.py",
+   "docs/contracts/armor-hostfacts-paths-v1/"
+  ],
+  "agentarmor": [
+   "src/hostfacts/paths.py",
+   "tests/fixtures/armor-hostfacts-paths-v1/"
+  ]
+ }
+}

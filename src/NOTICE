@@ -1,0 +1,57 @@
+AgentArmor vLLM runtime
+
+Kai renderer, tokenizer layout and pointer readout adaptations:
+https://github.com/min-mwei/Kai, Apache License 2.0.
+Revision 25a73b0fd2bb1d8aced73bb7de5937c0e58f5a59.
+
+Historical imports removed on 2026-11-08:
+
+Kai MLX inference closure, formerly copied unmodified
+except kai/guard.py, which AgentArmor replaced with a serving shim:
+https://github.com/min-mwei/Kai, Apache License 2.0.
+Revision 034fbb7d12da7dabea3b66a258546a295a025cde.
+
+Removed Metal reduction and DeltaNet scan adaptations:
+Splash, https://github.com/incoai/splash, Apache License 2.0.
+Revision 031a25a6125af2d7acf7096580afe56eb33d65bc.
+Modified by AgentArmor for standalone FP32 decision-kernel development.
+Upstream license and original notices: https://github.com/incoai/splash.
+No Splash code is included in the current source tree.
+
+Historical notices for the removed EG2 engine follow for provenance. The
+GemmaEmbed, Hunch and MLX kernels below are no longer shipped in this source tree.
+
+Small inference kernels
+
+The Metal matrix, attention and elementwise kernels adapt portions of GemmaEmbed:
+https://github.com/maralski/gemma-embed-swift
+Revision 5d10200c6a6dfd4cece6b34e3707f3972c153ef1
+Copyright 2026 Peter Marelas. Licensed under the Apache License, Version 2.0.
+GemmaEmbed's NOTICE states that the product includes no model weights, that Google
+and ggml-org distribute model weights separately under their own Apache-2.0
+licenses, and that Gemma is a Google trademark. It is not affiliated with Google.
+Google's deployment policy is https://ai.google.dev/gemma/prohibited_use_policy.
+
+Small modifies the attention mask and work schedule for isolated question branches,
+adds bounded partial tiles, uses bf16 GEMM weights and Small's trained readout heads,
+and implements a C++/Objective-C++ runtime. The optional TensorOps projection was
+written against Apple's Metal Performance Primitives API and documentation.
+
+The applicable Apache-2.0 license is in the Kai repository's LICENSE file.
+
+The CPU lane-FMA organization, flop-sized task grouping and blocked attention were
+informed by Hunch's eg2cpu (simd.rs and model.rs):
+https://github.com/undrgrnd-labs/hunch
+Revision 22cf73010b0d399894068b1b9d21c5e4101514b6
+Copyright 2026 The hunch authors.
+Hunch is dual-licensed under MIT or Apache-2.0; these adaptations use Apache-2.0.
+Small uses its own eight-column packing, Accelerate products, persistent scratch
+and isolated-branch interval masks. No Hunch model weights or classifiers are included.
+
+The TensorOps attention fragment mapping and register MMA adapt MLX's
+mlx/backend/metal/kernels/steel/attn/nax.h:
+https://github.com/ml-explore/mlx
+Revision 36969c094354086e15d2a327a9c50feb20b9cf11 (v0.32.4)
+Copyright 2025 Apple Inc. Licensed under Apache-2.0.
+Small adds isolated state/branch intervals, exact positional windows, bounded
+query/key tails, and cooperative head-dimension shards with fp32 softmax.

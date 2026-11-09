@@ -1,0 +1,8 @@
+# Serving and the lightweight hook CLI live in src/vllm.
+target-version = "py311"
+line-length = 100
+# benchset/score.py is a hash-pinned published artifact (benchset/manifest.json); never reformat it.
+extend-exclude = [".artifacts", ".agentarmor", "benchset"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]

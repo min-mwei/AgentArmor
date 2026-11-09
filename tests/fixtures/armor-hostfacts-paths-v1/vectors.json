@@ -1,0 +1,3858 @@
+{
+ "profile": "armor-hostfacts-paths-v1",
+ "status": "Hand-written expectations. The Python reference (two identical copies, Kai and AgentArmor) and AgentArmor's native port must reproduce every case exactly.",
+ "cases": [
+  {
+   "id": "abs_plain_inside",
+   "why": "absolute path inside a declared root",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/data/report.csv",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/report.csv"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ],
+    "facts": [
+     {
+      "name": "call_path_1_resolved",
+      "value": "/srv/data/report.csv",
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Host resolution of call argument /call/arguments/path for read: working directory /work/proj, no ~ or $VAR expansion (file API), symbolic links from the host snapshot, final link followed."
+     },
+     {
+      "name": "call_path_1_inside_roots_of",
+      "value": [
+       "data-scope"
+      ],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules with a declared root that contains call_path_1_resolved (equal or beneath, component by component, case-sensitive; roots resolved through the same symbolic links). Rules whose paths field does not cover read are in neither list. Containment only: not a rule match, exception or decision."
+     },
+     {
+      "name": "call_path_1_outside_roots_of",
+      "value": [],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules none of whose declared roots contains call_path_1_resolved. Rules whose paths field does not cover read are in neither list. Containment only: not a rule match, exception or decision."
+     }
+    ]
+   }
+  },
+  {
+   "id": "no_path_rules_only_resolution",
+   "why": "a policy without path rules gets the resolved path only",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "notes/todo.md",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/proj/notes/todo.md"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "no_path_effects_no_facts",
+   "why": "a call with no path effect gets no path facts",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": []
+   }
+  },
+  {
+   "id": "dotdot_escapes_root",
+   "why": "dot segments leave the project; the surface starts inside it",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "../../etc/passwd",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/etc/passwd"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "project"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "dotdot_stays_inside",
+   "why": "legitimate dot segments that stay inside (allow-side near miss)",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "src/../docs/./a.md",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/proj/docs/a.md"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "project"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "dotdot_clamps_at_slash",
+   "why": ".. never goes above /",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/../../x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/x"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "duplicate_slashes",
+   "why": "duplicate separators collapse",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "//srv///data//f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/f"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "prefix_sibling_dash",
+   "why": "a string-prefix sibling is outside (CVE-2025-53110 class)",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/data-old/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data-old/f"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "data-scope"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "prefix_sibling_word",
+   "why": "a longer sibling name is outside",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/database",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/database"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "data-scope"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "root_itself_is_inside",
+   "why": "the root directory itself counts as inside",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/data",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "slash_root_contains_all",
+   "why": "a declared root of / contains every path",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/etc/hosts",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "everything",
+      "roots": [
+       "/"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/etc/hosts"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "everything"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "percent_not_decoded",
+   "why": "file paths are not percent-decoded",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/data/%2e%2e/etc",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/%2e%2e/etc"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "several_roots_any_contains",
+   "why": "a rule with several roots contains a path inside any of them",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/cache/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "work-dirs",
+      "roots": [
+       "/srv/data",
+       "/srv/cache"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/cache/x"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "work-dirs"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "lists_follow_policy_order",
+   "why": "both lists keep the policy's rule order",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/data/in.csv",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "z-last",
+      "roots": [
+       "/srv"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     },
+     {
+      "rule_id": "a-secrets",
+      "roots": [
+       "/homes/ana/.ssh"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     },
+     {
+      "rule_id": "m-data",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/in.csv"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "z-last",
+       "m-data"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "a-secrets"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "tilde_literal_file_api",
+   "why": "a file API that does not expand ~ takes it literally",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~/notes",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/proj/~/notes"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "tilde_file_api",
+   "why": "a file API that expands ~ (expanduser) reaches the home directory",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~/notes",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "tilde"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "ssh-keys",
+      "roots": [
+       "/homes/ana/.ssh"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/homes/ana/notes"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "ssh-keys"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "tilde_file_api_keeps_var_literal",
+   "why": "the tilde mode does not expand $VAR",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~/$DATA",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "tilde"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/homes/ana/$DATA"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "tilde_unquoted_shell",
+   "why": "an unquoted shell word expands ~/",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~/notes",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/homes/ana/notes"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "tilde_alone_unquoted",
+   "why": "an unquoted ~ alone expands",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/homes/ana"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "tilde_double_quoted_literal",
+   "why": "~ inside double quotes stays literal",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_double_quoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/proj/~/x"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "var_unquoted",
+   "why": "$VAR expands in an unquoted word",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$DATA/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/f"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "var_braced_double_quoted",
+   "why": "${VAR} expands in a double-quoted word",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "${DATA}/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_double_quoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "var_single_quoted_literal",
+   "why": "single quotes keep $VAR literal",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$DATA/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_single_quoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/proj/$DATA/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "var_file_api_literal",
+   "why": "a file API keeps $VAR literal",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$DATA/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/proj/$DATA/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "var_with_space_double_quoted",
+   "why": "double quotes keep a value with spaces as one word",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$SPACEY/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_double_quoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/tmp/a b/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "empty_var_double_quoted",
+   "why": "an empty double-quoted variable leaves the rest: $EMPTY/f is /f",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$EMPTY/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_double_quoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "glob_literal_file_api",
+   "why": "a file API takes * literally",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/*.csv",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/*.csv"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "refuse_unset_variable",
+   "why": "an unset variable is unknown, never empty",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$NOPE/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "unset_variable"
+   }
+  },
+  {
+   "id": "refuse_tilde_user_shell",
+   "why": "~user needs an account database",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~root/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "unsupported_tilde"
+   }
+  },
+  {
+   "id": "refuse_tilde_user_file_api",
+   "why": "~user is refused in the tilde mode too",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~root/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "tilde"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "unsupported_tilde"
+   }
+  },
+  {
+   "id": "refuse_glob_unquoted",
+   "why": "an unquoted glob expands to an unknown file list",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/*.csv",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "glob"
+   }
+  },
+  {
+   "id": "refuse_split_unquoted",
+   "why": "an unquoted value with a space splits into words",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$SPACEY/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "word_splitting"
+   }
+  },
+  {
+   "id": "refuse_empty_unquoted",
+   "why": "an unquoted empty variable removes the word",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$EMPTY/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "empty_expansion"
+   }
+  },
+  {
+   "id": "refuse_glob_value_unquoted",
+   "why": "an unquoted value with * globs",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$GLOBBY",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "word_splitting"
+   }
+  },
+  {
+   "id": "refuse_command_substitution",
+   "why": "command substitution is not reproduced",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "$(whoami)/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "command_substitution"
+   }
+  },
+  {
+   "id": "refuse_brace_expansion",
+   "why": "brace expansion is not reproduced",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/{a,b}",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "brace_expansion"
+   }
+  },
+  {
+   "id": "refuse_parameter_operator",
+   "why": "${X:-y} is not reproduced",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "${DATA:-/x}/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "unsupported_expansion"
+   }
+  },
+  {
+   "id": "refuse_metacharacter",
+   "why": "a ; means the adapter did not isolate one word",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/tmp/a;rm",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "shell_metacharacter"
+   }
+  },
+  {
+   "id": "refuse_embedded_quote",
+   "why": "quote removal inside a word is not reproduced",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/tmp/it's",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "unsupported_quoting"
+   }
+  },
+  {
+   "id": "refuse_unknown_operation",
+   "why": "operations come from a closed list",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/x",
+      "operation": "chmod",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "link_intermediate_escapes",
+   "why": "a link inside the project points outside it",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/work/proj/data": "/srv/data"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "data/f.csv",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     },
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/f.csv"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "project"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "link_final_follow_vs_entry",
+   "why": "writing through a link reaches its target; deleting it removes the link",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/work/proj/out.txt": "/etc/cron.d/job"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/target",
+      "raw": "out.txt",
+      "operation": "write",
+      "final_link": "follow",
+      "expansion": "none"
+     },
+     {
+      "argument": "/call/arguments/cleanup",
+      "raw": "out.txt",
+      "operation": "delete",
+      "final_link": "entry",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "write",
+       "delete"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/etc/cron.d/job"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "project"
+      ]
+     ],
+     [
+      "call_path_2_resolved",
+      "/work/proj/out.txt"
+     ],
+     [
+      "call_path_2_inside_roots_of",
+      [
+       "project"
+      ]
+     ],
+     [
+      "call_path_2_outside_roots_of",
+      []
+     ]
+    ],
+    "facts": [
+     {
+      "name": "call_path_1_resolved",
+      "value": "/etc/cron.d/job",
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Host resolution of call argument /call/arguments/target for write: working directory /work/proj, no ~ or $VAR expansion (file API), symbolic links from the host snapshot, final link followed."
+     },
+     {
+      "name": "call_path_1_inside_roots_of",
+      "value": [],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules with a declared root that contains call_path_1_resolved (equal or beneath, component by component, case-sensitive; roots resolved through the same symbolic links). Rules whose paths field does not cover write are in neither list. Containment only: not a rule match, exception or decision."
+     },
+     {
+      "name": "call_path_1_outside_roots_of",
+      "value": [
+       "project"
+      ],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules none of whose declared roots contains call_path_1_resolved. Rules whose paths field does not cover write are in neither list. Containment only: not a rule match, exception or decision."
+     },
+     {
+      "name": "call_path_2_resolved",
+      "value": "/work/proj/out.txt",
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Host resolution of call argument /call/arguments/cleanup for delete: working directory /work/proj, no ~ or $VAR expansion (file API), symbolic links from the host snapshot, final link not followed."
+     },
+     {
+      "name": "call_path_2_inside_roots_of",
+      "value": [
+       "project"
+      ],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules with a declared root that contains call_path_2_resolved (equal or beneath, component by component, case-sensitive; roots resolved through the same symbolic links). Rules whose paths field does not cover delete are in neither list. Containment only: not a rule match, exception or decision."
+     },
+     {
+      "name": "call_path_2_outside_roots_of",
+      "value": [],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules none of whose declared roots contains call_path_2_resolved. Rules whose paths field does not cover delete are in neither list. Containment only: not a rule match, exception or decision."
+     }
+    ]
+   }
+  },
+  {
+   "id": "link_relative_target",
+   "why": "a relative link target resolves from the link's parent",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/work/proj/cfg": "../shared/cfg"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "cfg/app.yml",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/work/shared/cfg/app.yml"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "link_chain",
+   "why": "links are followed through a chain",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/a/l1": "/a/l2",
+      "/a/l2": "/b/real"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/a/l1/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/b/real/x"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "dotdot_after_link_is_physical",
+   "why": "up/.. leaves the link's target, not the project (surface misleads)",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/work/proj/up": "/srv/data/deep"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "up/../secret",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/secret"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "project"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "dangling_link_write",
+   "why": "a write through a link to a missing file still targets the link's target",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/work/proj/new.log": "/var/log/app/new.log"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "new.log",
+      "operation": "write",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/var/log/app/new.log"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "cwd_through_link",
+   "why": "the working directory itself resolves through links (macOS /tmp)",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/tmp/w",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/tmp": "/private/tmp"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/private/tmp/w/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "link_to_dot",
+   "why": "a link to . names the directory that contains it",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/srv/here": "."
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/here/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "root_through_link",
+   "why": "a declared root resolves through the same snapshot",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/data": "/mnt/vol1/data"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/mnt/vol1/data/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/mnt/vol1/data/x"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "refuse_link_loop",
+   "why": "a link cycle refuses as ELOOP",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/x/a": "/x/b",
+      "/x/b": "/x/a"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/x/a/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "link_loop"
+   }
+  },
+  {
+   "id": "refuse_trailing_slash_entry",
+   "why": "deleting olddir/ is platform-dependent",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "olddir/",
+      "operation": "delete",
+      "final_link": "entry",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "trailing_slash_entry"
+   }
+  },
+  {
+   "id": "refuse_dot_final_entry",
+   "why": "deleting a/.. names no entry",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "a/..",
+      "operation": "delete",
+      "final_link": "entry",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "dot_final_entry"
+   }
+  },
+  {
+   "id": "refuse_bad_snapshot_key",
+   "why": "link locations must be normalized absolute paths",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {
+      "/work/proj/./x": "/y"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_snapshot"
+   }
+  },
+  {
+   "id": "case_insensitive_inside",
+   "why": "on a case-insensitive file system Project and project are one directory",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": false,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/volumes/work/project/src/a.c",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/Volumes/Work/Project"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/volumes/work/project/src/a.c"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "project"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ],
+    "facts": [
+     {
+      "name": "call_path_1_resolved",
+      "value": "/volumes/work/project/src/a.c",
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Host resolution of call argument /call/arguments/path for read: working directory /work/proj, no ~ or $VAR expansion (file API), symbolic links from the host snapshot, final link followed."
+     },
+     {
+      "name": "call_path_1_inside_roots_of",
+      "value": [
+       "project"
+      ],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules with a declared root that contains call_path_1_resolved (equal or beneath, component by component, ASCII case-insensitive; roots resolved through the same symbolic links). Rules whose paths field does not cover read are in neither list. Containment only: not a rule match, exception or decision."
+     },
+     {
+      "name": "call_path_1_outside_roots_of",
+      "value": [],
+      "unit": null,
+      "provenance": "host_computed",
+      "as_of": "2026-11-05T12:00:00Z",
+      "note": "Policy rules none of whose declared roots contains call_path_1_resolved. Rules whose paths field does not cover read are in neither list. Containment only: not a rule match, exception or decision."
+     }
+    ]
+   }
+  },
+  {
+   "id": "case_sensitive_outside",
+   "why": "on a case-sensitive file system they differ",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/volumes/work/project/src/a.c",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "project",
+      "roots": [
+       "/Volumes/Work/Project"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/volumes/work/project/src/a.c"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      []
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      [
+       "project"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "case_insensitive_link_lookup",
+   "why": "link lookup folds ASCII case too",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": false,
+     "links": {
+      "/work/proj/data": "/srv/data"
+     },
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/Work/Proj/DATA/f",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/f"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "refuse_non_ascii_case_insensitive",
+   "why": "non-ASCII folding is not reproduced",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": false,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/Volumes/Work/caf\u00e9",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "non_ascii_case_insensitive"
+   }
+  },
+  {
+   "id": "non_ascii_case_sensitive",
+   "why": "case-sensitive comparison of non-ASCII names is exact",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/srv/data/caf\u00e9.txt",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "data-scope",
+      "roots": [
+       "/srv/data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/srv/data/caf\u00e9.txt"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "data-scope"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "operation_not_covered_in_neither_list",
+   "why": "a read is in neither list of a write-only rule",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/etc/hosts",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "writes-in-project",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "write",
+       "delete"
+      ]
+     },
+     {
+      "rule_id": "everything",
+      "roots": [
+       "/"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_path_1_resolved",
+      "/etc/hosts"
+     ],
+     [
+      "call_path_1_inside_roots_of",
+      [
+       "everything"
+      ]
+     ],
+     [
+      "call_path_1_outside_roots_of",
+      []
+     ]
+    ]
+   }
+  },
+  {
+   "id": "refuse_control_character",
+   "why": "a newline in a path refuses",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/tmp/a\nb",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "control_character"
+   }
+  },
+  {
+   "id": "refuse_empty_path",
+   "why": "an empty path refuses",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "empty_path"
+   }
+  },
+  {
+   "id": "refuse_relative_compiled_root",
+   "why": "compiled roots must be absolute (compile_policy output only)",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": [
+     {
+      "rule_id": "bad",
+      "roots": [
+       "data"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_path_rules"
+   }
+  },
+  {
+   "id": "refuse_relative_cwd",
+   "why": "the working directory must be absolute",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "work",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_runtime"
+   }
+  },
+  {
+   "id": "refuse_path_too_long",
+   "why": "a resolved path longer than 4096 characters refuses",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+     "home": "/homes/ana",
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "none"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "path_too_long"
+   }
+  },
+  {
+   "id": "refuse_unknown_home",
+   "why": "~ without a trusted home directory",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "runtime": {
+     "cwd": "/work/proj",
+     "home": null,
+     "env": {
+      "HOME": "/homes/ana",
+      "DATA": "/srv/data",
+      "SPACEY": "/tmp/a b",
+      "EMPTY": "",
+      "GLOBBY": "/tmp/*"
+     },
+     "case_sensitive": true,
+     "links": {},
+     "observed_at": "2026-11-05T12:00:00Z"
+    },
+    "effects": [
+     {
+      "argument": "/call/arguments/path",
+      "raw": "~/x",
+      "operation": "read",
+      "final_link": "follow",
+      "expansion": "shell_unquoted"
+     }
+    ],
+    "path_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "unknown_home"
+   }
+  }
+ ],
+ "policy_cases": [
+  {
+   "id": "plain_workspace_and_home",
+   "why": "the common forms: ${workspace}, ~/ and a default for",
+   "rules": [
+    {
+     "id": "project-writes",
+     "tier": "soft_deny",
+     "description": "Rule project-writes.",
+     "paths": {
+      "within": "${workspace}",
+      "for": [
+       "write",
+       "delete"
+      ]
+     }
+    },
+    {
+     "id": "ssh-keys",
+     "tier": "hard_deny",
+     "description": "Rule ssh-keys.",
+     "paths": {
+      "within": "~/.ssh"
+     }
+    },
+    {
+     "id": "no-paths",
+     "tier": "soft_deny",
+     "description": "Rule no-paths."
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "ok",
+    "path_rules": [
+     {
+      "rule_id": "project-writes",
+      "roots": [
+       "/work/proj"
+      ],
+      "operations": [
+       "write",
+       "delete"
+      ]
+     },
+     {
+      "rule_id": "ssh-keys",
+      "roots": [
+       "/homes/ana/.ssh"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "several_roots_and_absolute",
+   "why": "within takes a list; absolute roots stay as written",
+   "rules": [
+    {
+     "id": "work-dirs",
+     "tier": "soft_deny",
+     "description": "Rule work-dirs.",
+     "paths": {
+      "within": [
+       "${workspace}/build",
+       "/srv/cache",
+       "${home}/tmp"
+      ]
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "ok",
+    "path_rules": [
+     {
+      "rule_id": "work-dirs",
+      "roots": [
+       "/work/proj/build",
+       "/srv/cache",
+       "/homes/ana/tmp"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "no_path_rules",
+   "why": "a policy without paths fields compiles to nothing",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "soft_deny",
+     "description": "Rule a."
+    },
+    {
+     "id": "b",
+     "tier": "soft_deny",
+     "description": "Rule b."
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "ok",
+    "path_rules": []
+   }
+  },
+  {
+   "id": "error_relative_root",
+   "why": "a relative root gets a ${workspace} hint",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": "data"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_root"
+   }
+  },
+  {
+   "id": "error_glob_root",
+   "why": "roots are directories, not globs",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": "~/*.pem"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_root"
+   }
+  },
+  {
+   "id": "error_other_variable",
+   "why": "only ${workspace} and ${home} expand",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": "$HOME/data"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_root"
+   }
+  },
+  {
+   "id": "error_other_user",
+   "why": "~user is not supported",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": "~bob/data"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_root"
+   }
+  },
+  {
+   "id": "error_unknown_key",
+   "why": "a misspelled key is reported",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "inside": "~/data"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_paths_field"
+   }
+  },
+  {
+   "id": "error_unknown_operation",
+   "why": "for lists known operations only",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": "~/data",
+      "for": [
+       "modify"
+      ]
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_paths_field"
+   }
+  },
+  {
+   "id": "error_no_workspace",
+   "why": "${workspace} needs a known workspace",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": "${workspace}"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": null,
+   "expect": {
+    "status": "error",
+    "code": "unknown_workspace"
+   }
+  },
+  {
+   "id": "trailing_slash_roots_normalized",
+   "why": "a trailing slash on a root is dropped",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": [
+       "${workspace}/build/",
+       "/srv/cache/"
+      ]
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "ok",
+    "path_rules": [
+     {
+      "rule_id": "x",
+      "roots": [
+       "/work/proj/build",
+       "/srv/cache"
+      ],
+      "operations": [
+       "read",
+       "write",
+       "delete",
+       "list",
+       "execute"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "error_same_root_twice",
+   "why": "${workspace} and ${workspace}/ are the same root",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x.",
+     "paths": {
+      "within": [
+       "${workspace}",
+       "${workspace}/"
+      ]
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_paths_field"
+   }
+  },
+  {
+   "id": "error_bad_home_configuration",
+   "why": "the configured home must be a clean absolute path",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x."
+    }
+   ],
+   "home": "/homes/ana\nx",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_policy"
+   }
+  },
+  {
+   "id": "error_duplicate_ids",
+   "why": "rule ids are unique",
+   "rules": [
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x."
+    },
+    {
+     "id": "x",
+     "tier": "soft_deny",
+     "description": "Rule x."
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "bad_policy"
+   }
+  },
+  {
+   "id": "error_too_many_path_rules",
+   "why": "at most 32 rules declare paths",
+   "rules": [
+    {
+     "id": "r0",
+     "tier": "soft_deny",
+     "description": "Rule r0.",
+     "paths": {
+      "within": "/srv/0"
+     }
+    },
+    {
+     "id": "r1",
+     "tier": "soft_deny",
+     "description": "Rule r1.",
+     "paths": {
+      "within": "/srv/1"
+     }
+    },
+    {
+     "id": "r2",
+     "tier": "soft_deny",
+     "description": "Rule r2.",
+     "paths": {
+      "within": "/srv/2"
+     }
+    },
+    {
+     "id": "r3",
+     "tier": "soft_deny",
+     "description": "Rule r3.",
+     "paths": {
+      "within": "/srv/3"
+     }
+    },
+    {
+     "id": "r4",
+     "tier": "soft_deny",
+     "description": "Rule r4.",
+     "paths": {
+      "within": "/srv/4"
+     }
+    },
+    {
+     "id": "r5",
+     "tier": "soft_deny",
+     "description": "Rule r5.",
+     "paths": {
+      "within": "/srv/5"
+     }
+    },
+    {
+     "id": "r6",
+     "tier": "soft_deny",
+     "description": "Rule r6.",
+     "paths": {
+      "within": "/srv/6"
+     }
+    },
+    {
+     "id": "r7",
+     "tier": "soft_deny",
+     "description": "Rule r7.",
+     "paths": {
+      "within": "/srv/7"
+     }
+    },
+    {
+     "id": "r8",
+     "tier": "soft_deny",
+     "description": "Rule r8.",
+     "paths": {
+      "within": "/srv/8"
+     }
+    },
+    {
+     "id": "r9",
+     "tier": "soft_deny",
+     "description": "Rule r9.",
+     "paths": {
+      "within": "/srv/9"
+     }
+    },
+    {
+     "id": "r10",
+     "tier": "soft_deny",
+     "description": "Rule r10.",
+     "paths": {
+      "within": "/srv/10"
+     }
+    },
+    {
+     "id": "r11",
+     "tier": "soft_deny",
+     "description": "Rule r11.",
+     "paths": {
+      "within": "/srv/11"
+     }
+    },
+    {
+     "id": "r12",
+     "tier": "soft_deny",
+     "description": "Rule r12.",
+     "paths": {
+      "within": "/srv/12"
+     }
+    },
+    {
+     "id": "r13",
+     "tier": "soft_deny",
+     "description": "Rule r13.",
+     "paths": {
+      "within": "/srv/13"
+     }
+    },
+    {
+     "id": "r14",
+     "tier": "soft_deny",
+     "description": "Rule r14.",
+     "paths": {
+      "within": "/srv/14"
+     }
+    },
+    {
+     "id": "r15",
+     "tier": "soft_deny",
+     "description": "Rule r15.",
+     "paths": {
+      "within": "/srv/15"
+     }
+    },
+    {
+     "id": "r16",
+     "tier": "soft_deny",
+     "description": "Rule r16.",
+     "paths": {
+      "within": "/srv/16"
+     }
+    },
+    {
+     "id": "r17",
+     "tier": "soft_deny",
+     "description": "Rule r17.",
+     "paths": {
+      "within": "/srv/17"
+     }
+    },
+    {
+     "id": "r18",
+     "tier": "soft_deny",
+     "description": "Rule r18.",
+     "paths": {
+      "within": "/srv/18"
+     }
+    },
+    {
+     "id": "r19",
+     "tier": "soft_deny",
+     "description": "Rule r19.",
+     "paths": {
+      "within": "/srv/19"
+     }
+    },
+    {
+     "id": "r20",
+     "tier": "soft_deny",
+     "description": "Rule r20.",
+     "paths": {
+      "within": "/srv/20"
+     }
+    },
+    {
+     "id": "r21",
+     "tier": "soft_deny",
+     "description": "Rule r21.",
+     "paths": {
+      "within": "/srv/21"
+     }
+    },
+    {
+     "id": "r22",
+     "tier": "soft_deny",
+     "description": "Rule r22.",
+     "paths": {
+      "within": "/srv/22"
+     }
+    },
+    {
+     "id": "r23",
+     "tier": "soft_deny",
+     "description": "Rule r23.",
+     "paths": {
+      "within": "/srv/23"
+     }
+    },
+    {
+     "id": "r24",
+     "tier": "soft_deny",
+     "description": "Rule r24.",
+     "paths": {
+      "within": "/srv/24"
+     }
+    },
+    {
+     "id": "r25",
+     "tier": "soft_deny",
+     "description": "Rule r25.",
+     "paths": {
+      "within": "/srv/25"
+     }
+    },
+    {
+     "id": "r26",
+     "tier": "soft_deny",
+     "description": "Rule r26.",
+     "paths": {
+      "within": "/srv/26"
+     }
+    },
+    {
+     "id": "r27",
+     "tier": "soft_deny",
+     "description": "Rule r27.",
+     "paths": {
+      "within": "/srv/27"
+     }
+    },
+    {
+     "id": "r28",
+     "tier": "soft_deny",
+     "description": "Rule r28.",
+     "paths": {
+      "within": "/srv/28"
+     }
+    },
+    {
+     "id": "r29",
+     "tier": "soft_deny",
+     "description": "Rule r29.",
+     "paths": {
+      "within": "/srv/29"
+     }
+    },
+    {
+     "id": "r30",
+     "tier": "soft_deny",
+     "description": "Rule r30.",
+     "paths": {
+      "within": "/srv/30"
+     }
+    },
+    {
+     "id": "r31",
+     "tier": "soft_deny",
+     "description": "Rule r31.",
+     "paths": {
+      "within": "/srv/31"
+     }
+    },
+    {
+     "id": "r32",
+     "tier": "soft_deny",
+     "description": "Rule r32.",
+     "paths": {
+      "within": "/srv/32"
+     }
+    }
+   ],
+   "home": "/homes/ana",
+   "workspace": "/work/proj",
+   "expect": {
+    "status": "error",
+    "code": "too_many_path_rules"
+   }
+  }
+ ]
+}
