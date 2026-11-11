@@ -7,6 +7,7 @@ The conversation section is Summarizer's packet for the call.
 """
 
 import json
+import re
 
 # The layout of the state built here. Kai reads it, so once Kai is trained or measured on it a
 # change to state() below is a change to Kai's input and needs a new version.
@@ -74,12 +75,27 @@ def load_rules(path=None):
     return check_rules(rules)
 
 
+_HALF = re.compile("[\ud800-\udfff]")
+
+
+def writable(text):
+    """text that can be written as UTF-8: half a surrogate pair becomes its JSON escape.
+
+    Half of a surrogate pair (U+D800 to U+DFFF) is not a character. A tool that cuts its
+    output inside an emoji leaves one, JSON carries it as "\\ud83d", and a call's arguments
+    can hold one too. Text with one in it cannot be encoded, and Kai's service refuses a
+    request that holds one, so a call that held one was never judged. In JSON text the escape
+    is the same string and reads back unchanged. Anywhere else it shows what was there.
+    """
+    return _HALF.sub(lambda found: f"\\u{ord(found.group()):04x}", text)
+
+
 def state(rules, packet, call=None):
     """The state for one packet; call is (tool, arguments as JSON text) for a decision.
 
     Nothing is cut here. The caller budgets the packet around the call, shows the call whole or
     says in its record how much of it is missing, and never sends a call it had to cut as if it
-    were the call.
+    were the call. Whatever the session held, the state can be written as UTF-8 (writable()).
     """
     lines = ["Armor rules (classifier_context v1, auto_mode):", "environment:"]
     for tier in TIERS:
@@ -89,4 +105,4 @@ def state(rules, packet, call=None):
     if call is not None:
         tool, arguments = call
         lines += ["", "Proposed tool call:", f"  tool: {tool}", f"  arguments: {arguments}"]
-    return "\n".join(lines)
+    return writable("\n".join(lines))

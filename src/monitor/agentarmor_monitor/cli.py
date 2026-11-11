@@ -26,6 +26,7 @@ import threading
 
 from .escalate import LEVELS, append, detect, key_of, latest, read, settled, triggers
 from .kai import KaiClient, KaiUnavailable, Unsent
+from .policy import writable
 
 
 def _client(args):
@@ -117,7 +118,7 @@ def _scan(args):
             client, summary, entry, args.max_chars, rules, directory=directory, asked=asked
         )
         append(directory, record)
-        print(json.dumps(record, ensure_ascii=False))
+        print(writable(json.dumps(record, ensure_ascii=False)))
     return 0
 
 
@@ -197,7 +198,8 @@ def _detections(args):
                 continue
             if args.disagreements and not record.get("disagreement"):
                 continue
-            print(json.dumps({"agent": agent, "session": name} | record, ensure_ascii=False))
+            told = {"agent": agent, "session": name} | record
+            print(writable(json.dumps(told, ensure_ascii=False)))
     return 0
 
 

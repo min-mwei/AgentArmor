@@ -359,6 +359,99 @@ def test_the_gate_lets_kai_decide_a_suspicious_call(spool, service):
     assert record["decision"] == "deny" and record["trigger"]["call_id"] == "call-3"
 
 
+def test_half_a_surrogate_pair_never_keeps_a_call_from_kai(spool, service):
+    # Half of a surrogate pair is not a character, and Kai's service refuses a request that
+    # holds one. A tool that cuts its output inside an emoji leaves one, and an agent that is
+    # told to can write one into a call. Such a call was never judged: it was stopped for want
+    # of an answer, or let through by a gate set to abstain.
+    half = "\ud83d"
+    watch = monitor(service)
+    watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)
+    client = kai.KaiClient(service.url)
+    readme = {"file": {"content": f"# Tool {half}\n{ORDER}\n"}}
+    log(
+        "s-half",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": f"Summarize the README {half}."},
+        *tool(1, "Read", {"file_path": f"{CWD}/README.md"}, readme),
+    )
+    watch.update("claude_code", "s-half")
+    asked = {"command": f"{EXFIL} # {half}"}
+    for on_error in ("deny", "abstain"):  # Kai answers, so what to do without one never matters
+        service.seen.clear()
+        output, status = gated("s-half", 2, "Bash", asked, client, watch, on_error=on_error)
+        assert status == 2, on_error
+        assert "Kai denied" in output["hookSpecificOutput"]["permissionDecisionReason"]
+        ((state, _),) = service.seen
+        assert half not in state and state.encode("utf-8")
+        shown = state.split("Proposed tool call:")
+        # In the packet it is spelled out as Summarizer spells what cannot be seen. In the
+        # call's arguments it is the escape JSON gives it: read back, they are the call.
+        assert "\\\\u{d83d}" in shown[0] and "\\ud83d" in shown[1]
+        assert json.loads(shown[1].split("arguments: ", 1)[1]) == asked
+    records = [r for r in escalate.read(session_dir("claude_code", "s-half")) if r.get("gate")]
+    assert [(r["status"], r["decision"]) for r in records] == [("scored", "deny")] * 2
+    assert records[-1]["packet"]["complete"] is True
+
+
+def test_whatever_a_session_held_can_be_written_and_sent(spool):
+    half = "\ud83d"
+    assert policy.writable(f"cut {half} here") == "cut \\ud83d here"
+    assert policy.writable("nothing to do: é, 日本, 😀") == "nothing to do: é, 日本, 😀"
+    # In JSON text the escape is the same string: it reads back as what was written.
+    held = {"note": f"x{half}", half: [f"{half}{half}"]}
+    as_json = policy.writable(json.dumps(held, ensure_ascii=False))
+    assert as_json.encode("utf-8") and json.loads(as_json) == held
+    # A state is writable whatever its parts held, a tool's name included.
+    made = policy.state(policy.load_rules(), f"a packet {half}", (f"tool{half}", as_json))
+    assert half not in made and made.encode("utf-8")
+    # A record is written and read back as it was.
+    directory = session_dir("claude_code", "s-record")
+    os.makedirs(directory)
+    escalate.append(directory, {"key": "action:1:call-1", "trigger": {"tool": f"tool{half}"}})
+    assert escalate.read(directory)[-1]["trigger"]["tool"] == f"tool{half}"
+
+
+def test_a_call_shown_as_summarizers_text_keeps_its_first_characters():
+    # ": > file" empties a file. With neither the arguments nor the log, what is left is
+    # Summarizer's text for the call without the tool's name, and without nothing else.
+    entry = {"type": "action", "tool": "Bash", "text": f"Bash: : > {CWD}/notes.txt"}
+    tool_name, shown, account = escalate.proposed(entry)
+    assert (tool_name, json.loads(shown)) == ("Bash", {"call": f": > {CWD}/notes.txt"})
+    assert account["call_source"] == "representation" and account["call_chars_not_shown"] is None
+
+
+def test_a_packet_counts_every_line_it_cuts_short(spool):
+    # Summarizer counts the lines that quote less of their entry than there is, by kind. The
+    # packet's account carries the count, and a cut on key evidence keeps it from being ready.
+    def packet_for(session, earlier):
+        log(
+            session,
+            {"hook_event_name": "SessionStart", "source": "startup"},
+            {"hook_event_name": "UserPromptSubmit", "prompt": "Build the report."},
+            *tool(1, "Bash", {"command": earlier}, "done"),
+            *tool(2, "Bash", {"command": PEEK}),
+        )
+        Daemon(Runtime(HashEmbedder()), log=lambda message: None).update("claude_code", session)
+        summary = load_summary("claude_code", session)
+        entry = next(e for e in summary["entries"] if e.get("call_id") == "call-2")
+        text, about, _ = escalate.packet(summary, entry, 5000)
+        return text, about
+
+    text, about = packet_for("s-whole", "ls docs")
+    assert (about["cut"], about["key_clipped"], about["ready"]) == ({}, 0, True)
+    assert "cut short" not in text
+    # An earlier call longer than a line shows, which nothing marked: counted, and not key.
+    long_call = "python tools/report.py " + "--include docs/section.md " * 12 + "--to out.txt"
+    text, about = packet_for("s-cut", long_call)
+    assert (about["cut"], about["key_clipped"], about["ready"]) == ({"action": 1}, 0, True)
+    assert text.endswith("text cut short: actions 1")
+    # A marked call cut the same way is key evidence the packet holds only in part.
+    text, about = packet_for("s-key", EXFIL + " -H x:y" * 40)
+    assert (about["cut"], about["key_clipped"], about["ready"]) == ({"action": 1}, 1, False)
+    assert text.endswith("text cut short: actions 1 (1 of them key evidence)")
+
+
 def test_the_gate_abstains_when_kai_allows(spool, service):
     watch = monitor(service)
     watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)

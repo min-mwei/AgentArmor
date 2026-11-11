@@ -37,12 +37,13 @@ import json
 import os
 import time
 
+from summarizer.events import call_words
 from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
 from summarizer.text import digest
 
 from .kai import DECISION, XPIA, KaiRejected, KaiUnavailable, request
-from .policy import LAYOUT, load_rules, state
+from .policy import LAYOUT, load_rules, state, writable
 
 SCHEMA = "agentarmor-detection/v1"
 DETECTIONS = "detections.jsonl"
@@ -91,6 +92,10 @@ def packet(summary, entry, max_chars):
         "fits": shown["fits"],
         "dropped": shown["dropped"],  # lines that found no room, by section
         "key_dropped": shown["key_dropped"],
+        # Lines that quote less of their entry than there is, by kind, and those among them
+        # that are key evidence. The second keeps a packet from being ready; the first is
+        # every cut there is, so that none is left to be found by reading the text.
+        "cut": shown["cut"],
         "key_clipped": shown["key_clipped"],
         "unresolved_conditions": shown["unresolved_conditions"],
         "later_events": shown["later_events"],
@@ -174,9 +179,11 @@ def proposed(entry, arguments=None, logged=None):
         shown, source = logged["arguments"], "log"
         missing, redactions = logged["missing"], logged["redactions"]
     else:
-        shown, source = {"call": entry["text"].removeprefix(tool).lstrip(": ")}, "representation"
+        shown, source = {"call": call_words(tool, entry["text"])}, "representation"
         missing = redactions = None  # unknown: a display text does not say what it left out
-    text = json.dumps(shown, ensure_ascii=False, sort_keys=True)
+    # As JSON that can be sent: half a surrogate pair in an argument is the escape JSON gives
+    # it, so the text reads back as these same arguments.
+    text = writable(json.dumps(shown, ensure_ascii=False, sort_keys=True))
     account = {"call_source": source, "call_chars": len(text)}
     return tool, text, account | {"call_chars_not_shown": missing, "call_redactions": redactions}
 
@@ -383,7 +390,7 @@ def append(directory, record):
     path = os.path.join(directory, DETECTIONS)
     handle = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     with os.fdopen(handle, "a", encoding="utf-8") as out:
-        out.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+        out.write(writable(json.dumps(record, ensure_ascii=False, allow_nan=False)) + "\n")
 
 
 def read(directory):

@@ -135,8 +135,8 @@ Proposed tool call:
   (`src/hostfacts`) are not filled in yet, so `environment:` is empty.
 - **The packet** is `summarizer.text.digest` focused on the call: the requests on the user
   channel, the call, what it resembles and where its operands were first named, reported
-  outcomes, and a last line counting what is not shown. Secrets were redacted before anything
-  was written.
+  outcomes, and a last line counting what is not shown and which lines are cut short. Secrets
+  were redacted before anything was written.
 - **The proposed call** is shown whole or not at all, and the record says where its text came
   from (`call_source`):
   - `arguments`: the gate holds the call's own arguments and redacts them exactly as
@@ -149,6 +149,12 @@ Proposed tool call:
     call is left. That is a reading of the call, not the call: a patch is shown as its files
     and added lines, without the lines it removes. It is sent, how much it leaves out is
     recorded as unknown, and it never counts as a complete check.
+
+  Whatever the session held, a state can be written as UTF-8. Half of a surrogate pair, which
+  a tool leaves when it cuts its output inside an emoji and which an argument can hold too, is
+  not a character, and Kai's service refuses a request with one in it. In the packet
+  Summarizer spells it out (`\u{d83d}`); in the call's arguments it is the escape JSON gives
+  it (`\ud83d`), so the arguments read back as the call that was made.
 - **One budget.** `--max-chars` (5,000) covers the whole state: the rules, the packet and the
   call. The rules and the call are never cut; the packet gets the room they leave. If that is
   less than the smallest packet (1,000 characters) nothing is sent. If the service refuses a
@@ -378,7 +384,7 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `kai` | `p_deny`, `p_xpia` and the service's identity (model, revision, package hash, `policy_ready`) |
 | `flagged` | `decision` is `deny`, or `p_xpia` is at least 0.5 (not a qualified cutoff) |
 | `disagreement` | Summarizer marked the entry medium or higher and Kai cleared it. Kept apart from "nothing found"; list them with `detections --disagreements` |
-| `packet` | Size and SHA-256 of the packet; `state_chars`; whether the call was verified; Summarizer's own account (`ready`, `dropped` (lines that found no room, by section), `key_dropped`, `key_clipped`, `unresolved_conditions`, `scanned_all_captured`, `later_events`); `request_sha256`, the identifier of the final request (canonical JSON, not wire bytes); the call's `call_source`, `call_chars`, `call_chars_not_shown` and `call_redactions` (the last two are null for a `representation`: unknown); and `complete`: the packet was ready and the call's own arguments were shown whole |
+| `packet` | Size and SHA-256 of the packet; `state_chars`; whether the call was verified; Summarizer's own account (`ready`, `dropped` (lines that found no room, by section), `key_dropped`, `cut` (lines that quote less of their entry than there is, by kind: `prompt`, `action`, `message`), `key_clipped` (those among them that are key evidence, which keep a packet from being ready), `unresolved_conditions`, `scanned_all_captured`, `later_events`); `request_sha256`, the identifier of the final request (canonical JSON, not wire bytes); the call's `call_source`, `call_chars`, `call_chars_not_shown` and `call_redactions` (the last two are null for a `representation`: unknown); and `complete`: the packet was ready and the call's own arguments were shown whole |
 | `review` | `pre_action` when the hooks delivered the call's proposal, nothing has been reported to have become of it, and the summary held nothing from after it; otherwise `retrospective`. A call first seen at its result or failure is always retrospective (`packet.proposal_observed` is false): its outcome is already in the packet. Only pre-action records are evidence about what could be known in time. This is a separate property from `packet.complete`, which is about how much was shown |
 | `requests_sent` | How many requests this trigger actually put to Kai: 0 when its answer was one already given for the same request, more than 1 when a larger request was refused first |
 | `same_request_as` | Present only when this record's answer was given for another trigger's identical request in the same summary: that trigger's key. Never set by a refusal, and never the record's own key |
