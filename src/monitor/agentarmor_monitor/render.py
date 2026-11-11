@@ -62,7 +62,7 @@ from pathlib import Path
 from summarizer.daemon import Daemon
 from summarizer.events import agent_home
 from summarizer.hook import Scripted, call_sha256, handle
-from summarizer.store import AGENTS, load_summary, safe_id, session_dir, view
+from summarizer.store import AGENTS, safe_id, session_dir, view
 
 from .escalate import detect, key_of, triggers
 from .gate import decide
@@ -263,7 +263,7 @@ def render_view(script, runtime, max_chars=5000, level="low", gate_level="medium
                     about, number, record, request, ["watch"], coverage
                 )
             if payload["hook_event_name"] == "PreToolUse":
-                calls.append(_call(about, number, payload, options, rows, coverage, level))
+                calls.append(_call(about, number, payload, options, summary, rows, coverage, level))
             requests += rows.values()
     # A request two triggers of one view build alike is the same question asked twice.
     first = {}
@@ -281,19 +281,21 @@ def _same(one, other):
     return not one["sendable"] and not other["sendable"] and one["refused"] == other["refused"]
 
 
-def _call(about, number, payload, options, rows, coverage, level):
-    """One row of calls.jsonl for a proposed call. The gate's request, if it has one, joins rows."""
+def _call(about, number, payload, options, summary, rows, coverage, level):
+    """One row of calls.jsonl for a proposed call. The gate's request, if it has one, joins rows.
+
+    summary is the session at this event. The call's entry is found by its id, or, for a call
+    the agent gave no id, as the action this event produced: such a call can still be watched,
+    though the gate, which needs the id, cannot check it.
+    """
     agent, call_id = about["agent"], payload.get("tool_use_id")
     identity = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
     row = about | {"event": number, "call_id": call_id, "call_sha256": identity}
     row["tool"] = payload.get("tool_name")
-    # The call as Summarizer marked it at its proposal, read from the spool as the gate reads it.
-    entry = None
-    if isinstance(call_id, str) and call_id:
-        summary = load_summary(agent, safe_id(payload["session_id"]), 0.0, call_id, identity)
-        if summary is not None and summary.get("fresh") and summary.get("call") == "verified":
-            actions = (e for e in summary["entries"] if e["type"] == "action")
-            entry = next((e for e in actions if e.get("call_id") == call_id), None)
+    actions = [e for e in summary["entries"] if e["type"] == "action"]
+    entry = next((e for e in actions if call_id and e.get("call_id") == call_id), None)
+    entry = entry or next((e for e in actions if not call_id and e["seq"] == number), None)
+    # How Summarizer marked the call at its proposal; null when it made no entry of it.
     row["summarized"] = entry is not None
     for key in ("level", "confidence", "labels"):
         row[key] = entry.get(key) if entry is not None else None

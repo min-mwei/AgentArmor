@@ -282,7 +282,7 @@ does not say where home is is refused. The user's own spool is never read or wri
 | Field | Meaning |
 |---|---|
 | `event`, `call_id`, `call_sha256`, `tool` | Which call. The hash is of the tool name and arguments before redaction |
-| `summarized`, `level`, `confidence`, `labels` | How Summarizer marked the call at its proposal. `summarized` is false when no summary of this exact call was there |
+| `summarized`, `level`, `confidence`, `labels` | How Summarizer marked the call at its proposal. `summarized` is false when it made no entry of the call. A call the agent gave no `tool_use_id` is found as the action its event produced: the watcher can still ask about it, and the gate, which needs the id, cannot check it (`why: event`) |
 | `watch` | `asked`, with the request's `request_sha256`, or `why` not (`below_level`, `no_summary`), or `refused` for size |
 | `gate` | `asked`, with `request_sha256` and `an_allow`: what the gate makes of an "allow" from Kai, `stands`, or `incomplete` or `moved_on` (the gate then stops the call by default). Otherwise `outcome`: `abstain` (`why: below_level`: the call runs under the agent's own permission flow and Kai is never asked) or `undecided` with `why` (`coverage`, `no_summary`, `call_too_large`, `policy_too_large`, `event`), which the gate turns into a denial unless it runs with `--on-error abstain` |
 | `routes_agree` | Whether the watcher and the gate built the same request, when both asked |
