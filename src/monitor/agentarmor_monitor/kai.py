@@ -65,6 +65,17 @@ def request(state, questions=(XPIA,)):
     return {"model": "kai", "state": state, "questions": {q: QUESTIONS[q] for q in questions}}
 
 
+class Unsent:
+    """Stands in for Kai to show what would be sent: keeps the request and answers nothing."""
+
+    def __init__(self):
+        self.request = None
+
+    def ask(self, state, questions):
+        self.request = request(state, questions)
+        raise KaiUnavailable("not sent")
+
+
 def loopback(url):
     host = urllib.parse.urlsplit(url).hostname or ""
     if host == "localhost":

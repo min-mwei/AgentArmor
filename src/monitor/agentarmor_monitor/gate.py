@@ -30,7 +30,7 @@ import time
 from summarizer.hook import MAX_STDIN, call_sha256, handle
 from summarizer.store import AGENTS, home, load_summary, private_dir, safe_id, session_dir
 
-from .escalate import LEVELS, SCHEMA, append, detect, embedding_of, read
+from .escalate import LEVELS, SCHEMA, append, detect, provenance, read
 
 DENIED = "AgentArmor: Kai denied this call under the session's rules"
 UNDECIDED = "AgentArmor could not complete the check"
@@ -105,16 +105,18 @@ def outcome(agent, session, call_id, why, summary=None):
     """A record of a gate outcome for which Kai was never asked.
 
     summary is the one the outcome was read from, when there was one, and the record then says
-    what embedded it. With none, that is left unknown and not guessed.
+    what embedded it and what marked it. With none, both are left unknown and not guessed.
     """
     record = {"schema": SCHEMA, "ts": round(time.time(), 3)}
     record |= {"key": f"gate:{call_id if isinstance(call_id, str) else ''}"}
     record |= {"agent": agent, "session": session, "status": why, "kai": None}
     record |= {"advisory": True, "policy_ready": False, "decision": None, "flagged": None}
-    return record | {"summary_embedding": embedding_of(summary)}
+    return record | provenance(summary)
 
 
-def decide(agent, payload, client, level="medium", max_chars=5000, wait=3.0, rules=None):
+def decide(
+    agent, payload, client, level="medium", max_chars=5000, wait=3.0, rules=None, explain=False
+):
     """(verdict, record, why) for a PreToolUse payload.
 
     verdict is "abstain", "deny" or "undecided". record is the detection when Kai was asked;
@@ -137,7 +139,9 @@ def decide(agent, payload, client, level="medium", max_chars=5000, wait=3.0, rul
         if summary["session"]["coverage"]["scanned_all_captured"]:
             return "abstain", None, None
         return "undecided", outcome(agent, session, call_id, "coverage", summary), "coverage"
-    record = detect(client, summary, entry, max_chars, rules, payload.get("tool_input"))
+    record = detect(
+        client, summary, entry, max_chars, rules, payload.get("tool_input"), explain=explain
+    )
     if record["status"] != "scored":
         return "undecided", record, record["status"]
     if record["decision"] == "deny":

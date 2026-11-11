@@ -49,26 +49,29 @@ INTERPRETATION = (
 )
 
 
+def check_rules(rules):
+    """The rules, if every one of them is a rule; ValueError otherwise."""
+    if not isinstance(rules, list) or not rules:
+        raise ValueError("a policy holds one rule or more")
+    for rule in rules:
+        wrong = not isinstance(rule, dict) or rule.get("tier") not in TIERS
+        wrong = wrong or not all(
+            isinstance(rule.get(k), str) and rule[k].strip() for k in ("id", "description")
+        )
+        if wrong:
+            raise ValueError("a rule needs id, description and a tier of " + ", ".join(TIERS))
+    return rules
+
+
 def load_rules(path=None):
     """Rules from a policy file, or the default set."""
     if path is None:
         return [dict(rule) for rule in DEFAULT_RULES]
-    rules = []
     with open(path, encoding="utf-8") as lines:
-        for line in lines:
-            if not line.strip():
-                continue
-            rule = json.loads(line)
-            wrong = not isinstance(rule, dict) or rule.get("tier") not in TIERS
-            wrong = wrong or not all(
-                isinstance(rule.get(k), str) and rule[k].strip() for k in ("id", "description")
-            )
-            if wrong:
-                raise ValueError("a rule needs id, description and a tier of " + ", ".join(TIERS))
-            rules.append(rule)
+        rules = [json.loads(line) for line in lines if line.strip()]
     if not rules:
         raise ValueError("the policy file holds no rule")
-    return rules
+    return check_rules(rules)
 
 
 def state(rules, packet, call=None):

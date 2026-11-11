@@ -25,6 +25,10 @@ Every record says how far its evidence can be relied on:
 - summary_embedding: what the summary says embedded it (backend, model, revision, device,
   precision, probes). The same session marked on another device can build another packet, so
   a record names the one its summary came from. It is not part of the request.
+- summary_detector: what the summary says marked it (hashes of the wording rules, of the priors
+  and levels, and of Summarizer's source). The same session marked under other rules can build
+  another packet too. Null for a summary that does not say, and a part of it that the summary
+  gives as unknown stays unknown. It is not part of the request either.
 """
 
 import copy
@@ -65,7 +69,11 @@ def triggers(summary, minimum="low"):
 
 
 def packet(summary, entry, max_chars):
-    """Summarizer's digest for the call a trigger belongs to, with its own account of itself."""
+    """(text, account, entries shown): Summarizer's digest for the call a trigger belongs to.
+
+    The account is Summarizer's own, of what the text holds and what found no room. The
+    entries are the ones the text shows, as digest() reports them: no text, only what each is.
+    """
     focus = entry.get("call_id") or None
     shown = digest(summary, max_chars, focus=focus, call_sha256=entry.get("call_sha256"))
     coverage = summary["session"]["coverage"]
@@ -81,6 +89,7 @@ def packet(summary, entry, max_chars):
         "sha256": hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest(),
         "call": shown["call"],
         "fits": shown["fits"],
+        "dropped": shown["dropped"],  # lines that found no room, by section
         "key_dropped": shown["key_dropped"],
         "key_clipped": shown["key_clipped"],
         "unresolved_conditions": shown["unresolved_conditions"],
@@ -89,7 +98,19 @@ def packet(summary, entry, max_chars):
         # Whether the packet holds what a decision needs, by Summarizer's own account.
         "ready": ready,
     }
-    return text, about
+    return text, about, shown["shown"]
+
+
+def entries_shown(summary, emitted):
+    """What a packet's text shows, entry by entry, with the trust Summarizer gave each.
+
+    One item for each entry in the text: its type, the event it came from (seq), how many of
+    its characters are shown, where in the event it sits when it is a piece of content (ref),
+    and its trust (user, agent, or a lower-trust source). The trust is what the hook that
+    delivered the text implies, never what the text says of itself. No item holds text.
+    """
+    trust = {key_of(entry): entry.get("trust") for entry in summary["entries"]}
+    return [item | {"trust": trust.get(key_of(item))} for item in emitted]
 
 
 def logged_call(directory, entry):
@@ -187,6 +208,12 @@ def review_of(entry, about):
     return "pre_action" if pending and proposal_seen(entry) else "retrospective"
 
 
+def _reported(summary, what):
+    session = summary.get("session") if isinstance(summary, dict) else None
+    reported = session.get(what) if isinstance(session, dict) else None
+    return copy.deepcopy(reported) if isinstance(reported, dict) else None
+
+
 def embedding_of(summary):
     """What a summary says embedded it, copied; None when it does not say.
 
@@ -195,9 +222,24 @@ def embedding_of(summary):
     own report, kept for tracing. It does not pin weights or probes: a revision of "local" or
     a probe version alone identifies neither.
     """
-    session = summary.get("session") if isinstance(summary, dict) else None
-    reported = session.get("embedding") if isinstance(session, dict) else None
-    return copy.deepcopy(reported) if isinstance(reported, dict) else None
+    return _reported(summary, "embedding")
+
+
+def detector_of(summary):
+    """What a summary says marked it, copied; None when it does not say.
+
+    Summarizer names its detectors by hash: the wording rules, the priors and levels, and its
+    own source. It is read from the summary a request is built from, like the embedding, and
+    copied as it stands: a hash the summary gives as unknown is unknown here, and a summary
+    made before Summarizer said any of this has none. Nothing is worked out from what is
+    running now.
+    """
+    return _reported(summary, "detector")
+
+
+def provenance(summary):
+    """The two things a record keeps about the summary it rests on. Never part of a request."""
+    return {"summary_embedding": embedding_of(summary), "summary_detector": detector_of(summary)}
 
 
 def request_sha256(body, questions):
@@ -214,7 +256,15 @@ def request_sha256(body, questions):
 
 
 def detect(
-    client, summary, entry, max_chars=5000, rules=None, arguments=None, directory=None, asked=None
+    client,
+    summary,
+    entry,
+    max_chars=5000,
+    rules=None,
+    arguments=None,
+    directory=None,
+    asked=None,
+    explain=False,
 ):
     """Send one trigger's packet to Kai and return the detection record.
 
@@ -240,6 +290,9 @@ def detect(
     The record's requests_sent counts what this trigger actually put to the service: none when
     its answer was one already given, more than one when a larger request was refused first.
 
+    explain adds "shown" to the record: the entries the packet's text shows (entries_shown).
+    It is for reading what a request rests on, and is left out of the records a monitor keeps.
+
     status is "scored", "call_too_large", "policy_too_large", "kai_rejected" or
     "kai_unavailable".
     """
@@ -255,8 +308,9 @@ def detect(
     record |= {"decision": None, "flagged": None, "rules": [rule["id"] for rule in rules]}
     # What Kai was given is identified by both: the state's layout and the packet's schema.
     record["layout"] = {"state": LAYOUT, "packet": session.get("schema")}
-    # What marked this summary, by its own report. Kept beside the request, never inside it.
-    record["summary_embedding"] = embedding_of(summary)
+    # What embedded and what marked this summary, by its own report. Kept beside the request,
+    # never inside it.
+    record |= provenance(summary)
     call, account, questions = None, {}, (XPIA,)
     if entry["type"] == "action":
         logged = logged_call(directory, entry) if arguments is None else None
@@ -265,7 +319,9 @@ def detect(
     size = max_chars - len(state(rules, "", call))  # what the rules and the call leave
     record["requests_sent"] = 0
     while True:
-        text, about = packet(summary, entry, max(size, MIN_CHARS))
+        text, about, emitted = packet(summary, entry, max(size, MIN_CHARS))
+        if explain:
+            record["shown"] = entries_shown(summary, emitted)
         # Whole means the call's own arguments, all of them: a display text never qualifies.
         whole = account.get("call_source") != "representation"
         whole = whole and not account.get("call_chars_not_shown")

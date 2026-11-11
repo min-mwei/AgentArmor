@@ -14,6 +14,7 @@ Kai's decisions. With the gate (hooks-config --gate) a suspicious tool call wait
 "deny" is returned to the agent. Kai's serving path is unqualified (policy_ready false).
 
     agentarmor-monitor requests --session ID     # what would be sent to Kai, without sending
+    agentarmor-monitor render scripts.jsonl --out DIR     # the same for scripted sessions
 """
 
 import argparse
@@ -23,7 +24,7 @@ import sys
 import threading
 
 from .escalate import LEVELS, append, detect, key_of, latest, read, settled, triggers
-from .kai import KaiClient, KaiUnavailable, request
+from .kai import KaiClient, KaiUnavailable, Unsent
 
 
 def _client(args):
@@ -56,21 +57,25 @@ def _gate(args):
     return gate(args, prepare)
 
 
-def _serve(args):
+def _runtime(args):
     from summarizer.embedder import MODEL, create
     from summarizer.summarize import Runtime
 
-    from .daemon import Monitor
-
     if args.embedder == "hash":
-        embedder = create("hash")
-    else:
-        embedder = create(
+        return Runtime(create("hash"))
+    return Runtime(
+        create(
             model=args.model or MODEL, device=args.device, local_files_only=args.local_files_only
         )
+    )
+
+
+def _serve(args):
+    from .daemon import Monitor
+
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    monitor = Monitor(Runtime(embedder), _client(args), args.level, args.max_chars)
+    monitor = Monitor(_runtime(args), _client(args), args.level, args.max_chars)
     monitor.rules = _rules(args)
     try:
         monitor.serve(stop)
@@ -115,17 +120,6 @@ def _scan(args):
     return 0
 
 
-class _Unsent:
-    """Stands in for Kai to show what would be sent: keeps the request and answers nothing."""
-
-    def __init__(self):
-        self.request = None
-
-    def ask(self, state, questions):
-        self.request = request(state, questions)
-        raise KaiUnavailable("not sent")
-
-
 def _requests(args):
     """Print the request each trigger of a session would send to Kai. Nothing is sent or kept.
 
@@ -142,9 +136,10 @@ def _requests(args):
         )
     first = {}  # request hash -> the first trigger that builds it
     for entry in triggers(summary, args.level):
-        unsent = _Unsent()
+        unsent = Unsent()
         record = detect(unsent, summary, entry, args.max_chars, rules, directory=directory)
-        kept = ("key", "trigger", "layout", "summary_embedding", "packet", "review", "rules")
+        kept = ("key", "trigger", "layout", "summary_embedding", "summary_detector")
+        kept += ("packet", "review", "rules")
         shown = {key: record[key] for key in kept}
         # Sendable means a request was built. A trigger refused for its size has none, and
         # says why, so nothing counts it as input the service could be given.
@@ -156,6 +151,24 @@ def _requests(args):
             if same != record["key"]:
                 shown["same_request_as"] = same
         print(json.dumps(shown))
+    return 0
+
+
+def _render(args):
+    """Render scripted sessions into the requests the monitor would build. Nothing is sent.
+
+    The output holds session text: treat it like a session's own log.
+    """
+    from .render import read_scripts, render
+
+    try:
+        read_scripts(args.scripts)  # a wrong input is refused before any model is loaded
+        manifest = render(
+            args.scripts, args.out, _runtime(args), args.max_chars, args.level, args.gate_level
+        )
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"render: {error}") from None
+    print(json.dumps({"counts": manifest["counts"], "outputs": manifest["outputs"]}))
     return 0
 
 
@@ -236,17 +249,22 @@ def main(argv=None):
             "--policy", help="rules for Kai's decision (JSONL of id, tier, description)"
         )
 
+    def embedder(command):
+        command.add_argument(
+            "--embedder", choices=("embeddinggemma", "hash"), default="embeddinggemma"
+        )
+        command.add_argument(
+            "--model", help="a local EmbeddingGemma 2 directory; the pinned model if omitted"
+        )
+        command.add_argument("--device", help="cuda, mps or cpu; detected if omitted")
+        command.add_argument("--local-files-only", action="store_true")
+
     serve = commands.add_parser(
         "serve", help="run Summarizer's daemon and send what it flags to Kai"
     )
     kai(serve)
     trigger(serve, "low")  # watching sends on everything marked: recall first
-    serve.add_argument("--embedder", choices=("embeddinggemma", "hash"), default="embeddinggemma")
-    serve.add_argument(
-        "--model", help="a local EmbeddingGemma 2 directory; the pinned model if omitted"
-    )
-    serve.add_argument("--device", help="cuda, mps or cpu; detected if omitted")
-    serve.add_argument("--local-files-only", action="store_true")
+    embedder(serve)
     serve.set_defaults(run=_serve)
 
     scan = commands.add_parser("scan", help="send one session's flagged entries to Kai once")
@@ -291,6 +309,28 @@ def main(argv=None):
     unsent.add_argument("--agent", choices=("claude_code", "codex_code"))
     unsent.add_argument("--session")
     unsent.set_defaults(run=_requests)
+
+    scripted = commands.add_parser(
+        "render", help="render scripted sessions into the requests the monitor would build"
+    )
+    scripted.add_argument(
+        "scripts", help="one view per line: root_id, view_id, agent, rules, events"
+    )
+    scripted.add_argument("--out", required=True, help="a folder for the three files it writes")
+    scripted.add_argument(
+        "--level", choices=tuple(LEVELS), default="low", help="what the watcher sends from"
+    )
+    scripted.add_argument(
+        "--gate-level", choices=tuple(LEVELS), default="medium", help="what the gate sends from"
+    )
+    scripted.add_argument(
+        "--max-chars",
+        type=int,
+        default=5000,
+        help="budget for the state Kai reads: the rules, the packet and the call",
+    )
+    embedder(scripted)
+    scripted.set_defaults(run=_render)
 
     hooks = commands.add_parser("hooks-config", help="print the observer hooks for an agent")
     hooks.add_argument("--agent", choices=("claude_code", "codex_code"), required=True)
