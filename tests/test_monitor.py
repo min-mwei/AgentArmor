@@ -793,9 +793,11 @@ def test_a_gate_has_no_way_to_a_decision_model_and_no_credential_for_one(
     # the local server, on this machine, and the server alone reaches a decision model.
     proposal = event("s-local", hook_event_name="PreToolUse") | call(1, "Bash", {"command": "ls"})
     good = json.dumps(proposal).encode()
-    made = []
-    monkeypatch.setattr(kai, "KaiClient", lambda *a, **k: made.append((a, k)))
-    monkeypatch.setattr(kai, "bearer", lambda *a, **k: made.append(("token", a, k)))
+    made = []  # every name by which this package could reach a decision model or its token
+    for module in (cli, kai):
+        monkeypatch.setattr(module, "KaiClient", lambda *a, **k: made.append((a, k)))
+        monkeypatch.setattr(module, "bearer", lambda *a, **k: made.append(("token", a, k)))
+    monkeypatch.setattr(cli, "_kai", lambda args: made.append(("client", args)))
     stop = json.dumps(event("s-local", hook_event_name="Stop", last_assistant_message="done"))
     for option in (
         ("--kai-url", "https://review.invalid", "--allow-remote"),
@@ -815,6 +817,12 @@ def test_a_gate_has_no_way_to_a_decision_model_and_no_credential_for_one(
         assert run_gate(monkeypatch, capsys, stop.encode(), *option)[:2] == (0, ""), option
         assert run_gate(monkeypatch, capsys, good, *option, "--on-error", "abstain")[0] == 0
     assert made == []  # no client for a decision model was made, and no token was read
+    # The recorders do see what they stand in for: the diagnostic that does talk to a Kai
+    # service goes through them.
+    with pytest.raises((SystemExit, AttributeError, TypeError)):
+        main(["scan", "--session", "s-local"])
+    assert made and made[0][0] == "client"
+    made.clear()
     monkeypatch.undo()
     monkeypatch.setenv("SUMMARIZER_HOME", str(spool))
     with pytest.raises(SystemExit) as refused:  # and an option it never had is no option
