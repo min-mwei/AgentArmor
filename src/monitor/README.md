@@ -309,6 +309,34 @@ rebuilds it from half the packet and sends that, which `render` does not show: a
 state is over the service's limit is not what would be served, and is to be left out or
 rendered again smaller, not used as it is.
 
+### Counting what becomes of every call
+
+```sh
+.venv/bin/agentarmor-monitor tally rendered/calls.jsonl --answers answers.jsonl --labels labels.jsonl
+```
+
+`tally` reads the ledger, never session text, and puts every proposed call in exactly one
+outcome at the gate:
+
+| Outcome | What happened |
+|---|---|
+| `ran_unasked` | Not marked at the gate's level. Kai is never asked and the call runs. For a call that should have been denied this is a routing miss, which no training of Kai changes |
+| `allowed` | Kai answered allow on complete evidence from before the call. It runs |
+| `denied` | Kai answered deny. It is stopped |
+| `stopped_by_default` | The check could not be completed and the gate stops the call: a gap in the session record, no summary of the call, a call or rules too large, or an allow on evidence that was incomplete or no longer from before the call. An allow that does not stand is here and never under `allowed`. `why` gives the counts by reason |
+| `ran_on_error` | The same, for a gate run with `--on-error abstain` (pass that to `tally` too) |
+| `no_answer` | Kai was asked and the answers file has nothing for the request. A missing output is not a decision |
+
+So each label has `calls = ran + stopped + no_answer`. For calls labelled `deny`, `ran` is what
+was not caught; for calls labelled `allow`, `stopped` is what was stopped wrongly.
+
+`--answers` holds one line per request Kai answered: `{"request_sha256", "decision"}`, allow or
+deny. `--labels` is the kit's own: `{"root_id", "view_id", "event" or "call_id", "should"}`
+with `should` allow or deny for that proposed call, and an optional `group` to count by.
+Without labels every call is `unlabelled`; without answers only the routing is counted, which
+is what a pilot needs. The watcher's count (`watch`: how many calls it asks about) is given
+beside the gate's and never added to it: watching enforces nothing.
+
 ## Detections
 
 One JSON line per trigger in the session's directory under Summarizer's spool

@@ -15,6 +15,7 @@ Kai's decisions. With the gate (hooks-config --gate) a suspicious tool call wait
 
     agentarmor-monitor requests --session ID     # what would be sent to Kai, without sending
     agentarmor-monitor render scripts.jsonl --out DIR     # the same for scripted sessions
+    agentarmor-monitor tally DIR/calls.jsonl     # what becomes of every proposed call
 """
 
 import argparse
@@ -169,6 +170,20 @@ def _render(args):
     except (OSError, ValueError) as error:
         raise SystemExit(f"render: {error}") from None
     print(json.dumps({"counts": manifest["counts"], "outputs": manifest["outputs"]}))
+    return 0
+
+
+def _tally(args):
+    """Count what would become of every proposed call of a render. No session text is read."""
+    from .tally import read, tally
+
+    try:
+        answers = read(args.answers) if args.answers else None
+        labels = read(args.labels) if args.labels else None
+        result = tally(read(args.calls), answers, labels, args.on_error)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise SystemExit(f"tally: {type(error).__name__}: {error}") from None
+    print(json.dumps(result, indent=2))
     return 0
 
 
@@ -331,6 +346,20 @@ def main(argv=None):
     )
     embedder(scripted)
     scripted.set_defaults(run=_render)
+
+    counted = commands.add_parser(
+        "tally", help="count what would become of every proposed call of a render"
+    )
+    counted.add_argument("calls", help="calls.jsonl of a render")
+    counted.add_argument("--answers", help="Kai's answers: request_sha256 and decision per line")
+    counted.add_argument("--labels", help="the kit's labels: root_id, view_id, event, should")
+    counted.add_argument(
+        "--on-error",
+        choices=("deny", "abstain"),
+        default="deny",
+        help="what the gate does when no decision can be reached, as it was run",
+    )
+    counted.set_defaults(run=_tally)
 
     hooks = commands.add_parser("hooks-config", help="print the observer hooks for an agent")
     hooks.add_argument("--agent", choices=("claude_code", "codex_code"), required=True)
