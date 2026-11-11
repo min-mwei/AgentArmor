@@ -2269,7 +2269,7 @@ def test_every_proposed_call_lands_in_one_outcome_of_the_tally(tmp_path, spool, 
     )
     # Before Kai is read, only the routing is known.
     routed = tally(calls, None, labels)
-    assert routed["kai_read"] is False and routed["gate"]["deny"] == {
+    assert routed["answers_supplied"] is False and routed["gate"]["deny"] == {
         "roots": 1, "calls": 4, "triggered": 3, "asked": 3, "pre_action_complete": 3,
         "unasked": 1, "stopped_by_default": 0, "let_through_on_error": 0, "why": {},
     }  # fmt: skip
@@ -2308,5 +2308,5 @@ def test_every_proposed_call_lands_in_one_outcome_of_the_tally(tmp_path, spool, 
     rendered(tmp_path, poisoned_script())
     assert main(["tally", str(tmp_path / "out" / "calls.jsonl")]) == 0
     printed = json.loads(capsys.readouterr().out)
-    assert printed["kai_read"] is False and printed["gate"]["unlabelled"]["calls"] == 4
+    assert printed["answers_supplied"] is False and printed["gate"]["unlabelled"]["calls"] == 4
     assert printed["gate"]["unlabelled"]["asked"] >= 1

@@ -66,7 +66,7 @@ STOPPED = ("denied", "stopped_by_default")  # the gate stops it
 
 def outcome(call, answers=None, on_error="deny"):
     """(outcome, why) of one ledger row at the gate. answers maps request_sha256 to a decision,
-    or is None when Kai has not been read: an asked call is then "asked", and nothing more."""
+    or is None when no answers were supplied: an asked call is then "asked", and nothing more."""
     gate = call["gate"]
     default = "stopped_by_default" if on_error == "deny" else "let_through_on_error"
     if not gate["asked"]:
@@ -190,7 +190,7 @@ def tally(calls, answers=None, labels=None, on_error="deny"):
             # before the call. Calls of one root are not independent: count roots beside them.
             line = {"roots": len(row["roots"]), "calls": row["calls"]}
             line |= {name: row[name] for name in ("triggered", "asked", "pre_action_complete")}
-            if decisions is None:  # Kai was not read: only the routing is known
+            if decisions is None:  # no answers were supplied: only the routing is known
                 names = ("unasked", "stopped_by_default", "let_through_on_error")
                 line |= {name: counts[name] for name in names}
             else:
@@ -201,7 +201,10 @@ def tally(calls, answers=None, labels=None, on_error="deny"):
             out[label] = line | {"why": dict(sorted(row["why"].items()))}
         return out
 
-    result = {"calls": len(calls), "on_error": on_error, "kai_read": decisions is not None}
+    # Whether an answers file was given, and nothing more: an answers file is not evidence
+    # that a model was read, and this count never loads or asks one.
+    result = {"calls": len(calls), "on_error": on_error}
+    result["answers_supplied"] = decisions is not None
     result["gate"] = told(gate)
     result["watch"] = {label: dict(row) for label, row in sorted(watch.items())}
     if groups:

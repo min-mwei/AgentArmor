@@ -360,7 +360,8 @@ These are what a gate configured this way **would do given these answers**. They
 happened. A ledger holds proposals, `tally` runs nothing, and whether a call that was let
 through ran or had an effect is known only from what the hooks observed afterwards. An answers
 file is not evidence that a model was read either: keep the requests that were scored, the
-model's identity and the render's manifest with any result.
+model's identity and the render's manifest with any result. The output says
+`answers_supplied`, true or false, and nothing about a model.
 
 `--answers` holds one line per request Kai answered: `{"request_sha256", "decision"}`, allow or
 deny. `--labels` is the kit's own: `{"root_id", "view_id", "event" or "call_id", "should"}`
