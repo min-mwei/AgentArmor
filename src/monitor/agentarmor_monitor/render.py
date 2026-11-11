@@ -21,7 +21,8 @@ a script that does not say is refused, because the only other home is this machi
 same script therefore renders the same on any machine. The user's own spool is never read
 or written.
 
-Three files are written to --out, and nothing at all when a problem is found:
+Three files are written to --out, which must be a new or an empty folder, and nothing at all
+when a problem is found:
 
 - requests.jsonl: one row for each trigger, at the event where it first reached the level.
   A row holds the exact request (state and the registered questions) and the account of it:
@@ -55,6 +56,7 @@ import contextlib
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -74,6 +76,9 @@ REQUESTS, CALLS, MANIFEST = "requests.jsonl", "calls.jsonl", "manifest.json"
 REQUIRED = ("root_id", "view_id", "agent", "rules", "events")
 OPTIONAL = ("files", "links", "codex_home")
 SESSION = "render"  # the session id of a script whose events carry none
+# Every source file of this package. source_sha256() is over exactly these.
+SOURCES = ("__init__.py", "cli.py", "daemon.py", "escalate.py", "gate.py", "kai.py")
+SOURCES += ("policy.py", "render.py", "tally.py")
 # What a request row keeps of the record detect() builds. The request itself is added to it.
 KEPT = ("key", "trigger", "review", "layout", "packet", "shown")
 KEPT += ("summary_embedding", "summary_detector")
@@ -84,17 +89,23 @@ def _sha256(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode("ascii")).hexdigest()
 
 
-def source_sha256():
-    """SHA-256 over this package's source files, or None when any of them cannot be read.
+def source_sha256(directory=None):
+    """SHA-256 over this package's source files, or None when they cannot all be read.
 
     An installed package does not know its commit. This names the code that rendered, so two
-    renders can be told to come from the same monitor.
+    renders can be told to come from the same monitor. It is over the files named in SOURCES
+    and no others, and it is unknown unless every one of them is read: a package installed as
+    compiled files has no source to name, and a hash of nothing, or of the files that happen
+    to be there, would look like an identity and be none.
     """
+    directory = Path(__file__).parent if directory is None else Path(directory)
     try:
-        files = sorted(Path(__file__).parent.glob("*.py"))
-        return _sha256({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files})
+        found = {
+            name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in SOURCES
+        }
     except OSError:
         return None
+    return _sha256(found)
 
 
 def _paths(value, what):
@@ -202,10 +213,11 @@ def _gate(agent, payload, options):
     """(what the gate would do with a proposed call, record or None, request or None).
 
     The gate's own decide() is run with a client that sends nothing, so the route is the
-    gate's and not a copy of it. What comes back is one of: asked (a request was built),
-    abstain (not marked at the gate's level, in a session scanned whole), or undecided with
-    the reason, which the gate turns into a denial unless it was started with --on-error
-    abstain.
+    gate's and not a copy of it. "triggered" says the call was marked at the gate's level,
+    and "asked" that a request for Kai was built: a call too large to show is triggered and
+    not asked. What comes back is one of: asked; abstain (not marked at the gate's level, in
+    a session scanned whole); or undecided with the reason, which the gate turns into a
+    denial unless it was started with --on-error abstain.
     """
     unsent = Unsent()
     verdict, record, why = decide(
@@ -214,7 +226,8 @@ def _gate(agent, payload, options):
     )  # fmt: skip
     route = {"level": options["gate_level"]}
     if unsent.request is not None:
-        route |= {"asked": True, "request_sha256": record["packet"]["request_sha256"]}
+        route |= {"triggered": True, "asked": True}
+        route["request_sha256"] = record["packet"]["request_sha256"]
         # What the gate makes of an "allow": it stands only on complete evidence from before
         # the call. A "deny" always stands.
         if not record["packet"]["complete"]:
@@ -225,9 +238,13 @@ def _gate(agent, payload, options):
             route["an_allow"] = "stands"
         return route, record, unsent.request
     if verdict == "abstain":
-        return route | {"asked": False, "outcome": "abstain", "why": "below_level"}, None, None
-    route |= {"asked": False, "outcome": "undecided", "why": why}
-    refused = record is not None and "trigger" in record  # a call refused for its size
+        route |= {"triggered": False, "asked": False, "outcome": "abstain", "why": "below_level"}
+        return route, None, None
+    refused = record is not None and "trigger" in record  # marked, and too large to be shown
+    # Not marked at the level in a session with gaps is a stop too, but not a trigger. With
+    # no summary of the call, or no id to find it by, whether it was marked is not known.
+    marked = True if refused else False if why == "coverage" else None
+    route |= {"triggered": marked, "asked": False, "outcome": "undecided", "why": why}
     return route, (record if refused else None), None
 
 
@@ -240,7 +257,7 @@ def render_view(script, runtime, max_chars=5000, level="low", gate_level="medium
     about["rules"]["sha256"] = _sha256(script["rules"])
     options = {"max_chars": max_chars, "gate_level": gate_level, "rules": script["rules"]}
     machine = Scripted(script.get("files"), script.get("links"), script.get("codex_home"))
-    requests, calls, seen = [], [], set()
+    requests, calls, watched = [], [], {}  # watched: trigger key -> the watcher's row for it
     with scratch_spool():
         daemon = Daemon(runtime, log=lambda message: None)
         name, directory = safe_id(session), session_dir(agent, session)
@@ -255,25 +272,69 @@ def render_view(script, runtime, max_chars=5000, level="low", gate_level="medium
                 for key, value in summary["session"]["coverage"].items()
                 if key != "log_bytes"
             }
-            rows = {}  # trigger key -> its row at this event; a gate's own row under ("gate", key)
+            rows = []  # the rows of this event, in order
             for entry in triggers(summary, level):
-                if key_of(entry) in seen:
+                if key_of(entry) in watched:
                     continue
-                seen.add(key_of(entry))
                 record, request = _watch(summary, entry, options, directory)
-                rows[record["key"]] = request_row(
-                    about, number, record, request, ["watch"], coverage
-                )
+                row = request_row(about, number, record, request, ["watch"], coverage)
+                watched[record["key"]] = row
+                rows.append(row)
             if payload["hook_event_name"] == "PreToolUse":
-                calls.append(_call(about, number, payload, options, summary, rows, coverage, level))
-            requests += rows.values()
+                call, mine = _call(
+                    about, number, payload, options, summary, watched, coverage, level
+                )
+                calls.append(call)
+                here = [row for row in rows if mine is not None and row["key"] == mine["key"]]
+                if here and call["routes_agree"]:
+                    # One request on both routes, built at this event. The row kept is the
+                    # gate's, which held the call itself; it takes the watcher's place.
+                    mine["routes"] = ["watch", "gate"]
+                    rows = [mine if row is here[0] else row for row in rows]
+                    watched[mine["key"]] = mine
+                elif mine is not None:
+                    rows.append(mine)
+            requests += rows
     # A request two triggers of one view build alike is the same question asked twice.
     first = {}
     for row in requests:
         digest = row["packet"].get("request_sha256") if row["sendable"] else None
         if digest is not None and first.setdefault(digest, row["key"]) != row["key"]:
             row["same_request_as"] = first[digest]
+    reconcile(requests, calls)
     return requests, calls
+
+
+def reconcile(requests, calls):
+    """Check the ledger against the requests themselves, or raise ValueError.
+
+    "asked" on a route means a request exists. So every call a route asks about names a
+    request that is among the rows, built on that route, and every request built on the gate
+    belongs to exactly one call. A count taken from the ledger is then a count of requests.
+    """
+    built = set(_built(requests))
+    named = []
+    for call in calls:
+        for route in ("watch", "gate"):
+            about = call[route]
+            if about["asked"] != ("request_sha256" in about):
+                raise ValueError("the ledger says a call was asked about and names no request")
+            if about["asked"] and (route, about["request_sha256"]) not in built:
+                raise ValueError("the ledger names a request that was not built on that route")
+            named += [about["request_sha256"]] if about["asked"] and route == "gate" else []
+    at_gate = [digest for route, digest in _built(requests) if route == "gate"]
+    if sorted(named) != sorted(at_gate):
+        raise ValueError("the requests built at the gate are not the ones the ledger names")
+
+
+def _built(requests):
+    """(route, request_sha256) for every request that exists, once for each route it is on."""
+    return [
+        (route, row["packet"]["request_sha256"])
+        for row in requests
+        if row["sendable"]
+        for route in row["routes"]
+    ]
 
 
 def _same(one, other):
@@ -283,12 +344,14 @@ def _same(one, other):
     return not one["sendable"] and not other["sendable"] and one["refused"] == other["refused"]
 
 
-def _call(about, number, payload, options, summary, rows, coverage, level):
-    """One row of calls.jsonl for a proposed call. The gate's request, if it has one, joins rows.
+def _call(about, number, payload, options, summary, watched, coverage, level):
+    """(one row of calls.jsonl for a proposed call, the gate's own request row or None).
 
     summary is the session at this event. The call's entry is found by its id, or, for a call
     the agent gave no id, as the action this event produced: such a call can still be watched,
-    though the gate, which needs the id, cannot check it.
+    though the gate, which needs the id, cannot check it. On each route "triggered" says the
+    call was marked at the route's level and "asked" that a request was built for it. A call
+    marked and too large to show is triggered and not asked, on both.
     """
     agent, call_id = about["agent"], payload.get("tool_use_id")
     identity = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
@@ -301,29 +364,29 @@ def _call(about, number, payload, options, summary, rows, coverage, level):
     row["summarized"] = entry is not None
     for key in ("level", "confidence", "labels"):
         row[key] = entry.get(key) if entry is not None else None
-    watched = rows.get(key_of(entry)) if entry is not None else None
-    row["watch"] = {"level": level, "asked": watched is not None}
-    if watched is None:
-        row["watch"]["why"] = "below_level" if entry is not None else "no_summary"
-    elif watched["sendable"]:
-        row["watch"]["request_sha256"] = watched["packet"]["request_sha256"]
+    seen = watched.get(key_of(entry)) if entry is not None else None
+    row["watch"] = {"level": level, "triggered": seen is not None, "asked": False}
+    if entry is None:
+        row["watch"] |= {"triggered": None, "why": "no_summary"}
+    elif seen is None:
+        row["watch"]["why"] = "below_level"
+    elif seen["sendable"]:
+        row["watch"] |= {"asked": True, "request_sha256": seen["packet"]["request_sha256"]}
     else:
-        row["watch"]["refused"] = watched["refused"]
+        row["watch"]["why"] = seen["refused"]
     route, record, request = _gate(agent, payload, options)
     row |= {"gate": route, "routes_agree": None}
-    # Of the call's own request, whichever route built it; null when neither did.
-    row["pre_action_complete"] = watched["pre_action_complete"] if watched is not None else None
+    # Of the call's own request, whichever route built it; null when neither built one.
+    built = seen is not None and seen["sendable"]
+    row["pre_action_complete"] = seen["pre_action_complete"] if built else None
+    mine = None
     if record is not None:
         mine = request_row(about, number, record, request, ["gate"], coverage)
-        row["pre_action_complete"] = mine["pre_action_complete"]
-        if watched is not None:
-            row["routes_agree"] = _same(watched, mine)
-        if row["routes_agree"]:
-            # One request on both routes. The row kept is the gate's, which held the call itself.
-            rows[mine["key"]] = mine | {"routes": ["watch", "gate"]}
-        else:
-            rows["gate", mine["key"]] = mine
-    return row
+        if mine["sendable"]:
+            row["pre_action_complete"] = mine["pre_action_complete"]
+        if seen is not None:
+            row["routes_agree"] = _same(seen, mine)
+    return row, mine
 
 
 def _lines(rows):
@@ -352,12 +415,17 @@ def read_scripts(path):
 
 
 class Tally:
-    """What a render holds, in counts. Every proposed call is in exactly one gate count."""
+    """What a render holds, in counts.
+
+    Every proposed call is in exactly one gate count. "asked" counts requests that exist: a
+    call marked and too large to show is counted as triggered and as refused, never as asked.
+    """
 
     def __init__(self):
         self.counts = Counter()
-        self.by = {name: Counter() for name in ("calls_by_level", "gate", "gate_an_allow")}
-        self.by |= {name: Counter() for name in ("requests_by_trigger", "requests_by_review")}
+        names = ("calls_by_level", "watch_refused", "gate", "gate_an_allow")
+        names += ("requests_by_trigger", "requests_by_review")
+        self.by = {name: Counter() for name in names}
         self.roots, self.told = set(), {"summary_embedding": set(), "summary_detector": set()}
         self.packets = set()
 
@@ -366,54 +434,60 @@ class Tally:
         self.counts.update(views=1, events=len(script["events"]), proposed_calls=len(calls))
         self.counts.update(requests=len(requests))
         for call in calls:
-            gate = call["gate"]
+            watch, gate = call["watch"], call["gate"]
             self.by["calls_by_level"][call["level"] or "unknown"] += 1
+            self.counts["watch_triggered"] += bool(watch["triggered"])
+            self.counts["watch_asked"] += watch["asked"]
+            if watch["triggered"] and not watch["asked"]:
+                self.by["watch_refused"][watch["why"]] += 1
+            self.counts["gate_triggered"] += bool(gate["triggered"])
             self.by["gate"]["asked" if gate["asked"] else f"{gate['outcome']}:{gate['why']}"] += 1
             if gate["asked"]:
                 self.by["gate_an_allow"][gate["an_allow"]] += 1
-            self.counts["watch_asked"] += call["watch"]["asked"]
-            self.counts["asked_by_neither_route"] += (
-                not gate["asked"] and not call["watch"]["asked"]
-            )
+            self.counts["no_request_on_either_route"] += not gate["asked"] and not watch["asked"]
             self.counts["routes_disagree"] += call["routes_agree"] is False
         for row in requests:
             self.by["requests_by_trigger"][row["trigger"]["type"]] += 1
             self.by["requests_by_review"][row["review"]] += 1
             self.counts["requests_not_sendable"] += not row["sendable"]
-            self.counts["requests_complete"] += bool(row["packet"]["complete"])
+            self.counts["requests_complete"] += bool(row["sendable"] and row["packet"]["complete"])
             self.counts["pre_action_complete"] += row["pre_action_complete"]
             self.packets.add(row["layout"]["packet"] or "")
             for key, seen in self.told.items():
                 seen.add(json.dumps(row[key], sort_keys=True))
 
     def result(self):
-        names = ("views", "events", "proposed_calls", "watch_asked", "asked_by_neither_route")
-        names += ("routes_disagree", "requests", "requests_not_sendable", "requests_complete")
+        names = ("views", "events", "proposed_calls", "watch_triggered", "watch_asked")
+        names += ("gate_triggered", "no_request_on_either_route", "routes_disagree", "requests")
+        names += ("requests_not_sendable", "requests_complete", "pre_action_complete")
         out = {"roots": len(self.roots)} | {name: self.counts[name] for name in names}
-        out["pre_action_complete"] = self.counts["pre_action_complete"]
         return out | {name: dict(sorted(count.items())) for name, count in self.by.items()}
 
 
 def render(path, out, runtime, max_chars=5000, level="low", gate_level="medium"):
     """Render every script of a file into out and return the manifest.
 
-    Raises ValueError, and leaves nothing behind, when the input is wrong, an output is
-    already there, or two renders of a view differ.
+    out must be a folder that is not there yet, or an empty one. The three files are written
+    in a folder of this render's own beside it, and that folder takes out's place in one step
+    when everything is done, so out holds a whole render or nothing, and two renders into the
+    same place cannot mix: the second to finish is refused and leaves the first as it is.
+    Raises ValueError, and leaves nothing behind, when the input is wrong, out is in use, or
+    two renders of a view differ. Nothing that this render did not create is ever removed.
     """
     out = Path(out)
-    for name in (REQUESTS, CALLS, MANIFEST):
-        if (out / name).exists():
-            raise ValueError(f"{out / name} is already there: a render never replaces one")
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise ValueError(f"{out} is already there and is not an empty folder")
     scripts, input_sha256 = read_scripts(path)
-    out.mkdir(parents=True, exist_ok=True)
-    partial = {name: out / (name + ".partial") for name in (REQUESTS, CALLS, MANIFEST)}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent))
     tally, hashes, rows = Tally(), {}, Counter()
     try:
-        files = {}
-        for name in (REQUESTS, CALLS):
-            fd = os.open(partial[name], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            files[name], hashes[name] = os.fdopen(fd, "w", encoding="ascii"), hashlib.sha256()
-        with files[REQUESTS], files[CALLS]:
+        with contextlib.ExitStack() as held:
+            files = {}
+            for name in (REQUESTS, CALLS):
+                fd = os.open(work / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                files[name] = held.enter_context(os.fdopen(fd, "w", encoding="ascii"))
+                hashes[name] = hashlib.sha256()
             for script in scripts:
                 first = render_view(script, runtime, max_chars, level, gate_level)
                 again = render_view(script, runtime, max_chars, level, gate_level)
@@ -445,12 +519,16 @@ def render(path, out, runtime, max_chars=5000, level="low", gate_level="medium")
             name: {"sha256": hashes[name].hexdigest(), "rows": rows[name]}
             for name in (REQUESTS, CALLS)
         }
-        fd = os.open(partial[MANIFEST], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(work / MANIFEST, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="ascii") as file:
             file.write(json.dumps(manifest, indent=2) + "\n")
-        for name, path_ in partial.items():
-            os.replace(path_, out / name)
+        try:
+            # One step: a folder takes the place of an absent or empty one, and of no other.
+            os.rename(work, out)
+        except OSError:
+            raise ValueError(
+                f"{out} was written to while this render ran: it is left as it is"
+            ) from None
     finally:
-        for path_ in partial.values():
-            path_.unlink(missing_ok=True)
+        shutil.rmtree(work, ignore_errors=True)  # this render's own folder, and nothing else
     return manifest

@@ -24,7 +24,11 @@ answers.jsonl holds one line per request Kai answered: {"request_sha256", "decis
 decision being allow or deny. labels.jsonl is the kit's own: {"root_id", "view_id", "event" or
 "call_id", "should"}, where "should" is allow or deny for that proposed call, and an optional
 "group" (a family, say) to count by. A call with no label is counted as unlabelled. Without
-answers only the routing can be counted, which is what a pilot needs.
+answers only the routing can be counted, which is what a pilot needs: for each label, how
+many roots and calls there are, how many calls are marked at the gate's level (triggered), how
+many of those a request was built for (asked), and how many of those requests are complete and
+from before the call (pre_action_complete). Calls of one root, and views of it, are not
+independent of each other: size a panel by roots.
 
 The watcher asks about more calls than the gate and enforces nothing: its count is advisory
 and is given beside the gate's, never added to it.
@@ -99,10 +103,15 @@ def tally(calls, answers=None, labels=None, on_error="deny"):
         what, why = outcome(call, decisions, on_error)
         parts = [gate] + ([groups.setdefault(group[key], {})] if group.get(key) else [])
         for part in parts:
-            row = part.setdefault(label, {"calls": 0, "asked": 0, "outcomes": Counter()})
+            row = part.setdefault(label, {"calls": 0, "outcomes": Counter(), "roots": set()})
+            for name in ("triggered", "asked", "pre_action_complete"):
+                row.setdefault(name, 0)
             row.setdefault("why", Counter())
             row["calls"] += 1
+            row["roots"].add(call["root_id"])
+            row["triggered"] += bool(call["gate"]["triggered"])
             row["asked"] += bool(call["gate"]["asked"])
+            row["pre_action_complete"] += call["gate"].get("an_allow") == "stands"
             row["outcomes"][what] += 1
             if why and what != "ran_unasked":
                 row["why"][f"{what}:{why}"] += 1
@@ -114,7 +123,11 @@ def tally(calls, answers=None, labels=None, on_error="deny"):
         out = {}
         for label, row in sorted(part.items()):
             counts = row["outcomes"]
-            line = {"calls": row["calls"], "asked": row["asked"]}
+            # The way to a decision example: every call, those marked at the gate's level,
+            # those a request was built for, and those whose request is complete and from
+            # before the call. Calls of one root are not independent: count roots beside them.
+            line = {"roots": len(row["roots"]), "calls": row["calls"]}
+            line |= {name: row[name] for name in ("triggered", "asked", "pre_action_complete")}
             if decisions is None:  # Kai was not read: only the routing is known
                 names = ("ran_unasked", "stopped_by_default", "ran_on_error")
                 line |= {name: counts[name] for name in names}

@@ -104,10 +104,17 @@ def packet(summary, entry, max_chars):
 def entries_shown(summary, emitted):
     """What a packet's text shows, entry by entry, with the trust Summarizer gave each.
 
-    One item for each entry in the text: its type, the event it came from (seq), how many of
-    its characters are shown, where in the event it sits when it is a piece of content (ref),
-    and its trust (user, agent, or a lower-trust source). The trust is what the hook that
-    delivered the text implies, never what the text says of itself. No item holds text.
+    One item for each entry in the text: its type, the event it came from (seq), where in the
+    event it sits when it is a piece of content (ref), how much of its own text the line
+    holds, and its trust (user, agent, or a lower-trust source). The trust is what the hook
+    that delivered the text implies, never what the text says of itself. No item holds text.
+
+    How much is Summarizer's count: "shown" of "of" characters under a "limit", in the
+    entry's own text and not in its display, with "noted" for excerpts printed beside the
+    quote. The limit is not what was shown: a request of 21 characters under a limit of 400
+    shows 21 of 21. An item says its entry is in the text, and "shown" below "of" says the
+    entry was cut. Neither says that a given premise reached Kai. That is settled only by
+    finding the premise in the request's own text.
     """
     trust = {key_of(entry): entry.get("trust") for entry in summary["entries"]}
     return [item | {"trust": trust.get(key_of(item))} for item in emitted]

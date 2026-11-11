@@ -13,12 +13,12 @@ requires-python = ">=3.11,<3.14"
 # when a call's proposal was not observed, write an event's text to the hook's error log, do
 # not say what marked a summary, and cannot replay a session without asking the machine.
 dependencies = [
-    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@5e7cef848336c488332f17ffa360dbd94fb15743",
+    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@542b9d63606bb5f16e469d72ee530bb8ab678321",
     "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]
-model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@5e7cef848336c488332f17ffa360dbd94fb15743"]
+model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@542b9d63606bb5f16e469d72ee530bb8ab678321"]
 
 [project.scripts]
 agentarmor-monitor = "agentarmor_monitor.cli:main"

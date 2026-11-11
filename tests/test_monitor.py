@@ -1546,9 +1546,12 @@ def test_a_scripted_session_is_rendered_call_by_call_as_the_monitor_would_ask(tm
     read, listing, peek, send = calls
     for unmarked in (read, listing):  # neither route asks: these are in this file and no other
         assert unmarked["level"] == "none" and unmarked["summarized"]
-        assert unmarked["watch"] == {"level": "low", "asked": False, "why": "below_level"}
+        assert unmarked["watch"] == {
+            "level": "low", "triggered": False, "asked": False, "why": "below_level",
+        }  # fmt: skip
         assert unmarked["gate"] == {
-            "level": "medium", "asked": False, "outcome": "abstain", "why": "below_level",
+            "level": "medium", "triggered": False, "asked": False, "outcome": "abstain",
+            "why": "below_level",
         }  # fmt: skip
         assert unmarked["pre_action_complete"] is None
     assert send["level"] == "high" and send["watch"]["asked"] and send["gate"]["asked"]
@@ -1579,6 +1582,12 @@ def test_a_scripted_session_is_rendered_call_by_call_as_the_monitor_would_ask(tm
     assert shown["prompt", 2]["trust"] == "user" and shown["action", 9]["trust"] == "agent"
     assert shown["content", 4]["trust"] == "untrusted"
     assert shown["content", 4]["ref"]["field"] == "tool_response.file.content"
+    # How much of each is in the text is counted in the entry's own characters. The limit a
+    # line may reach is beside it and is not the count: the request has 21 characters.
+    request = {key: shown["prompt", 2][key] for key in ("limit", "shown", "of")}
+    assert request == {"limit": 400, "shown": 21, "of": len("Summarize the README.")}
+    assert all(item["shown"] <= min(item["limit"], item["of"]) for item in asked["shown"])
+    assert all("chars" not in item for item in asked["shown"])
     assert asked["packet"]["dropped"] == {} and "text" not in json.dumps(asked["shown"])
     # Content that gives orders is a trigger of its own, asked about after the fact.
     order = next(row for row in rows if row["trigger"]["type"] == "content" and row["event"] == 4)
@@ -1595,9 +1604,16 @@ def test_a_scripted_session_is_rendered_call_by_call_as_the_monitor_would_ask(tm
     assert (counts["roots"], counts["views"], counts["events"]) == (1, 1, 10)
     assert counts["proposed_calls"] == len(calls) == sum(counts["gate"].values())
     assert counts["gate"]["abstain:below_level"] >= 2 and counts["gate"]["asked"] >= 1
-    assert counts["asked_by_neither_route"] == sum(
+    assert counts["no_request_on_either_route"] == sum(
         not c["watch"]["asked"] and not c["gate"]["asked"] for c in calls
     )
+    # "Asked" is a count of requests: each asked call names one that is among the rows.
+    built = {(route, row["packet"]["request_sha256"]) for row in rows for route in row["routes"]}
+    for route in ("watch", "gate"):
+        named = [c[route]["request_sha256"] for c in calls if c[route]["asked"]]
+        assert named and all((route, digest) in built for digest in named)
+    assert counts["watch_asked"] == sum(c["watch"]["asked"] for c in calls)
+    assert counts["watch_triggered"] == counts["watch_asked"] and counts["watch_refused"] == {}
     assert counts["requests"] == len(rows) and counts["routes_disagree"] == 0
     assert counts["pre_action_complete"] == sum(row["pre_action_complete"] for row in rows)
     out = tmp_path / "out"
@@ -1751,8 +1767,38 @@ def test_a_render_refuses_what_it_cannot_stand_behind_and_writes_nothing(tmp_pat
             rendering.render(source, out, Runtime(HashEmbedder()))
     finally:
         rendering.render_view = real
-    assert not any(out.iterdir())
-    # A render never replaces one that is there.
+    assert not out.exists() and list(tmp_path.glob(".out.*")) == []
+
+    # A folder someone else is using is refused, and nothing in it is touched (MR58-2): not a
+    # part another render left, whatever its name.
+    out.mkdir()
+    (out / "requests.jsonl.partial").write_bytes(b"another render's work\n")
+    with pytest.raises(SystemExit, match="is already there and is not an empty folder"):
+        main(["render", str(source), "--out", str(out), "--embedder", "hash"])
+    assert (out / "requests.jsonl.partial").read_bytes() == b"another render's work\n"
+    assert [path.name for path in out.iterdir()] == ["requests.jsonl.partial"]
+    assert list(tmp_path.glob(".out.*")) == []
+    (out / "requests.jsonl.partial").unlink()
+    # Two renders into one place: the one that finishes second is refused, and the first is
+    # left whole. Here the first finishes while the second is still rendering.
+    winner = {"requests.jsonl": b"the first render\n", "calls.jsonl": b"its calls\n"}
+
+    def overtaken(script, runtime, *options):
+        for name, data in winner.items():
+            (out / name).write_bytes(data)
+        return real(script, runtime, *options)
+
+    rendering.render_view = overtaken
+    try:
+        with pytest.raises(ValueError, match="was written to while this render ran"):
+            rendering.render(source, out, Runtime(HashEmbedder()))
+    finally:
+        rendering.render_view = real
+    assert {path.name: path.read_bytes() for path in out.iterdir()} == winner
+    assert list(tmp_path.glob(".out.*")) == []
+    for name in winner:
+        (out / name).unlink()
+    # An empty folder is as good as none. A render never replaces one that is there.
     assert main(["render", str(source), "--out", str(out), "--embedder", "hash"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["counts"]["views"] == 1 and set(printed["outputs"]) == {
@@ -1760,9 +1806,13 @@ def test_a_render_refuses_what_it_cannot_stand_behind_and_writes_nothing(tmp_pat
         "calls.jsonl",
     }
     kept = (out / "requests.jsonl").read_bytes()
-    with pytest.raises(SystemExit, match="is already there"):
+    with pytest.raises(SystemExit, match="is already there and is not an empty folder"):
         main(["render", str(source), "--out", str(out), "--embedder", "hash"])
     assert (out / "requests.jsonl").read_bytes() == kept and not spool.exists()
+    assert sorted(path.name for path in out.iterdir()) == [
+        "calls.jsonl", "manifest.json", "requests.jsonl",
+    ]  # fmt: skip
+    assert list(tmp_path.glob(".out.*")) == []
 
 
 def test_a_call_too_large_to_show_whole_is_in_the_ledger_and_is_not_sendable(tmp_path, spool):
@@ -1773,19 +1823,40 @@ def test_a_call_too_large_to_show_whole_is_in_the_ledger_and_is_not_sendable(tmp
         *tool(1, "Bash", big),
     )
     rows, (call,), manifest = rendered(tmp_path, script)
+    # Marked, and refused before any client is called: triggered on both routes and asked on
+    # neither. No request exists, so nothing counts one (MR58-1).
     assert call["gate"] == {
-        "level": "medium",
-        "asked": False,
-        "outcome": "undecided",
+        "level": "medium", "triggered": True, "asked": False, "outcome": "undecided",
         "why": "call_too_large",
-    }
-    assert call["watch"] == {"level": "low", "asked": True, "refused": "call_too_large"}
-    assert call["routes_agree"] is True and call["pre_action_complete"] is False
+    }  # fmt: skip
+    assert call["watch"] == {
+        "level": "low", "triggered": True, "asked": False, "why": "call_too_large",
+    }  # fmt: skip
+    assert call["routes_agree"] is True and call["pre_action_complete"] is None
     (row,) = [row for row in rows if row["trigger"]["type"] == "action"]
     assert not row["sendable"] and row["refused"] == "call_too_large" and row["request"] is None
     assert row["routes"] == ["watch", "gate"] and row["questions"] == []
-    assert manifest["counts"]["requests_not_sendable"] == 1
-    assert manifest["counts"]["gate"] == {"undecided:call_too_large": 1}
+    counts = manifest["counts"]
+    assert (counts["watch_triggered"], counts["watch_asked"]) == (1, 0)
+    assert counts["watch_refused"] == {"call_too_large": 1}
+    assert (counts["gate_triggered"], counts["gate"]) == (1, {"undecided:call_too_large": 1})
+    assert counts["no_request_on_either_route"] == 1 and counts["requests_not_sendable"] == 1
+    assert counts["requests_complete"] == 0 and counts["pre_action_complete"] == 0
+    assert not any(row["sendable"] for row in rows if row["trigger"]["type"] == "action")
+    # Rules that leave no room for the session are the same kind of refusal.
+    wordy = [RULES[0] | {"description": "Calls the task needs. " * 220}, RULES[1]]
+    small = scripted(
+        *(event for event in script["events"][:2]), *tool(1, "Bash", {"command": send_command()})
+    )
+    small = small | {"rules": wordy, "events": small["events"]}
+    rows, (call,), manifest = rendered(tmp_path / "policy", small)
+    assert call["watch"] == {
+        "level": "low", "triggered": True, "asked": False, "why": "policy_too_large",
+    }  # fmt: skip
+    assert (call["gate"]["asked"], call["gate"]["why"]) == (False, "policy_too_large")
+    assert manifest["counts"]["watch_asked"] == 0 and not any(row["sendable"] for row in rows)
+    assert manifest["counts"]["watch_refused"] == {"policy_too_large": 1}
+    assert manifest["counts"]["no_request_on_either_route"] == 1
     # A smaller budget is a different render, and says so in its manifest.
     _, _, small = rendered(tmp_path / "small", poisoned_script(), max_chars=3000)
     assert small["options"]["max_chars"] == 3000
@@ -1803,12 +1874,14 @@ def test_a_call_below_the_gates_level_is_asked_about_by_the_watcher_only(tmp_pat
     assert call["level"] == "low" and call["labels"] == ["destructive"]
     assert call["watch"]["asked"] and call["watch"]["request_sha256"]
     assert call["gate"] == {
-        "level": "medium", "asked": False, "outcome": "abstain", "why": "below_level",
+        "level": "medium", "triggered": False, "asked": False, "outcome": "abstain",
+        "why": "below_level",
     }  # fmt: skip
     (row,) = rows
     assert row["routes"] == ["watch"] and row["review"] == "pre_action"
     assert row["pre_action_complete"] is True and call["pre_action_complete"] is True
-    assert call["routes_agree"] is None and manifest["counts"]["asked_by_neither_route"] == 0
+    assert call["routes_agree"] is None and manifest["counts"]["no_request_on_either_route"] == 0
+    assert (manifest["counts"]["watch_asked"], manifest["counts"]["gate_triggered"]) == (1, 0)
     assert manifest["counts"]["gate"] == {"abstain:below_level": 1}
     # A gate set to ask from low builds the same request the watcher does.
     (row,), (call,), _ = rendered(tmp_path / "low", script, gate_level="low")
@@ -1816,8 +1889,10 @@ def test_a_call_below_the_gates_level_is_asked_about_by_the_watcher_only(tmp_pat
     assert call["gate"]["asked"] and call["gate"]["an_allow"] == "stands"
     # A watcher set to medium does not ask, and then no route does.
     rows, (call,), manifest = rendered(tmp_path / "medium", script, level="medium")
-    assert rows == [] and manifest["counts"]["asked_by_neither_route"] == 1
-    assert call["watch"] == {"level": "medium", "asked": False, "why": "below_level"}
+    assert rows == [] and manifest["counts"]["no_request_on_either_route"] == 1
+    assert call["watch"] == {
+        "level": "medium", "triggered": False, "asked": False, "why": "below_level",
+    }  # fmt: skip
     assert manifest["summary_detector"] == []  # no request, so no summary is quoted
 
 
@@ -1856,17 +1931,76 @@ def test_a_codex_script_brings_its_instruction_files_and_a_call_without_an_id_is
     assert first["call_id"] == "call-1" and first["summarized"]
     assert (second["call_id"], second["summarized"], second["level"]) == (None, True, "high")
     assert second["gate"] == {
-        "level": "medium",
-        "asked": False,
-        "outcome": "undecided",
+        "level": "medium", "triggered": None, "asked": False, "outcome": "undecided",
         "why": "event",
-    }
+    }  # fmt: skip
     assert second["watch"]["asked"] and second["pre_action_complete"] is False
     watched = next(row for row in rows if row["event"] == 5 and row["trigger"]["type"] == "action")
     assert watched["routes"] == ["watch"] and not watched["packet"]["complete"]
     assert watched["packet"]["call_source"] == "representation"
     assert manifest["counts"]["gate"]["undecided:event"] == 1
-    assert manifest["counts"]["asked_by_neither_route"] == 0
+    assert manifest["counts"]["no_request_on_either_route"] == 0
+
+
+def test_the_monitor_names_its_source_only_when_all_of_it_can_be_read(tmp_path):
+    package = Path(rendering.__file__).parent
+    # Every source file is named, so a new module cannot be left out of the identity.
+    assert sorted(rendering.SOURCES) == sorted(path.name for path in package.glob("*.py"))
+    known = rendering.source_sha256()
+    assert isinstance(known, str) and len(known) == 64
+    assert known != hashlib.sha256(b"{}").hexdigest()
+    # A copy with the same files is the same source; one changed file is another.
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    for name in rendering.SOURCES:
+        (copy / name).write_bytes((package / name).read_bytes())
+    assert rendering.source_sha256(copy) == known
+    (copy / "tally.py").write_text("# changed\n")
+    assert rendering.source_sha256(copy) not in (known, None)
+    # With one file gone the source is not all there, and the identity is unknown, never the
+    # hash of what is left.
+    (copy / "tally.py").unlink()
+    assert rendering.source_sha256(copy) is None
+    # The reviewer's case: a package installed as compiled files only, in a fresh process.
+    built = tmp_path / "built" / "agentarmor_monitor"
+    built.mkdir(parents=True)
+    for name in rendering.SOURCES:
+        (built / name).write_bytes((package / name).read_bytes())
+    import compileall
+
+    assert compileall.compile_dir(built, legacy=True, quiet=1)
+    for name in rendering.SOURCES:
+        (built / name).unlink()
+    code = "import agentarmor_monitor.render as r; "
+    code += "print(r.__file__.endswith('.pyc'), r.source_sha256())"
+    env = os.environ | {"PYTHONPATH": os.pathsep.join([str(tmp_path / "built"), *sys.path])}
+    ran = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert ran.stdout.split() == ["True", "None"], ran.stderr[-400:]
+
+
+def test_the_ledger_is_checked_against_the_requests_themselves():
+    def request(key, digest, routes, sendable=True):
+        packet = {"request_sha256": digest} if sendable else {}
+        return {"key": key, "routes": routes, "sendable": sendable, "packet": packet}
+
+    def call(watch, gate):
+        return {"watch": watch, "gate": gate}
+
+    asked = {"asked": True, "request_sha256": "a"}
+    rows = [request("action:3:c1", "a", ["watch", "gate"])]
+    rendering.reconcile(rows, [call(asked, asked)])
+    # A refused attempt is a row with no request: no route may count it as asked.
+    refused = [request("action:3:c1", None, ["watch", "gate"], sendable=False)]
+    rendering.reconcile(refused, [call({"asked": False}, {"asked": False})])
+    for calls, said in (
+        ([call({"asked": True}, {"asked": False})], "names no request"),
+        ([call({"asked": True, "request_sha256": "b"}, {"asked": False})], "not built on that"),
+        ([call(asked, {"asked": False})], "built at the gate"),
+    ):
+        with pytest.raises(ValueError, match=said):
+            rendering.reconcile(rows, calls)
+    with pytest.raises(ValueError, match="names no request"):
+        rendering.reconcile(refused, [call({"asked": True}, {"asked": False})])
 
 
 def test_a_record_keeps_what_the_packet_left_out_and_only_a_reader_gets_the_entries(spool, service):
@@ -1889,11 +2023,12 @@ def test_every_proposed_call_lands_in_one_outcome_of_the_tally(tmp_path, spool, 
         ids = {"root_id": "r", "view_id": "v", "event": event, "call_id": f"call-{event}"}
         return ids | {"watch": {"asked": watch}, "gate": {"level": "medium"} | gate}
 
-    below = {"asked": False, "outcome": "abstain", "why": "below_level"}
-    gap = {"asked": False, "outcome": "undecided", "why": "coverage"}
+    below = {"triggered": False, "asked": False, "outcome": "abstain", "why": "below_level"}
+    gap = {"triggered": False, "asked": False, "outcome": "undecided", "why": "coverage"}
 
     def asked(number, allow="stands"):
-        return {"asked": True, "request_sha256": f"h{number}", "an_allow": allow}
+        about = {"triggered": True, "asked": True, "request_sha256": f"h{number}"}
+        return about | {"an_allow": allow}
 
     calls = [
         row(1, False, **below),  # harmless and unmarked: it runs, and Kai never hears of it
@@ -1920,14 +2055,16 @@ def test_every_proposed_call_lands_in_one_outcome_of_the_tally(tmp_path, spool, 
     # Calls that should be denied: one never reached Kai, one Kai let through, one Kai stopped,
     # and one has no answer, which is not a decision.
     assert unsafe == {
-        "calls": 4, "asked": 3, "ran_unasked": 1, "allowed": 1, "denied": 1,
-        "stopped_by_default": 0, "ran_on_error": 0, "no_answer": 1, "ran": 2, "stopped": 1,
-        "why": {},
+        "roots": 1, "calls": 4, "triggered": 3, "asked": 3, "pre_action_complete": 3,
+        "ran_unasked": 1, "allowed": 1, "denied": 1, "stopped_by_default": 0,
+        "ran_on_error": 0, "no_answer": 1, "ran": 2, "stopped": 1, "why": {},
     }  # fmt: skip
     # Calls that should run: an allow on incomplete evidence is a stop, never an "allowed".
+    # Three were marked and asked about, and two of those requests could carry a decision.
     assert benign == {
-        "calls": 5, "asked": 3, "ran_unasked": 1, "allowed": 1, "denied": 1,
-        "stopped_by_default": 2, "ran_on_error": 0, "no_answer": 0, "ran": 2, "stopped": 3,
+        "roots": 1, "calls": 5, "triggered": 3, "asked": 3, "pre_action_complete": 2,
+        "ran_unasked": 1, "allowed": 1, "denied": 1, "stopped_by_default": 2,
+        "ran_on_error": 0, "no_answer": 0, "ran": 2, "stopped": 3,
         "why": {"stopped_by_default:coverage": 1, "stopped_by_default:incomplete": 1},
     }  # fmt: skip
     for part in told["gate"].values():  # every call in exactly one
@@ -1944,8 +2081,8 @@ def test_every_proposed_call_lands_in_one_outcome_of_the_tally(tmp_path, spool, 
     # Before Kai is read, only the routing is known.
     routed = tally(calls, None, labels)
     assert routed["kai_read"] is False and routed["gate"]["deny"] == {
-        "calls": 4, "asked": 3, "ran_unasked": 1, "stopped_by_default": 0, "ran_on_error": 0,
-        "why": {},
+        "roots": 1, "calls": 4, "triggered": 3, "asked": 3, "pre_action_complete": 3,
+        "ran_unasked": 1, "stopped_by_default": 0, "ran_on_error": 0, "why": {},
     }  # fmt: skip
     for wrong, said in (
         ([{"request_sha256": "h3", "decision": "maybe"}], "allow or deny"),

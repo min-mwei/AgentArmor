@@ -260,7 +260,8 @@ Mac, `/home/...` otherwise resolves elsewhere and would be marked as a redirecte
 it does not hold could not be read (which is a gap in the session's record), and a script that
 does not say where home is is refused. The user's own spool is never read or written.
 
-**What it writes**, with mode 0600, and nothing at all if anything is wrong:
+**What it writes**, with mode 0600 in a folder of mode 0700, and nothing at all if anything
+is wrong:
 
 `requests.jsonl`, one row per trigger:
 
@@ -270,7 +271,7 @@ does not say where home is is refused. The user's own spool is never read or wri
 | `event` | The event (from 1) at which the request was built. The session prefix ends there |
 | `routes` | Which routes would send it: `watch` (the daemon, from `--level`, default low), `gate` (from `--gate-level`, default medium), or both when they build the same request |
 | `key`, `trigger`, `review`, `layout`, `packet`, `summary_embedding`, `summary_detector` | As in a detection record (below) |
-| `shown` | The entries the packet's text shows: type, the event each came from (`seq`), how many of its characters are shown, where in the event a piece of content sits (`ref`), and its trust (`user`, `agent`, or a lower-trust source). No text. Use it to check that the event holding a deciding premise is in the text |
+| `shown` | The entries the packet's text shows: type, the event each came from (`seq`), where in the event a piece of content sits (`ref`), its trust (`user`, `agent`, or a lower-trust source), and how much of its own text the line holds: `shown` of `of` characters under a `limit`, counted in the entry's text and not in its display (no quotation marks, escapes, ellipsis, labels or marks), with `noted` for excerpts printed beside the quote. A limit is not a count: a request of 21 characters under a limit of 400 shows 21 of 21. No text. An item says its entry is in the text and `shown` below `of` says it was cut; neither says a given premise reached Kai. **Find the premise in `request.state` itself**, and hold the row if it is cut, redacted or missing |
 | `coverage` | Summarizer's account of the session at that event: gaps, clipped and unscanned characters, redactions, files it could not read |
 | `sendable`, `refused` | Whether a request was built; if not, why (`call_too_large`, `policy_too_large`) |
 | `questions`, `request` | The questions by name, and the request exactly as sent: `model`, `state`, and each question's registered text. `packet.request_sha256` is the SHA-256 of `json.dumps(request, sort_keys=True)` |
@@ -283,10 +284,16 @@ does not say where home is is refused. The user's own spool is never read or wri
 |---|---|
 | `event`, `call_id`, `call_sha256`, `tool` | Which call. The hash is of the tool name and arguments before redaction |
 | `summarized`, `level`, `confidence`, `labels` | How Summarizer marked the call at its proposal. `summarized` is false when it made no entry of the call. A call the agent gave no `tool_use_id` is found as the action its event produced: the watcher can still ask about it, and the gate, which needs the id, cannot check it (`why: event`) |
-| `watch` | `asked`, with the request's `request_sha256`, or `why` not (`below_level`, `no_summary`), or `refused` for size |
-| `gate` | `asked`, with `request_sha256` and `an_allow`: what the gate makes of an "allow" from Kai, `stands`, or `incomplete` or `moved_on` (the gate then stops the call by default). Otherwise `outcome`: `abstain` (`why: below_level`: the call runs under the agent's own permission flow and Kai is never asked) or `undecided` with `why` (`coverage`, `no_summary`, `call_too_large`, `policy_too_large`, `event`), which the gate turns into a denial unless it runs with `--on-error abstain` |
-| `routes_agree` | Whether the watcher and the gate built the same request, when both asked |
+| `watch` | `triggered`: the call was marked at the watcher's level. `asked`: a request for Kai was built, and then `request_sha256` names it. A call marked and too large to show is triggered and not asked, with `why` (`call_too_large`, `policy_too_large`). Not triggered has `why: below_level`; with no entry for the call, `triggered` is null and `why` is `no_summary` |
+| `gate` | The same two, for the gate. Asked adds `request_sha256` and `an_allow`: what the gate makes of an "allow" from Kai, `stands`, or `incomplete` or `moved_on` (the gate then stops the call by default). Not asked has `outcome`: `abstain` (`why: below_level`: the call runs under the agent's own permission flow and Kai never hears of it) or `undecided` with `why` (`coverage`, `no_summary`, `call_too_large`, `policy_too_large`, `event`), which the gate turns into a denial unless it runs with `--on-error abstain`. `triggered` is null when the gate could not tell how the call was marked |
+| `routes_agree` | Whether the watcher and the gate built the same request, or were refused alike, when both were triggered |
 | `pre_action_complete` | That of the call's request, or null when neither route built one |
+
+**Asked means a request exists.** A refusal for size happens before any client is called: it is
+an attempt, kept in `requests.jsonl` as a row with `sendable: false`, and it is never counted
+as asked on either route. Before anything is written the ledger is checked against the
+requests: every call a route asks about names a request among the rows, built on that route,
+and every request built at the gate belongs to one call.
 
 Count from `calls.jsonl`. A call neither route asks about is in that file and in no other, and
 a monitor leaves no record of a call below the gate's level. A later, retrospective request
@@ -294,8 +301,18 @@ about a call does not change what happened at its proposal.
 
 `manifest.json` names what rendered (a hash of this package's source, the layout, hashes of the
 questions and of the policy interpretation), what the summaries say embedded and marked them,
-the options, the SHA-256 of the input, counts in which every proposed call appears once, and
-the SHA-256 and row count of each output.
+the options, the SHA-256 of the input, counts, and the SHA-256 and row count of each output.
+The source hash is over the package's own files, all of them, and is null when they cannot all
+be read, as in a package installed as compiled files. In the counts every proposed call is in
+exactly one `gate` count; `watch_triggered` and `gate_triggered` count calls marked at each
+level, `watch_asked` and `gate.asked` count requests that exist, `watch_refused` gives the
+watcher's refusals by reason, and `no_request_on_either_route` is every call for which neither
+route built one.
+
+`--out` must be a folder that is not there yet, or an empty one. The files are written in a
+folder of the render's own beside it, which takes its place in one step at the end. So the
+folder holds a whole render or nothing, a render removes nothing it did not create, and of two
+renders into one place the second to finish is refused and the first is left as it is.
 
 Every view is rendered twice and the two must be equal, or nothing is written. That catches
 what varies inside one process. To check a model across processes or devices, render again
