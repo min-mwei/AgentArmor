@@ -5,9 +5,10 @@ implementations, build tools, tests, and runtime guides have been removed.
 Serving and the lightweight Python hook CLI live in `src/vllm`. Optional
 Transformers and MLX training extras are allowed; they do not restore MLX serving.
 
-- Work on `main`, the only permanent branch. The user requested removal of `dev`
-  and a single-commit main history on 2026-11-09. Do not recreate `dev`.
-  GitHub Actions is disabled; run checks locally.
+- Work on `dev`: commit and push there. `main` receives a change only when the user
+  asks for it. The user set this on 2026-11-10, when the monitor's commit was moved
+  from `main` to `dev`; it replaces the 2026-11-09 arrangement in which `main` was
+  the only branch. GitHub Actions is disabled; run checks locally.
 - Keep agent-specific templates and guides in `agents/codex_code` and
   `agents/claude_code`. Templates invoke an absolute `agentarmor` path directly.
   The CLI requires Python, but must not import vLLM, Torch, or a GPU runtime.

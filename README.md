@@ -138,7 +138,7 @@ These facts support policy evaluation; they do not authorize actions on their ow
 
 ## Development
 
-`main` is the only permanent branch. GitHub Actions is disabled; run checks locally:
+Development happens on the `dev` branch. GitHub Actions is disabled; run checks locally:
 
 ```sh
 python3 -m venv .venv
