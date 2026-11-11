@@ -13,14 +13,16 @@ requires-python = ">=3.11,<3.14"
 # when a call's proposal was not observed, write an event's text to the hook's error log, do
 # not say what marked a summary, cannot replay a session without asking the machine, and
 # stop summarizing a session whose text holds a string the embedding model takes for a
-# control token such as "<|image|>".
+# control token such as "<|image|>". The one before this does not count the lines a packet
+# cuts short, quotes a command without the colon or spaces it begins with, and can neither
+# embed nor show as UTF-8 a text that holds half a surrogate pair.
 dependencies = [
-    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@61461bcf59db6b5b0d3a089e37b89fcdb909fafa",
+    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@fbe608d7f509d1d3249f19a532d5b94098119716",
     "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]
-model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@61461bcf59db6b5b0d3a089e37b89fcdb909fafa"]
+model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@fbe608d7f509d1d3249f19a532d5b94098119716"]
 
 [project.scripts]
 agentarmor-monitor = "agentarmor_monitor.cli:main"
