@@ -176,7 +176,7 @@ finds the call in its own log of the session and decides only about a call with 
 | `verdict` | `deny`: the decision model denied the call. `abstain`: nothing stands against it, so the agent's own permission flow applies. `undecided`: the check could not be completed |
 | `why` | For `undecided`, what kept it from being completed (the list below) |
 | `p_deny` | The decision model's probability of deny, when it was asked |
-| `bound` | What the verdict is about and rests on: the agent, session, call id, call hash and attempt asked about; `evidence` (how many events and bytes of the session's log had been read, whether all of it was scanned, and a hash of the workspace); `routing` (whether the decision model was asked, the level the call was marked at, the threshold, and why); `revalidated` (for an allow: how far the log was read again when the answer came, and whether that was its end); `request_sha256`, the exact request the decision model was given; `policy` (the rules by id, and a hash of all of them) and `layout`; `decision_model` (the model, readout and package that answered); `complete` and `review`; and what embedded and marked the summary. Where the decision model was not asked, as for a call nothing marks, the request, the model and `complete` are null: nothing is made up to look like a request |
+| `bound` | What the verdict is about and rests on: the agent, session, call id, call hash and attempt asked about; `evidence` (how many events and bytes of the session's log had been read, whether all of it was scanned, and a hash of the workspace); `routing` (`eligible`: whether the call was marked at the threshold; `requests_sent`: how many requests were in fact put to the decision model, which is 0 for a state refused here for its size; the level, the threshold and the reason); `applicable` (whether the proposal still stood when the summary was read: no request or answer from the user and no report of the call's outcome after it, with the count of events after it); `revalidated` (for an allow: how far the log was read again when the answer came, and whether that was its end); `request_sha256`, the exact request the decision model was given; `policy` (the rules by id, and a hash of all of them) and `layout`; `decision_model` (the model, readout and package that answered); `complete` and `review`; and what embedded and marked the summary. Where the decision model was not asked, as for a call nothing marks, or no request was sent, the request, the model and `complete` are null: nothing is made up to look like a request. A gate takes a receipt only if every field it reads has the shape it is read in |
 | `policy_ready` | false, always |
 
 A receipt holds no session text. A gate uses one only if it answers the very asking it made
@@ -205,7 +205,10 @@ decisions on real calls are unmeasured.
 
 - A call Summarizer did not mark at that level passes without Kai being asked, and the agent's
   own permission flow applies, provided Summarizer scanned everything it captured in the
-  session.
+  session
+  and the proposal still stands: the session's log holds no request or answer from the
+  user and no report of this call's outcome after it. A fresh summary of the right call is
+  not enough for that, since it may already hold the user taking the call back.
 - A marked call goes to Kai. "deny" is returned to the agent as a denial with Kai's
   probability. "allow" says nothing, provided Kai was shown complete evidence from before the
   call and the user has not spoken since that evidence was read.

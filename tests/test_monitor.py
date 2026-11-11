@@ -672,13 +672,17 @@ def test_an_allow_counts_only_on_evidence_from_before_the_call(spool, service):
     watch, client = quiet_watch(service), kai.KaiClient(service.url)
     quiet("s-late")
     watch.update("claude_code", "s-late")
-    after = {"hook_event_name": "UserPromptSubmit", "prompt": "Go ahead, that is fine."}
+    # Another call proposed side by side is in the summary by the time this one is checked.
+    # It takes nothing back, so Kai is asked; but the packet now holds something from after
+    # the call, and an allow given on it is not a check from before the call.
+    after = {"hook_event_name": "PreToolUse"} | call(7, "Bash", {"command": "ls LATER-MARK"})
     output, status = gated("s-late", 2, "Bash", {"command": PEEK}, client, watch, later=[after])
     assert status == 2 and "the session had moved on" in reason(output)
     state, _ = service.seen[-1]
-    assert "Go ahead, that is fine." in state  # what the packet held from after the call
+    assert "ls LATER-MARK" in state  # what the packet held from after the call
     record = gate_records("s-late")[-1]
     assert record["decision"] == "allow" and record["packet"]["later_events"] == 1
+    assert record["applicable"] == {"at_summary": True, "why": None, "events_after_proposal": 1}
     assert (record["review"], record["verdict"], record["why"]) == (
         "retrospective",
         "undecided",
@@ -1011,7 +1015,8 @@ def test_watching_sends_on_everything_marked_and_the_gate_asks_from_medium_up(sp
     (passed,) = gate_records("s-low")
     assert (passed["status"], passed["verdict"], passed["kai"]) == ("unmarked", "abstain", None)
     assert passed["routing"] == {
-        "asked": False,
+        "eligible": False,
+        "requests_sent": 0,
         "level": "low",
         "threshold": "medium",
         "reason": "below_threshold",
@@ -2500,6 +2505,13 @@ def post(url, path, body, raw=None):
         return error.code, json.loads(error.read() or b"null")
 
 
+def asking_logged(session, number, name, tool_input, watch):
+    """Log a proposed call, bring its summary up to date, and return what a gate asks of it."""
+    log(session, {"hook_event_name": "PreToolUse"} | call(number, name, tool_input))
+    watch.update("claude_code", session)
+    return asking(session, number, name, tool_input)
+
+
 def asking(session, number, name, tool_input, on_error="deny"):
     """What a gate asks about a call that the session's log already holds."""
     identity = call_sha256(name, tool_input)
@@ -2609,7 +2621,9 @@ def test_one_local_server_holds_summarizer_the_rules_and_the_kai_loaded_by_it(sp
         assert (
             told["evidence"]["workspace_sha256"] == workspace and told["policy"] == decider.policy
         )
-        assert told["routing"]["asked"] is False and told["routing"]["reason"] == "below_threshold"
+        assert told["routing"]["requests_sent"] == 0 and told["routing"]["eligible"] is False
+        assert told["routing"]["reason"] == "below_threshold"
+        assert told["applicable"] == {"at_summary": True, "why": None, "events_after_proposal": 0}
         assert (told["routing"]["level"], told["routing"]["threshold"]) == ("none", "medium")
         assert told["summary_detector"] == watch.runtime.detector and told["summary_embedding"]
         # Nobody was asked, and nothing is made up to look as if someone had been.
@@ -2630,7 +2644,8 @@ def test_one_local_server_holds_summarizer_the_rules_and_the_kai_loaded_by_it(sp
         assert record["packet"]["call_source"] == "log" and record["declared_on_error"] == "deny"
         assert record["policy_sha256"] == decider.policy["sha256"] and "enforced" not in record
         assert bound["attempt"] == asked["attempt"] == record["attempt"]
-        assert bound["routing"] == record["routing"] and bound["routing"]["asked"] is True
+        assert bound["routing"] == record["routing"] and bound["routing"]["requests_sent"] == 1
+        assert bound["routing"]["eligible"] is True and bound["routing"]["reason"] == "marked"
         assert EXFIL not in json.dumps(receipt)  # a receipt holds no session text
         # The model's own interface is not on the port unless the operator turned it on.
         assert post(url, "/v1/systemone", kai.request("a log"))[0] == 404
@@ -3022,6 +3037,207 @@ def test_bytes_nobody_could_read_are_not_taken_for_nothing_logged(spool, service
     for lost in (None, "12", -1, True, size + 1):
         assert decide.still_applies(directory, "call-2", lost)[0] == "log_unread", lost
     assert decide.still_applies(directory / "none", "call-2", 0)[0] == "log_unread"
+
+
+def test_a_proposal_that_was_already_overtaken_is_not_passed_marked_or_not(spool, service):
+    # MR69-2. A summary that is fresh covers the log to its end, and a verified call is the
+    # call that was asked about. Neither says the call still waits under the request it was
+    # proposed under. An unmarked call passed although the summary already held the user
+    # taking it back, or the call's own result.
+    stop = {"hook_event_name": "UserPromptSubmit", "prompt": "Stop. Do not run that."}
+    cases = {
+        "the user took it back": (stop, "moved_on", "the session had moved on"),
+        "its own result": ("result", "outcome_reported", "already reported as run or refused"),
+        "its own failure": ("failure", "outcome_reported", "already reported as run or refused"),
+    }
+    for number, (name, (later, why, said)) in enumerate(cases.items()):
+        for marked, command in ((False, "ls docs"), (True, PEEK)):
+            session = f"s-overtaken-{number}-{int(marked)}"
+            watch, client = quiet_watch(service), kai.KaiClient(service.url)
+            quiet(session)
+            watch.update("claude_code", session)
+            if later == "result":
+                later_event = {"hook_event_name": "PostToolUse", "tool_response": "ok"}
+                later_event |= call(2, "Bash", {"command": command})
+            elif later == "failure":
+                later_event = {"hook_event_name": "PostToolUseFailure", "error": "exit 1"}
+                later_event |= call(2, "Bash", {"command": command})
+            else:
+                later_event = later
+            service.seen.clear()
+            done = gated(
+                session, 2, "Bash", {"command": command}, client, watch, later=[later_event]
+            )
+            watch.close()
+            assert done[1] == 2 and said in reason(done[0]), (name, marked)
+            assert service.seen == []  # nobody was asked about a call that no longer waits
+            record = gate_records(session)[-1]
+            assert (record["verdict"], record["why"], record["status"]) == ("undecided", why, why)
+            assert record["applicable"] == {
+                "at_summary": False,
+                "why": why,
+                "events_after_proposal": 1,
+            }
+            assert record["routing"]["reason"] == "proposal_overtaken"
+            assert (
+                record["routing"]["eligible"] is marked and record["routing"]["requests_sent"] == 0
+            )
+            # The operator's setting for a check that was not completed still applies.
+            lenient = gated(
+                session, 3, "Bash", {"command": command}, client, watch, on_error="abstain"
+            )
+            assert lenient == (None, 0) or marked
+    # The control: another call proposed side by side takes nothing back. The unmarked call
+    # passes without anyone being asked, and says what was looked at.
+    watch, client = quiet_watch(service), kai.KaiClient(service.url)
+    quiet("s-beside")
+    watch.update("claude_code", "s-beside")
+    beside = {"hook_event_name": "PreToolUse"} | call(7, "Bash", {"command": "ls src"})
+    assert gated("s-beside", 2, "Bash", {"command": "ls docs"}, client, watch, later=[beside]) == (
+        None,
+        0,
+    )
+    record = gate_records("s-beside")[-1]
+    assert (record["status"], record["verdict"]) == ("unmarked", "abstain")
+    assert record["applicable"] == {"at_summary": True, "why": None, "events_after_proposal": 1}
+    watch.close()
+
+
+def test_routing_says_what_was_sent_and_not_what_was_meant(spool, service):
+    # MR69-3. "asked" was true whenever the call was marked, also when the state was refused
+    # here for its size and nothing was ever put to the model.
+    watch, client = quiet_watch(service), kai.KaiClient(service.url)
+    quiet("s-sent")
+    watch.update("claude_code", "s-sent")
+    cases = {
+        "accepted": ({"command": PEEK}, {}, "scored", 1, "marked"),
+        "the call too large": (
+            {"command": PEEK + " #" + "x" * 6000},
+            {},
+            "call_too_large",
+            0,
+            "marked_and_not_sent",
+        ),
+        "the rules too large": (
+            {"command": PEEK},
+            {"max_chars": 100},
+            "policy_too_large",
+            0,
+            "marked_and_not_sent",
+        ),
+    }
+    for number, (name, (tool_input, options, status, sent, reason_)) in enumerate(cases.items(), 2):
+        service.seen.clear()
+        server = deciding(client, **options)
+        receipt = server.decide(asking_logged("s-sent", number, "Bash", tool_input, watch))
+        record = gate_records("s-sent")[-1]
+        assert record["status"] == status and len(service.seen) == sent, name
+        assert record["routing"]["eligible"] is True and record["routing"]["reason"] == reason_, (
+            name
+        )
+        assert record["routing"]["requests_sent"] == record["requests_sent"] == sent, name
+        bound = receipt["bound"]
+        assert (bound["request_sha256"] is None) == (sent == 0), name
+        assert (bound["complete"] is None) == (sent == 0), name  # of a state that was sent
+    # Unavailable and refused by the service: a request was sent, and no answer came of it.
+    down = deciding(kai.KaiClient("http://127.0.0.1:9", timeout=0.2))
+    down.decide(asking_logged("s-sent", 5, "Bash", {"command": PEEK}, watch))
+    record = gate_records("s-sent")[-1]
+    assert (record["status"], record["routing"]["requests_sent"]) == ("kai_unavailable", 1)
+    small = StubKai(limit=10)
+    front = serving.Front(small, "local", None, EXPECTED)
+    refused = deciding(serving.InProcess(front))
+    refused.decide(asking_logged("s-sent", 6, "Bash", {"command": PEEK}, watch))
+    record = gate_records("s-sent")[-1]
+    assert record["status"] == "kai_rejected" and record["routing"]["requests_sent"] >= 1
+    watch.close()
+
+
+@pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
+def test_a_receipt_of_the_wrong_shape_or_a_record_that_cannot_be_kept_never_costs_the_answer(
+    spool, repo_root, agent, monkeypatch
+):
+    # MR69-1. The gate read a receipt's policy as a mapping without having checked that it was
+    # one, while writing its own record, outside its guard: it died with exit 1 and no denial.
+    replies = []
+
+    class Answering(BaseHTTPRequestHandler):
+        def do_POST(self):
+            asked = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            bound = {name: asked[name] for name in local.BOUND} | replies[-1]["bound"]
+            body = {"schema": local.RECEIPT, "verdict": "deny", "why": None, "p_deny": 0.9}
+            body |= {"policy_ready": False, "bound": bound} | replies[-1].get("top", {})
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_):
+            pass
+
+    stand_in = HTTPServer(("127.0.0.1", 0), Answering)
+    threading.Thread(target=stand_in.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{stand_in.server_address[1]}"
+    paths = [str(repo_root / "src/vllm"), str(repo_root / "src/monitor")]
+    environment = os.environ | {"PYTHONPATH": os.pathsep.join(paths), "SUMMARIZER_HOME": str(spool)}
+    tool_name = "Bash" if agent == "claude_code" else "exec_command"
+    payload = COMMON | {"session_id": "s-shape", "hook_event_name": "PreToolUse"}
+    payload |= {"tool_name": tool_name, "tool_input": {"command": "ls"}, "tool_use_id": "call-1"}
+
+    def cli(*options):
+        command = [sys.executable, "-m", "agentarmor_monitor.cli", "gate", "--agent", agent]
+        ran = subprocess.run(
+            [*command, "--server", url, *options],
+            input=json.dumps(payload).encode(),
+            capture_output=True,
+            env=environment,
+        )
+        return ran.returncode, ran.stdout.decode(), ran.stderr.decode()
+
+    good = {"policy": {"rules": ["task"], "sha256": "a" * 64}}
+    try:
+        replies.append({"bound": good})
+        status, out, _ = cli()
+        assert status == 2 and "Kai denied" in out  # a well-shaped receipt: the denial
+        wrong = [
+            {"bound": {"policy": "invalid-policy-shape"}},
+            {"bound": {"policy": {"sha256": 7}}},
+            {"bound": {}},
+            {"bound": good | {"evidence": "all of it"}},
+            {"bound": good | {"request_sha256": 12}},
+            {"bound": good, "top": {"p_deny": "high"}},
+            {"bound": good, "top": {"why": ["because"]}},
+        ]
+        for reply in wrong:
+            replies.append(reply)
+            status, out, err = cli()
+            # Not a receipt: undecided, and so denied, in the gate's own words. Never a crash.
+            assert status == 2 and "local server did not answer" in out, reply
+            assert "Traceback" not in err, reply
+            assert cli("--on-error", "abstain")[:2] == (0, ""), reply
+    finally:
+        stand_in.shutdown()
+        stand_in.server_close()
+
+    # A record that cannot be kept costs the record, and not the answer.
+    def broken(*_):
+        raise RuntimeError("the audit could not be written")
+
+    monkeypatch.setattr(gate, "applied", broken)
+    receipt_for = {"bound": good}
+
+    class Denying:
+        def decide(self, asked):
+            bound = {name: asked[name] for name in local.BOUND} | receipt_for["bound"]
+            told = {"schema": local.RECEIPT, "verdict": "deny", "why": None, "p_deny": 0.9}
+            return told | {"policy_ready": False, "bound": bound}
+
+    output, status = gate.run(agent, json.dumps(payload).encode(), Denying())
+    assert status == 2 and "Kai denied" in output["hookSpecificOutput"]["permissionDecisionReason"]
+    assert (
+        (spool / "gate-errors.log").read_text().splitlines()[-1].endswith("keeping\tRuntimeError")
+    )
 
 
 def test_only_a_gate_says_what_was_enforced_also_when_the_answer_comes_late(spool):

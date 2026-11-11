@@ -234,12 +234,16 @@ def check(agent, raw, prepare, on_error="deny"):
     denied = verdict == "deny" or (verdict == "undecided" and on_error != "abstain")
     if payload is not None:
         # What this gate does with the call, whether or not a receipt came: one such record
-        # for every call it handles, and the only one that says what was enforced.
-        applied(agent, payload, asked, verdict, why, denied, on_error, receipt)
+        # for every call it handles, and the only one that says what was enforced. Keeping
+        # the record is best effort. Whatever goes wrong with it, the answer below stands.
+        try:
+            applied(agent, payload, asked, verdict, why, denied, on_error, receipt)
+        except Exception as error:
+            note(agent, error, "keeping")
     if not denied:
         return None, 0
     if verdict == "deny":
-        odds = receipt.get("p_deny")
+        odds = (receipt or {}).get("p_deny")
         told = f"p_deny {odds:.2f}, " if isinstance(odds, float) else ""
         reason = f"{DENIED} ({told}unqualified model)."
     else:

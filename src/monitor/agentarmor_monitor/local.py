@@ -68,7 +68,16 @@ def bound_to(receipt, asked):
     if receipt.get("verdict") not in VERDICTS or receipt.get("policy_ready") is not False:
         return False
     bound = receipt.get("bound")
-    return isinstance(bound, dict) and all(bound.get(name) == asked[name] for name in BOUND)
+    if not isinstance(bound, dict) or any(bound.get(name) != asked[name] for name in BOUND):
+        return False
+    # Everything a gate reads from a receipt has the shape it is read in, or it is no receipt.
+    why, odds, policy = receipt.get("why"), receipt.get("p_deny"), bound.get("policy")
+    if not isinstance(why, str | None) or not isinstance(odds, float | None):
+        return False
+    if not isinstance(policy, dict) or not isinstance(policy.get("sha256"), str):
+        return False
+    shaped = (bound.get("evidence"), dict | None), (bound.get("request_sha256"), str | None)
+    return all(isinstance(value, kind) for value, kind in shaped)
 
 
 class Local:

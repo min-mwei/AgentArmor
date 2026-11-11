@@ -90,17 +90,44 @@ def still_applies(directory, call_id, log_bytes, settle=SETTLE):
     checked["later_events"] = len(later)
     if not whole:
         return "log_unread", checked
+    return overtaken(later, call_id), checked
+
+
+def overtaken(later, call_id):
+    """Why a call's proposal no longer stands given what was logged after it, or None."""
     for record in later:
         event = record.get("event")
         if not isinstance(event, dict):
-            return "moved_on", checked
+            return "moved_on"
         name = event.get("hook_event_name")
         answered = name == "PostToolUse" and event.get("tool_name") == "AskUserQuestion"
         if name in REPORTED and event.get("tool_use_id") == call_id:
-            return "outcome_reported", checked
+            return "outcome_reported"
         if name == "UserPromptSubmit" or answered:
-            return "moved_on", checked
-    return None, checked
+            return "moved_on"
+    return None
+
+
+def since_proposal(directory, entry, call_id):
+    """(why the proposal no longer stands or None, how many events the log holds after it).
+
+    A summary that is fresh covers the log to its end, and a call whose hash is verified is
+    the call that was asked about. Neither says the call is still waiting under the request
+    it was proposed under: the summary may already hold the user taking it back, or the
+    call's own result. So what the log holds after the proposal is read for exactly that,
+    whether or not the call is marked and whether or not a model will be asked.
+    """
+    try:
+        records, _ = read_events(directory / EVENTS)
+    except OSError:
+        return "log_unread", None
+    seq = entry.get("seq")
+    if not isinstance(seq, int) or seq < 1 or seq > len(records):
+        return "log_unread", None
+    later = records[seq:]
+    if entry.get("status") != "proposed":
+        return "outcome_reported", len(later)
+    return overtaken(later, call_id), len(later)
 
 
 def judge(
@@ -147,13 +174,20 @@ def judge(
     where = str(summary["session"].get("cwd") or "")
     read_to["workspace_sha256"] = hashlib.sha256(where.encode("utf-8", "replace")).hexdigest()
     marked = LEVELS.get(entry.get("level"), 0) >= LEVELS[level]
-    routing = {"asked": False, "level": entry.get("level"), "threshold": level}
+    # eligible: marked at the threshold. requests_sent: what was in fact put to the model.
+    routing = {"eligible": marked, "requests_sent": 0, "level": entry.get("level")}
+    routing["threshold"] = level
+    # Does the proposal still stand? Asked before any routing, of every call.
+    stale, after = since_proposal(directory, entry, call_id)
+    applicable = {"at_summary": stale is None, "why": stale, "events_after_proposal": after}
 
     def unasked(verdict, why, reason):  # read off the summary, with nobody asked
         found = outcome(agent, session, call_id, why or "unmarked", summary)
         found |= {"evidence": read_to, "routing": routing | {"reason": reason}}
-        return verdict, found, why
+        return verdict, found | {"applicable": applicable}, why
 
+    if stale:
+        return unasked("undecided", stale, "proposal_overtaken")
     if not marked:
         # "Not marked" is a finding only when Summarizer scanned everything it captured.
         if coverage["scanned_all_captured"]:
@@ -162,7 +196,10 @@ def judge(
     if client is None:  # marked, and nothing to put it to
         return unasked("undecided", "no_decision_model", "no_decision_model")
     record = detect(client, summary, entry, max_chars, rules, directory=directory, explain=explain)
-    record |= {"evidence": read_to, "routing": routing | {"asked": True, "reason": "marked"}}
+    sent = record.get("requests_sent", 0)
+    reason = "marked" if sent else "marked_and_not_sent"  # too large to put to the model
+    record |= {"evidence": read_to, "applicable": applicable}
+    record["routing"] = routing | {"requests_sent": sent, "reason": reason}
     if record["status"] != "scored":
         return "undecided", record, record["status"]
     if record["decision"] == "deny":
@@ -280,10 +317,14 @@ class Decider:
             # was routed; and for an answer that had to still apply, what was checked.
             "evidence": record.get("evidence"),
             "routing": record.get("routing"),
+            "applicable": record.get("applicable"),
             "revalidated": record.get("revalidated"),
-            # The exact request and what answered it, when something was asked.
+            # The exact request and what answered it, when something was sent. "complete"
+            # is about a state that was put to the model: with none sent it is null.
             "request_sha256": packet.get("request_sha256"),
-            "complete": packet.get("complete"),
+            "complete": packet.get("complete")
+            if (record.get("routing") or {}).get("requests_sent")
+            else None,
             "review": record.get("review"),
             "decision_model": answered if kai else None,
             "summary_embedding": record.get("summary_embedding"),
