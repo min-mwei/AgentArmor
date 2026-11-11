@@ -328,6 +328,9 @@ class Decider:
         told = {"schema": RECEIPT, "verdict": verdict, "why": why, "p_deny": None}
         record = record or {}
         packet, kai = record.get("packet") or {}, record.get("kai") or {}
+        last = record.get("last_request") or {}
+        if last.get("request_sha256") != packet.get("request_sha256"):
+            last = {}  # not about the request this receipt names
         told["p_deny"] = kai.get("p_deny")
         answered = {name: kai.get(name) for name in ("model", "readout", "package_sha256")}
         bound |= {
@@ -342,12 +345,13 @@ class Decider:
             # unless something came back for a request, an answer or a refusal. A request
             # refused here for its size, or sent into a connection that failed, is not
             # known to have been given to anything.
+            # Both are said of the last request alone, by what became of that request:
+            # an earlier, different request that was answered proves nothing about it.
             "request_sha256": packet.get("request_sha256")
-            if ((record.get("routing") or {}).get("requests") or {}).get("transport_attempts")
+            if last.get("transport_attempts")
             else None,
-            "complete": packet.get("complete")
-            if ((record.get("routing") or {}).get("requests") or {}).get("responses")
-            else None,
+            "complete": packet.get("complete") if last.get("responded") else None,
+            "last_request": record.get("last_request"),
             "review": record.get("review"),
             "decision_model": answered if kai else None,
             "summary_embedding": record.get("summary_embedding"),

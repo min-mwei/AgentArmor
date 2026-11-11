@@ -4013,3 +4013,154 @@ def test_what_became_of_each_request_is_counted_apart(spool, service):
         assert bound["request_sha256"] is None and bound["complete"] is None
     finally:
         watch.close()
+
+
+@pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
+def test_what_an_earlier_request_met_is_not_said_of_the_retry(spool, agent):
+    # MR73-1. A larger request was answered with a refusal, and the smaller retry, another
+    # request, went into a connection that failed. The receipt named the retry and called
+    # its state complete on the strength of the first one's response.
+    tool_name = "Bash" if agent == "claude_code" else "exec_command"
+    received, closed = [], threading.Event()
+
+    def endpoint(behaviour):
+        class Answering(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.answer(200, StubKai().metadata() | {"package_sha256": PACKAGE})
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                received.append(escalate.request_sha256(body["state"], tuple(body["questions"])))
+                behaviour(self, body)
+
+            def answer(self, code, value):
+                data = json.dumps(value).encode()
+                self.send_response(code)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *_):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Answering)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    def stop(server):
+        server.shutdown()
+        server.server_close()
+        closed.set()
+
+    def accepted(handler_, body):
+        stub = StubKai(limit=10**7)
+        stub.package = PACKAGE
+        handler_.answer(200, stub.evaluate(body))
+
+    def refuse_once_then_go(handler_, body):  # 413, and then nothing listens there
+        handler_.answer(413, {"error": "too large"})
+        threading.Thread(target=stop, args=(handler_.server,)).start()
+
+    def refuse_once_then_accept(handler_, body):
+        if len(received) == 1:
+            handler_.answer(413, {"error": "too large"})
+        else:
+            accepted(handler_, body)
+
+    class Waiting(kai.KaiClient):
+        """Opens as the client does; before a second request it waits for the endpoint to
+        be gone, when the endpoint is going. It makes up no error of its own."""
+
+        going = False
+
+        def __init__(self, url):
+            super().__init__(url, timeout=2.0, expected=EXPECTED)
+            through, self.opens = self._open, 0
+
+            def counted(*arguments, **options):
+                if self.opens and self.going:
+                    assert closed.wait(5)
+                self.opens += 1
+                return through(*arguments, **options)
+
+            self._open = counted
+
+    def decided(session, behaviour, going=False):
+        for fields in (
+            {"hook_event_name": "SessionStart", "source": "startup"},
+            *(
+                {
+                    "hook_event_name": "UserPromptSubmit",
+                    "prompt": f"Note {n}: keep the build green. "
+                    + f"Area {n} of the tree is owned by team {n}. " * 4,
+                }
+                for n in range(40)
+            ),
+        ):
+            append_event(agent, session, build_record(agent, event(session, **fields)))
+        proposal = {"hook_event_name": "PreToolUse", "tool_name": tool_name}
+        proposal |= {"tool_input": {"command": PEEK}, "tool_use_id": "call-2"}
+        append_event(agent, session, build_record(agent, event(session, **proposal)))
+        watch = Monitor(Runtime(HashEmbedder()), kai.Unsent(), log=lambda message: None)
+        watch.update(agent, session)
+        assert watch.drain()
+        watch.close()
+        received.clear()
+        closed.clear()
+        server, url = endpoint(behaviour)
+        client = Waiting(url)
+        client.going = going
+        front = serving.Front(serving.Relay(client), "remote", None, EXPECTED)
+        identity = call_sha256(tool_name, {"command": PEEK})
+        asked = local.question(agent, session, "call-2", identity)
+        try:
+            receipt = deciding(serving.InProcess(front), max_chars=14_000).decide(asked)
+        finally:
+            if not closed.is_set():
+                stop(server)
+        record = [r for r in escalate.read(session_dir(agent, session)) if r.get("gate")][-1]
+        return receipt, record, client.opens
+
+    # The fault: A is refused by the service, B (smaller, another request) reaches nothing.
+    receipt, record, opens = decided("s-retry-lost", refuse_once_then_go, going=True)
+    built, bound = record["packet"]["request_sha256"], receipt["bound"]
+    assert len(received) == 1 and received[0] != built and opens == 2  # only A arrived
+    assert tuple(record["requests"].values()) == (2, 0, 2, 1, 0)
+    assert (record["status"], receipt["verdict"]) == ("kai_unavailable", "undecided")
+    assert record["last_request"] == {
+        "request_sha256": built,
+        "transport_attempts": 1,
+        "responded": False,
+        "admitted": False,
+    }
+    assert bound["request_sha256"] == built  # B was handed to the transport
+    assert bound["complete"] is None  # and nothing is known to have come back for B
+    assert record["packet"]["complete"] is not None  # the packet's own account is kept
+    # Controls. A refused and B answered: the receipt is B's, and B arrived.
+    receipt, record, opens = decided("s-retry-answered", refuse_once_then_accept)
+    built, bound = record["packet"]["request_sha256"], receipt["bound"]
+    assert len(received) == 2 and received[1] == built != received[0]
+    assert tuple(record["requests"].values()) == (2, 0, 2, 2, 1) and record["status"] == "scored"
+    assert bound["request_sha256"] == built and bound["complete"] is not None
+    assert record["last_request"]["admitted"] is True
+    # Answered at once.
+    receipt, record, opens = decided("s-retry-none", accepted)
+    assert received == [record["packet"]["request_sha256"]] and opens == 1
+    assert receipt["bound"]["complete"] is not None and record["last_request"]["responded"]
+    # A connection that fails at once: attempted, nothing came back.
+    server, url = endpoint(accepted)
+    stop(server)
+    for fields in ({"hook_event_name": "SessionStart", "source": "startup"},):
+        append_event(agent, "s-retry-down", build_record(agent, event("s-retry-down", **fields)))
+    proposal = {"hook_event_name": "PreToolUse", "tool_name": tool_name}
+    proposal |= {"tool_input": {"command": PEEK}, "tool_use_id": "call-2"}
+    append_event(agent, "s-retry-down", build_record(agent, event("s-retry-down", **proposal)))
+    watch = Monitor(Runtime(HashEmbedder()), kai.Unsent(), log=lambda message: None)
+    watch.update(agent, "s-retry-down")
+    assert watch.drain()
+    watch.close()
+    asked = local.question(
+        agent, "s-retry-down", "call-2", call_sha256(tool_name, {"command": PEEK})
+    )
+    down = deciding(kai.KaiClient(url, timeout=0.5, expected=EXPECTED)).decide(asked)
+    assert down["bound"]["request_sha256"] is not None and down["bound"]["complete"] is None

@@ -321,8 +321,10 @@ def detect(
     was refused here, more than one when a larger request was refused by the service first.
 
     packet.request_sha256 names the last request made up, as it always has: it says what
-    would be asked, and "requests" says whether it was. A receipt names a request only once
-    it was handed to the transport (decide.Decider.receipt).
+    would be asked, and "requests" says whether it was. last_request says what became of
+    that one request alone (handed to the transport, answered, admitted): a retry is
+    another request, and what an earlier one met is not carried over to it. A receipt names
+    a request only once it was handed to the transport (decide.Decider.receipt).
 
     explain adds "shown" to the record: the entries the packet's text shows (entries_shown).
     It is for reading what a request rests on, and is left out of the records a monitor keeps.
@@ -371,10 +373,14 @@ def detect(
         body = state(rules, text, call)
         key = request_sha256(body, questions)
         record["packet"] |= {"state_chars": len(body), "request_sha256": key}
+        # What became of this request, and of no other: an earlier, larger request that was
+        # answered with a refusal says nothing about whether this one reached anything.
+        last = {"request_sha256": key, "transport_attempts": 0, "responded": False}
+        record["last_request"] = last | {"admitted": False}
         earlier = asked.get(key) if asked is not None else None
         try:
             if earlier is None:
-                reply = put(client, body, questions, counts)
+                reply = put(client, body, questions, counts, record["last_request"])
             elif earlier["reply"] is None:  # refused before, and how: nothing is sent again
                 raise (KaiUnsent if earlier.get("unsent") else KaiRejected)("refused before")
             else:
@@ -425,9 +431,10 @@ COUNTED = ("built", "refused_before_transport", "transport_attempts", "responses
 COUNTED += ("answers_admitted",)
 
 
-def put(client, body, questions, counts):
+def put(client, body, questions, counts, last):
     """client.ask, with what became of the request counted where it is known: at the
-    client, which alone can tell a request it refused from one it sent."""
+    client, which alone can tell a request it refused from one it sent. counts adds up
+    every request of a trigger; last is this one request's own."""
     counts["built"] += 1
     try:
         reply = client.ask(body, questions)
@@ -435,10 +442,12 @@ def put(client, body, questions, counts):
         counts["refused_before_transport"] += isinstance(error, KaiUnsent)
         counts["transport_attempts"] += error.attempts
         counts["responses"] += bool(error.responded)
+        last |= {"transport_attempts": error.attempts, "responded": bool(error.responded)}
         raise
     counts["transport_attempts"] += 1
     counts["responses"] += 1
     counts["answers_admitted"] += 1
+    last |= {"transport_attempts": 1, "responded": True, "admitted": True}
     return reply
 
 
