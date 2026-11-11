@@ -57,13 +57,42 @@ MAX_BYTES = 1_000_000  # the service's own request limit
 class KaiUnavailable(Exception):
     """The service could not be reached or could not complete the request; try again later."""
 
+    attempts, responded = 1, False
+
 
 class KaiRejected(Exception):
     """The service refused this request (too large or malformed); the same bytes will not pass."""
 
+    attempts, responded = 1, True
+
+
+class KaiUnsent(KaiRejected):
+    """Refused here, before anything was sent: the request is too large for the wire. The
+    same bytes will not pass, and nothing was put to any service."""
+
+    attempts, responded = 0, False
+
 
 class KaiMismatch(Exception):
     """What answered is not the decision model that was configured. Names the part that differs."""
+
+    attempts, responded = 1, True
+
+
+# Every failure of an asking says two things about the request it was for. attempts: how
+# many times it was handed to the transport (or, in process, to the model's own service):
+# none when it was refused here first. responded: whether anything came back. An attempt
+# is not a delivery: a connection that failed was attempted, and nothing is known to have
+# arrived. A client that raises one of these without saying otherwise is taken to have
+# tried once; only the client that knows better says so.
+def marked(error, attempts, responded):
+    error.attempts, error.responded = attempts, responded
+    return error
+
+
+def wire_bytes(body):
+    """How many bytes a request body is on the wire, as this client would send it."""
+    return len(json.dumps(body, allow_nan=False).encode("utf-8"))
 
 
 # The decision models an answer can be read from. An answer here is a probability from a
@@ -112,7 +141,7 @@ class Unsent:
 
     def ask(self, state, questions):
         self.request = request(state, questions)
-        raise KaiUnavailable("not sent")
+        raise marked(KaiUnavailable("not sent"), 0, False)
 
 
 def loopback(url):
@@ -200,20 +229,23 @@ class KaiClient:
     def _call(self, path, body=None):
         data = None if body is None else json.dumps(body, allow_nan=False).encode("utf-8")
         if data is not None and len(data) > MAX_BYTES:
-            raise KaiRejected("request too large")
+            raise KaiUnsent("request too large to send")  # before any transport
         headers = {"Content-Type": "application/json"} if data is not None else {}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         call = urllib.request.Request(self.url + path, data=data, headers=headers)  # noqa: S310
-        try:
+        try:  # from here on the request has been handed to the transport: one attempt
             with self._open(call, timeout=self.timeout) as reply:
-                return json.loads(reply.read(MAX_BYTES + 1).decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            if error.code in (400, 413):
-                raise KaiRejected(f"HTTP {error.code}") from None
-            raise KaiUnavailable(f"HTTP {error.code}") from None
-        except (OSError, ValueError) as error:  # refused, timed out, not JSON
-            raise KaiUnavailable(type(error).__name__) from None
+                raw = reply.read(MAX_BYTES + 1)
+        except urllib.error.HTTPError as error:  # an answer, and it is a refusal
+            refusal = KaiRejected if error.code in (400, 413) else KaiUnavailable
+            raise marked(refusal(f"HTTP {error.code}"), 1, True) from None
+        except (OSError, ValueError) as error:  # refused, timed out: nothing came back
+            raise marked(KaiUnavailable(type(error).__name__), 1, False) from None
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except ValueError as error:  # something came back, and it is not JSON
+            raise marked(KaiUnavailable(type(error).__name__), 1, True) from None
 
     def health(self):
         return self._call("/health")
@@ -234,6 +266,12 @@ class KaiClient:
         question that was asked, with probabilities in range.
         """
         reply = self._call("/v1/systemone", request(state, questions))
+        try:
+            return self._read(reply, questions)
+        except (KaiUnavailable, KaiMismatch) as error:  # a reply came, and it is no answer
+            raise marked(error, 1, True) from None
+
+    def _read(self, reply, questions):
         if self.expected is not None:  # before anything in the reply is used
             admit(reply, self.expected)
         if not isinstance(reply, dict) or reply.get("coverage") != "complete":

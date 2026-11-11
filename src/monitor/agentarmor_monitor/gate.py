@@ -60,6 +60,7 @@ WHY = {
     "policy_too_large": "the rules leave no room for the session",
     "kai_unavailable": "Kai did not answer",
     "kai_rejected": "Kai refused the request",
+    "too_large_to_send": "the request is too large to send to Kai",
     "kai_mismatch": "the decision model that answered is not the one configured",
     "failed": "the check failed",
 }

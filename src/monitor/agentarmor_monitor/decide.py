@@ -108,26 +108,35 @@ def overtaken(later, call_id):
     return None
 
 
-def since_proposal(directory, entry, call_id):
-    """(why the proposal no longer stands or None, how many events the log holds after it).
+def since_proposal(directory, entry, call_id, log_bytes, settle=SETTLE):
+    """(why the proposal no longer stands or None, what was read to say so).
 
     A summary that is fresh covers the log to its end, and a call whose hash is verified is
     the call that was asked about. Neither says the call is still waiting under the request
     it was proposed under: the summary may already hold the user taking it back, or the
     call's own result. So what the log holds after the proposal is read for exactly that,
     whether or not the call is marked and whether or not a model will be asked.
+
+    It is the same reading as still_applies makes, under the same rule: the log is read to
+    its end or the answer is "log_unread". An event half written when this looks is not
+    among the lines that can be read, and may be the user taking the call back; it is given
+    the same moment to arrive whole, and is never taken for nothing. What was read is said:
+    log_bytes is how far the summary had read, and the log must reach at least that far.
     """
-    try:
-        records, _ = read_events(directory / EVENTS)
-    except OSError:
-        return "log_unread", None
+    records, read_to, whole = later_events(directory, 0, settle)
+    checked = {"summary_log_bytes": log_bytes, "to_log_bytes": read_to, "to_the_end": whole}
+    checked["events_after_proposal"] = None
+    marked_at = isinstance(log_bytes, int) and not isinstance(log_bytes, bool)
+    if not whole or not marked_at or read_to < log_bytes:  # unread, or shorter than was read
+        return "log_unread", checked
     seq = entry.get("seq")
     if not isinstance(seq, int) or seq < 1 or seq > len(records):
-        return "log_unread", None
+        return "log_unread", checked
     later = records[seq:]
+    checked["events_after_proposal"] = len(later)
     if entry.get("status") != "proposed":
-        return "outcome_reported", len(later)
-    return overtaken(later, call_id), len(later)
+        return "outcome_reported", checked
+    return overtaken(later, call_id), checked
 
 
 def judge(
@@ -141,6 +150,7 @@ def judge(
     wait=3.0,
     rules=None,
     explain=False,
+    settle=None,
 ):
     """(verdict, record, why) for one proposed call, named as a hook event names it.
 
@@ -161,6 +171,7 @@ def judge(
     if not isinstance(session, str) or not session or not isinstance(call_id, str) or not call_id:
         return "undecided", None, "event"
     directory = session_dir(agent, session)
+    settle = SETTLE if settle is None else settle
     summary = load_summary(agent, directory.name, wait, call_id, identity)
     if summary is None or not summary.get("fresh") or summary.get("call") != "verified":
         return "undecided", None, "no_summary"  # nothing about this exact call to decide on
@@ -174,20 +185,26 @@ def judge(
     where = str(summary["session"].get("cwd") or "")
     read_to["workspace_sha256"] = hashlib.sha256(where.encode("utf-8", "replace")).hexdigest()
     marked = LEVELS.get(entry.get("level"), 0) >= LEVELS[level]
-    # eligible: marked at the threshold. requests_sent: what was in fact put to the model.
-    routing = {"eligible": marked, "requests_sent": 0, "level": entry.get("level")}
-    routing["threshold"] = level
-    # Does the proposal still stand? Asked before any routing, of every call.
-    stale, after = since_proposal(directory, entry, call_id)
-    applicable = {"at_summary": stale is None, "why": stale, "events_after_proposal": after}
+    # eligible: marked at the threshold. requests_sent: how many requests were handed to
+    # the transport, and requests: everything that became of them, apart (escalate.detect).
+    routing = {"eligible": marked, "requests_sent": 0, "requests": None}
+    routing |= {"level": entry.get("level"), "threshold": level}
+    # Does the proposal still stand? Asked before any routing, of every call, by reading the
+    # log to its end. The moment an unfinished append is given is one, shared with the
+    # check made after an answer: what this reading waits is not waited again.
+    began = time.monotonic()
+    stale, checked = since_proposal(directory, entry, call_id, read_to["log_bytes"], settle)
+    settle = max(0.0, settle - (time.monotonic() - began))
+    applicable = {"before_routing": stale is None, "why": stale} | checked
 
     def unasked(verdict, why, reason):  # read off the summary, with nobody asked
         found = outcome(agent, session, call_id, why or "unmarked", summary)
         found |= {"evidence": read_to, "routing": routing | {"reason": reason}}
         return verdict, found | {"applicable": applicable}, why
 
-    if stale:
-        return unasked("undecided", stale, "proposal_overtaken")
+    if stale:  # overtaken, or not known: the log could not be read to its end
+        unknown = stale == "log_unread"
+        return unasked("undecided", stale, "proposal_unknown" if unknown else "proposal_overtaken")
     if not marked:
         # "Not marked" is a finding only when Summarizer scanned everything it captured.
         if coverage["scanned_all_captured"]:
@@ -196,10 +213,11 @@ def judge(
     if client is None:  # marked, and nothing to put it to
         return unasked("undecided", "no_decision_model", "no_decision_model")
     record = detect(client, summary, entry, max_chars, rules, directory=directory, explain=explain)
-    sent = record.get("requests_sent", 0)
+    counts = record.get("requests") or {}
+    sent = counts.get("transport_attempts", 0)
     reason = "marked" if sent else "marked_and_not_sent"  # too large to put to the model
     record |= {"evidence": read_to, "applicable": applicable}
-    record["routing"] = routing | {"requests_sent": sent, "reason": reason}
+    record["routing"] = routing | {"requests_sent": sent, "requests": counts, "reason": reason}
     if record["status"] != "scored":
         return "undecided", record, record["status"]
     if record["decision"] == "deny":
@@ -212,7 +230,7 @@ def judge(
     if record["review"] != "pre_action":
         return "undecided", record, "moved_on"
     # And only if it still applies now that it has come: the answer took time.
-    stale, record["revalidated"] = still_applies(directory, call_id, read_to["log_bytes"])
+    stale, record["revalidated"] = still_applies(directory, call_id, read_to["log_bytes"], settle)
     if stale:
         return "undecided", record, stale
     return "abstain", record, None
@@ -319,11 +337,16 @@ class Decider:
             "routing": record.get("routing"),
             "applicable": record.get("applicable"),
             "revalidated": record.get("revalidated"),
-            # The exact request and what answered it, when something was sent. "complete"
-            # is about a state that was put to the model: with none sent it is null.
-            "request_sha256": packet.get("request_sha256"),
+            # The exact request, once it was handed to the transport, and what answered
+            # it. "complete" is about a state that reached a model's service: it is null
+            # unless something came back for a request, an answer or a refusal. A request
+            # refused here for its size, or sent into a connection that failed, is not
+            # known to have been given to anything.
+            "request_sha256": packet.get("request_sha256")
+            if ((record.get("routing") or {}).get("requests") or {}).get("transport_attempts")
+            else None,
             "complete": packet.get("complete")
-            if (record.get("routing") or {}).get("requests_sent")
+            if ((record.get("routing") or {}).get("requests") or {}).get("responses")
             else None,
             "review": record.get("review"),
             "decision_model": answered if kai else None,

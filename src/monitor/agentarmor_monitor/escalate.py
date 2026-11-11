@@ -42,7 +42,17 @@ from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
 from summarizer.text import digest
 
-from .kai import DECISION, XPIA, KaiMismatch, KaiRejected, KaiUnavailable, request
+from .kai import (
+    DECISION,
+    MAX_BYTES,
+    XPIA,
+    KaiMismatch,
+    KaiRejected,
+    KaiUnavailable,
+    KaiUnsent,
+    request,
+    wire_bytes,
+)
 from .policy import LAYOUT, load_rules, state, writable
 
 SCHEMA = "agentarmor-detection/v1"
@@ -301,14 +311,25 @@ def detect(
     triggers of one summary and never across summaries: the same words asked at a later time
     are a later decision.
 
-    The record's requests_sent counts what this trigger actually put to the service: none when
-    its answer was one already given, more than one when a larger request was refused first.
+    The record's "requests" counts, for this trigger alone, each thing that can happen to a
+    request, apart: built (a request was made up to be asked), refused_before_transport (it
+    was refused here for its size on the wire, and went nowhere), transport_attempts (it was
+    handed to the transport, or in process to the model's own service), responses (something
+    came back, an answer or a refusal) and answers_admitted. An attempt is not a delivery: a
+    connection that failed was attempted. requests_sent is transport_attempts, under the name
+    records have always had: none when the answer was one already given or when every request
+    was refused here, more than one when a larger request was refused by the service first.
+
+    packet.request_sha256 names the last request made up, as it always has: it says what
+    would be asked, and "requests" says whether it was. A receipt names a request only once
+    it was handed to the transport (decide.Decider.receipt).
 
     explain adds "shown" to the record: the entries the packet's text shows (entries_shown).
     It is for reading what a request rests on, and is left out of the records a monitor keeps.
 
-    status is "scored", "call_too_large", "policy_too_large", "kai_rejected",
-    "kai_unavailable" or "kai_mismatch" (what answered is not the configured model).
+    status is "scored", "call_too_large", "policy_too_large", "too_large_to_send" (refused
+    here for its bytes on the wire, with nothing sent), "kai_rejected" (refused by the
+    service), "kai_unavailable" or "kai_mismatch" (what answered is not the configured model).
     """
     session = summary["session"]
     rules = load_rules() if rules is None else rules
@@ -331,7 +352,8 @@ def detect(
         tool, shown, account = proposed(entry, arguments, logged)
         call, questions = (tool, shown), (DECISION, XPIA)
     size = max_chars - len(state(rules, "", call))  # what the rules and the call leave
-    record["requests_sent"] = 0
+    counts = dict.fromkeys(COUNTED, 0)
+    record |= {"requests_sent": 0, "requests": counts}
     while True:
         text, about, emitted = packet(summary, entry, max(size, MIN_CHARS))
         if explain:
@@ -352,25 +374,34 @@ def detect(
         earlier = asked.get(key) if asked is not None else None
         try:
             if earlier is None:
-                record["requests_sent"] += 1
-                reply = client.ask(body, questions)
-            elif earlier["reply"] is None:
-                raise KaiRejected("the same request was refused")
+                reply = put(client, body, questions, counts)
+            elif earlier["reply"] is None:  # refused before, and how: nothing is sent again
+                raise (KaiUnsent if earlier.get("unsent") else KaiRejected)("refused before")
             else:
                 reply = earlier["reply"]
-        except KaiRejected:
-            if asked is not None and earlier is None:
-                asked[key] = {"key": record["key"], "reply": None}
-            if size <= MIN_CHARS:
-                return record | {"status": "kai_rejected"}
+        except KaiRejected as error:
+            here = isinstance(error, KaiUnsent)  # refused here, with nothing sent
+            if earlier is None:
+                record["requests_sent"] = counts["transport_attempts"]
+                if asked is not None:
+                    asked[key] = {"key": record["key"], "reply": None, "unsent": here}
+            status = "too_large_to_send" if here else "kai_rejected"
+            # What must be sent whole (the rules and the call) may alone be too many bytes:
+            # then no smaller packet will pass either, and none is tried.
+            alone = here and wire_bytes(request(state(rules, "", call), questions)) > MAX_BYTES
+            if size <= MIN_CHARS or alone:
+                return record | {"status": status}
             size = max(MIN_CHARS, size // 2)
             continue
         except KaiUnavailable as error:
+            record["requests_sent"] = counts["transport_attempts"]
             return record | {"status": "kai_unavailable", "error": str(error)}
         except KaiMismatch as error:
             # Something answered, and it is not the model this monitor was set up for. Its
             # answer is not used and not kept; what differed is (model, readout or package).
+            record["requests_sent"] = counts["transport_attempts"]
             return record | {"status": "kai_mismatch", "error": str(error)}
+        record["requests_sent"] = counts["transport_attempts"]
         # Only the request that produced the answer in hand says whose answer it is. Earlier
         # attempts in this loop, refused or reused as refusals, leave no mark on that.
         if earlier is not None:
@@ -387,6 +418,28 @@ def detect(
         marked = LEVELS.get(entry.get("level"), 0) >= LEVELS["medium"]
         record["disagreement"] = bool(marked and not record["flagged"])
         return record | {"status": "scored"}
+
+
+# What can happen to a request, each counted apart (see detect).
+COUNTED = ("built", "refused_before_transport", "transport_attempts", "responses")
+COUNTED += ("answers_admitted",)
+
+
+def put(client, body, questions, counts):
+    """client.ask, with what became of the request counted where it is known: at the
+    client, which alone can tell a request it refused from one it sent."""
+    counts["built"] += 1
+    try:
+        reply = client.ask(body, questions)
+    except (KaiRejected, KaiUnavailable, KaiMismatch) as error:
+        counts["refused_before_transport"] += isinstance(error, KaiUnsent)
+        counts["transport_attempts"] += error.attempts
+        counts["responses"] += bool(error.responded)
+        raise
+    counts["transport_attempts"] += 1
+    counts["responses"] += 1
+    counts["answers_admitted"] += 1
+    return reply
 
 
 def append(directory, record):
@@ -408,7 +461,7 @@ def read(directory):
 
 
 # Statuses that need no further attempt.
-FINAL = ("scored", "kai_rejected", "call_too_large", "policy_too_large")
+FINAL = ("scored", "kai_rejected", "call_too_large", "policy_too_large", "too_large_to_send")
 
 
 def settled(records):

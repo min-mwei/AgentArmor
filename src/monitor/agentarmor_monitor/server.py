@@ -42,7 +42,16 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .kai import MAX_BYTES, KaiClient, KaiMismatch, KaiRejected, KaiUnavailable, admit
+from .kai import (
+    MAX_BYTES,
+    KaiClient,
+    KaiMismatch,
+    KaiRejected,
+    KaiUnavailable,
+    KaiUnsent,
+    admit,
+    marked,
+)
 from .local import DECIDE
 
 PLACES = ("local", "remote", "none")  # where the decision model is, as /health reports it
@@ -88,12 +97,16 @@ class Relay:
     def evaluate(self, value):
         # Sorted as the handler below sorts them for a caller on the port: ValueError is
         # "refused" (the same bytes will not pass), anything else "unavailable" (try later).
+        # Either way it keeps what the client knows of the request: whether it was handed
+        # to the transport at all, and whether anything came back.
         try:
             return self.client._call(MODEL_API, value)
         except KaiRejected as error:
-            raise ValueError(str(error)) from None
+            refused = marked(ValueError(str(error)), error.attempts, error.responded)
+            refused.unsent = isinstance(error, KaiUnsent)
+            raise refused from None
         except KaiUnavailable as error:
-            raise RuntimeError(str(error)) from None
+            raise marked(RuntimeError(str(error)), error.attempts, error.responded) from None
 
 
 class Front:
@@ -175,12 +188,17 @@ class InProcess(KaiClient):
     def _call(self, path, body=None):
         try:
             return self.front.decision_model() if body is None else self.front.evaluate(body)
-        except KaiMismatch:
-            raise
+        except KaiMismatch as error:  # something answered
+            raise marked(error, 1, True) from None
         except (ValueError, KeyError, TypeError, RecursionError) as error:
-            raise KaiRejected(type(error).__name__) from None
+            # A model on this server that refuses a request has been given it. One at
+            # another address may have been given nothing: its relay says which.
+            refusal = KaiUnsent if getattr(error, "unsent", False) else KaiRejected
+            tried = getattr(error, "attempts", 1), getattr(error, "responded", True)
+            raise marked(refusal(type(error).__name__), *tried) from None
         except Exception as error:
-            raise KaiUnavailable(type(error).__name__) from None
+            tried = getattr(error, "attempts", 1), getattr(error, "responded", False)
+            raise marked(KaiUnavailable(type(error).__name__), *tried) from None
 
 
 def read_json(data):
