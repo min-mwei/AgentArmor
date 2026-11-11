@@ -69,7 +69,7 @@ class Monitor(Daemon):
         is the session as it stood then, whatever has been logged since.
         """
         session = self.sessions.get((agent, name))
-        if session is None:
+        if session is None or self.client is None:  # no decision model: nothing to ask
             return 0
         directory = home() / "sessions" / agent / name
         with self.state:
@@ -143,7 +143,9 @@ class Monitor(Daemon):
         finally:
             with self.state:
                 self.queued.discard((agent, name, key))
-        if record["status"] == "kai_unavailable":
+        # No answer, or an answer from something that is not the configured model: neither
+        # settles the trigger. It is said once and tried again later.
+        if record["status"] in ("kai_unavailable", "kai_mismatch"):
             again = time.monotonic() + self.retry
             with self.state:
                 self.waiting[(agent, name)] = again
@@ -152,7 +154,10 @@ class Monitor(Daemon):
             if first:  # said once, so the gap is on record
                 append(directory, record)
             put_back = self._defer(again)
-            self.log(f"{agent}/{name}: Kai did not answer; {put_back + 1} triggers wait")
+            said = "Kai did not answer"
+            if record["status"] == "kai_mismatch":
+                said = "what answered is not the configured decision model"
+            self.log(f"{agent}/{name}: {said}; {put_back + 1} triggers wait")
             return
         with self.state:
             self.done.setdefault((agent, name), set()).add(key)

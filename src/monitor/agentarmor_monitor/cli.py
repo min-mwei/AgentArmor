@@ -1,17 +1,19 @@
 """AgentArmor's local monitor.
 
     agentarmor-monitor hooks-config --agent claude_code     # hooks to merge into the agent
-    agentarmor-monitor serve --kai-url http://127.0.0.1:8009
+    agentarmor-monitor serve --kai-package DIR              # the local server, Kai in it
+    agentarmor-monitor serve --kai-url URL --kai-package-sha256 HASH    # Kai elsewhere
     agentarmor-monitor detections
 
-Summarizer is the local model: its hook records everything an agent reads and runs, and its
-daemon keeps a labelled summary of each session. Whatever it marks at or above --level is sent
-to Kai with the rules and that summary as context, and Kai's decision (allow or deny) is
-appended to the session's detections.jsonl.
+Summarizer is the local model: its hook records everything an agent reads and runs, and the
+local server keeps a labelled summary of each session. Whatever it marks at or above --level
+is put to Kai with the rules and that summary as context, and Kai's decision (allow or deny)
+is appended to the session's detections.jsonl.
 
-Two ways to connect an agent. With the observer hook the monitor only watches and records
-Kai's decisions. With the gate (hooks-config --gate) a suspicious tool call waits for Kai and a
-"deny" is returned to the agent. Kai's serving path is unqualified (policy_ready false).
+Two ways to connect an agent. With the observer hook the server only watches and records
+Kai's decisions. With the gate (hooks-config --gate) a suspicious tool call waits while the
+gate asks the local server about it, and a "deny" is returned to the agent. The gate talks to
+the local server and to nothing else. Kai's serving path is unqualified (policy_ready false).
 
     agentarmor-monitor requests --session ID     # what would be sent to Kai, without sending
     agentarmor-monitor render scripts.jsonl --out DIR     # the same for scripted sessions
@@ -25,15 +27,35 @@ import sys
 import threading
 
 from .escalate import LEVELS, append, detect, key_of, latest, read, settled, triggers
-from .kai import KaiClient, KaiUnavailable, Unsent
+from .kai import TOKEN_ENV, KaiClient, KaiMismatch, KaiUnavailable, Unsent, bearer, loopback
+from .kai import profile as kai_profile
+from .local import PORT
 from .policy import writable
+
+
+def _expected(args):
+    """The decision model the operator configured, or None when no package was named."""
+    named = getattr(args, "kai_package_sha256", None)
+    return kai_profile(named) if named else None
+
+
+def _kai(args):
+    """A client for the Kai address in args. Raises ValueError or OSError when it cannot be one.
+
+    Only the local server and the diagnostics an operator runs by hand come here: a gate has
+    no way to a decision model. A token named in a file is used as the operator says. One
+    found in the environment is sent to a service elsewhere only, never to whatever happens
+    to listen on a port of this machine.
+    """
+    token = bearer(args.kai_token_file, environment=not loopback(args.kai_url))
+    return KaiClient(args.kai_url, args.kai_timeout, args.allow_remote, token, _expected(args))
 
 
 def _client(args):
     try:
-        return KaiClient(args.kai_url, args.kai_timeout, args.allow_remote)
-    except ValueError as error:
-        raise SystemExit(str(error)) from None
+        return _kai(args)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"kai: {error}") from None
 
 
 def _rules(args):
@@ -46,15 +68,20 @@ def _rules(args):
 
 
 def _gate(args):
+    """The gate hook. It asks the local server, on this machine, and holds nothing else: no
+    rules, no way to a decision model and no credential for one."""
     from .gate import main as gate
-    from .policy import load_rules
+    from .local import Local
 
     def prepare():
-        # Run inside the gate's own guard: a policy file or Kai address that is wrong must end
-        # in the gate's denial, not in a bare exit before the event was even read.
-        client = KaiClient(args.kai_url, args.kai_timeout, args.allow_remote)
-        options = {"level": args.level, "max_chars": args.max_chars, "wait": args.wait}
-        return client, options | {"rules": load_rules(args.policy)}
+        # Made inside the gate's own guard: an address that is wrong must end in the gate's
+        # denial, not in a bare exit before the event was even read.
+        if args.retired:
+            # An option a gate once had: rules, a level, a Kai address, a token. None of it
+            # is the gate's any more, and none of it is used. A gate started with one has
+            # not started, so that nobody takes it to be running under what they gave it.
+            raise ValueError("a gate has no option for the rules or for a decision model")
+        return Local(args.server, args.timeout)
 
     return gate(args, prepare)
 
@@ -72,18 +99,84 @@ def _runtime(args):
     )
 
 
-def _serve(args):
-    from .daemon import Monitor
+def _judge(args):
+    """(the decision model behind the local server, where it is, what it must be).
 
+    Where: local, remote or none. What it must be is the operator's word (kai.profile): for a
+    model at another address the package named with --kai-package-sha256, which is required;
+    for one loaded here the package that was loaded, which must be the named one if one was.
+    """
+    from .server import Absent, Relay, load_kai
+
+    here = args.kai_package or args.kai_revision
+    try:
+        named = _expected(args)
+    except ValueError as error:
+        raise SystemExit(f"kai: {error}") from None
+    if here and args.kai_url:
+        raise SystemExit("kai: give a Kai to load here or a Kai address, not both")
+    if here:
+        found = load_kai(
+            args.kai_package, args.kai_revision, args.kai_cache_dir, args.kai_local_files_only
+        )
+        try:
+            loaded = kai_profile(found.metadata().get("package_sha256"))
+        except ValueError:
+            raise SystemExit("kai: the model loaded here does not name its package") from None
+        if named is not None and named != loaded:
+            raise SystemExit("kai: the package loaded is not the one --kai-package-sha256 names")
+        return found, "local", loaded
+    if args.kai_url:
+        if named is None:
+            raise SystemExit(
+                "kai: say which package the model at that address must be, with "
+                "--kai-package-sha256: an answer from anything else is not used"
+            )
+        return Relay(_client(args)), "remote", named
+    if named is not None:
+        raise SystemExit("kai: --kai-package-sha256 names a model, and none is configured")
+    return Absent(), "none", None
+
+
+def _serve(args):
+    """Run the local server: Summarizer and its model, the rules, and the decision model."""
+    from .daemon import Monitor
+    from .decide import Decider
+    from .server import Front, InProcess, free, listen
+
+    rules = _rules(args)
+    if args.at_once < 1:
+        raise SystemExit("serve: --at-once is how many calls are decided at once, at least 1")
+    if not free(args.port):  # asked first: a model takes a while to load
+        raise SystemExit(f"port {args.port} on this machine is taken; choose another with --port")
+    # A wrong address, package or hash ends here, before any model loads.
+    judge, place, expected = _judge(args)
+    runtime = _runtime(args)
+    front = Front(judge, place, runtime, expected)
+    asks = InProcess(front) if place != "none" else None
+    if asks is not None:
+        try:
+            asks.identify()
+        except KaiMismatch as error:  # something answers, and it is not what was configured
+            raise SystemExit(f"kai: what answers is not the configured model ({error})") from None
+        except KaiUnavailable:  # it may come up later: watching and marking do not wait for it
+            print("kai: the decision model does not answer yet", file=sys.stderr, flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    monitor = Monitor(_runtime(args), _client(args), args.level, args.max_chars)
-    monitor.rules = _rules(args)
+    monitor = Monitor(runtime, asks, args.level, args.max_chars)
+    monitor.rules = rules
+    decider = Decider(asks, rules, args.gate_level, args.max_chars, args.wait, args.at_once)
+    try:
+        api, _ = listen(front, decider, args.port, monitor, args.model_api)
+    except OSError as error:
+        raise SystemExit(f"port {args.port} on this machine is taken: {error}") from None
     try:
         monitor.serve(stop)
     except KeyboardInterrupt:
         pass
     finally:
+        api.shutdown()
+        api.server_close()
         monitor.close()
     return 0
 
@@ -228,13 +321,19 @@ def _doctor(args):
     from summarizer.cli import hook_path
     from summarizer.store import home
 
+    from .local import Local, ServerUnavailable
+
     report = {"monitor": "summarizer", "spool": str(home()), "hook": hook_path()}
-    report |= {"policy_ready": False, "advisory": True, "kai_url": args.kai_url}
+    report |= {"policy_ready": False, "advisory": True, "server": args.server}
     try:
-        report["kai"] = _client(args).health()
-    except KaiUnavailable as error:
-        report["kai"] = None
-        report["kai_error"] = str(error)
+        # What the local server says of itself: what is loaded, how far behind it is, where
+        # the decision model is and whether it is the one configured.
+        report["local_server"] = Local(args.server, args.timeout).health()
+    except ValueError as error:
+        raise SystemExit(f"server: {error}") from None
+    except ServerUnavailable as error:
+        report["local_server"] = None
+        report["server_error"] = str(error)
     print(json.dumps(report, indent=2))
     return 0
 
@@ -243,14 +342,37 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
-    def kai(command):
-        command.add_argument("--kai-url", default="http://127.0.0.1:8009")
+    def kai(command, url="http://127.0.0.1:8009"):
+        """A way to a Kai service: for the local server, and for a diagnostic run by hand."""
+        command.add_argument(
+            "--kai-url",
+            default=url,
+            help="where a Kai service answers" + ("" if url else "; none unless given"),
+        )
         command.add_argument("--kai-timeout", type=float, default=30.0)
         command.add_argument(
             "--allow-remote",
             action="store_true",
-            help="send packets to a Kai service that is not on this machine",
+            help="send packets to a Kai service that is not on this machine (https only)",
         )
+        command.add_argument(
+            "--kai-token-file",
+            help="a file holding the bearer token of that service; for a service that is not "
+            f"on this machine, ${TOKEN_ENV} is used when no file is given",
+        )
+        command.add_argument(
+            "--kai-package-sha256",
+            help="the package that service must be: an answer from anything else is not used",
+        )
+
+    def server(command):
+        """The way to the local server: a gate has this, and no way to a decision model."""
+        command.add_argument(
+            "--server",
+            default=f"http://127.0.0.1:{PORT}",
+            help="where AgentArmor's local server answers: an address on this machine",
+        )
+        command.add_argument("--timeout", type=float, default=45.0)
 
     def trigger(command, level):
         command.add_argument(
@@ -280,10 +402,41 @@ def main(argv=None):
         command.add_argument("--local-files-only", action="store_true")
 
     serve = commands.add_parser(
-        "serve", help="run Summarizer's daemon and send what it flags to Kai"
+        "serve",
+        help="run the local server: Summarizer and its model, with Kai in it or behind it",
     )
-    kai(serve)
+    # Where the decision model is. With none of these the server watches and marks only.
+    kai(serve, url=None)
+    serve.add_argument("--kai-package", help="load Kai in this server from a local export")
+    serve.add_argument(
+        "--kai-revision", help="load Kai in this server from a full commit of its HF repository"
+    )
+    serve.add_argument("--kai-cache-dir", help="Hugging Face cache for --kai-revision")
+    serve.add_argument("--kai-local-files-only", action="store_true")
+    serve.add_argument(
+        "--port", type=int, default=PORT, help="the loopback port this server answers on"
+    )
     trigger(serve, "low")  # watching sends on everything marked: recall first
+    # A denial blocks a call and Kai's decisions on real calls are unmeasured, so a gate's
+    # call is put to Kai only from medium up.
+    serve.add_argument(
+        "--gate-level",
+        choices=tuple(LEVELS),
+        default="medium",
+        help="what Summarizer must mark a call at for a gate's question to go to Kai",
+    )
+    serve.add_argument(
+        "--wait", type=float, default=3.0, help="seconds a decision waits for the summary"
+    )
+    serve.add_argument(
+        "--at-once", type=int, default=4, help="how many calls are decided at the same time"
+    )
+    serve.add_argument(
+        "--model-api",
+        action="store_true",
+        help="also answer /v1/systemone: any program on this machine can then have its own "
+        "text put to the decision model, with this server's credential if the model is remote",
+    )
     embedder(serve)
     serve.set_defaults(run=_serve)
 
@@ -295,14 +448,26 @@ def main(argv=None):
     scan.set_defaults(run=_scan)
 
     gate = commands.add_parser(
-        "gate", help="hook: record every event, and let Kai decide a suspicious tool call"
+        "gate", help="hook: record every event, and ask the local server about a tool call"
     )
-    kai(gate)
-    # A gate denial blocks a call and Kai's decisions on real calls are unmeasured, so the
-    # gate asks Kai only from medium up.
-    trigger(gate, "medium")
+    # The rules, the level and the decision model are the local server's. A gate has an
+    # address on this machine to ask, and what to do when it gets no verdict.
+    server(gate)
+
+    class Retired(argparse.Action):
+        """An option a gate had before the server owned the decision. Its value is dropped
+        here and never used; _gate() then refuses to start (see there)."""
+
+        def __call__(self, parser, namespace, values, option_string=None):
+            namespace.retired = [*namespace.retired, option_string]
+
+    gate.set_defaults(retired=[])
+    for name in ("--kai-url", "--kai-timeout", "--kai-token-file", "--level", "--max-chars"):
+        gate.add_argument(name, action=Retired, help=argparse.SUPPRESS)
+    for name in ("--policy", "--wait"):
+        gate.add_argument(name, action=Retired, help=argparse.SUPPRESS)
+    gate.add_argument("--allow-remote", action=Retired, nargs=0, help=argparse.SUPPRESS)
     gate.add_argument("--agent", choices=("claude_code", "codex_code"), required=True)
-    gate.add_argument("--wait", type=float, default=3.0, help="seconds to wait for the summary")
     gate.add_argument(
         "--on-error",
         choices=("deny", "abstain"),
@@ -376,8 +541,10 @@ def main(argv=None):
     )
     hooks.set_defaults(run=_hooks)
 
-    doctor = commands.add_parser("doctor", help="report the local setup and whether Kai answers")
-    kai(doctor)
+    doctor = commands.add_parser(
+        "doctor", help="report the local setup and what the local server says of itself"
+    )
+    server(doctor)
     doctor.set_defaults(run=_doctor)
 
     args = parser.parse_args(argv)

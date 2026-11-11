@@ -45,10 +45,25 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
   - Watching escalates everything Summarizer marks (recall first); the gate asks Kai from
     medium up until Kai's decisions on real calls are measured. Do not adopt a cutoff from the
     benchset.
-  - The proposed call is redacted like the packet before it is sent, and shown whole or not
-    at all. Kai is asked off the summary loop: no Kai request may delay a session's summary.
-  - Session packets go only to a loopback Kai service unless the operator passes
-    `--allow-remote`. Do not log packet text.
+  - The proposed call is redacted like the packet before it is sent. An allow counts only
+    when the call was shown whole and the evidence is from before it; a request built from
+    less is sent marked incomplete. Kai is asked off the summary loop: no Kai request may
+    delay a session's summary.
+  - `agentarmor-monitor serve` is the local server. Summarizer and its model run inside it.
+    The same server may run Kai-4B, and a decision model may instead run remotely. The user
+    set this on 2026-11-11. That the server loads Kai into its own process is how it is
+    built, not part of that decision.
+  - The server owns what a decision rests on: the rules, its record of the session, the
+    request, the way to the decision model and the check that what answered is the model
+    configured (`kai.profile`). A gate names a call and is told the outcome
+    (`POST /v1/decide`). Do not give a gate rules, a decision model's address or a
+    credential, and do not let anything a caller sends become policy, evidence or
+    provenance. The model's own interface is on the port only with `--model-api`.
+  - Session text leaves the machine only from the local server, only when the operator
+    passes `--allow-remote`, only over `https`, and only to the one configured address: no
+    redirect is followed and no proxy is used for an address on this machine. Its token is
+    read from a file, or from the environment for a service elsewhere, and is never printed,
+    logged or reported. Do not log packet text.
   - Kai on Summarizer packets is unmeasured and serving is unqualified: keep
     `policy_ready: false` in every record and do not describe the monitor as attack prevention.
 - Run `ruff check .`, `ruff format --check .`, and `pytest` with the project

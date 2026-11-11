@@ -42,7 +42,7 @@ from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
 from summarizer.text import digest
 
-from .kai import DECISION, XPIA, KaiRejected, KaiUnavailable, request
+from .kai import DECISION, XPIA, KaiMismatch, KaiRejected, KaiUnavailable, request
 from .policy import LAYOUT, load_rules, state, writable
 
 SCHEMA = "agentarmor-detection/v1"
@@ -307,8 +307,8 @@ def detect(
     explain adds "shown" to the record: the entries the packet's text shows (entries_shown).
     It is for reading what a request rests on, and is left out of the records a monitor keeps.
 
-    status is "scored", "call_too_large", "policy_too_large", "kai_rejected" or
-    "kai_unavailable".
+    status is "scored", "call_too_large", "policy_too_large", "kai_rejected",
+    "kai_unavailable" or "kai_mismatch" (what answered is not the configured model).
     """
     session = summary["session"]
     rules = load_rules() if rules is None else rules
@@ -367,6 +367,10 @@ def detect(
             continue
         except KaiUnavailable as error:
             return record | {"status": "kai_unavailable", "error": str(error)}
+        except KaiMismatch as error:
+            # Something answered, and it is not the model this monitor was set up for. Its
+            # answer is not used and not kept; what differed is (model, readout or package).
+            return record | {"status": "kai_mismatch", "error": str(error)}
         # Only the request that produced the answer in hand says whose answer it is. Earlier
         # attempts in this loop, refused or reused as refusals, leave no mark on that.
         if earlier is not None:

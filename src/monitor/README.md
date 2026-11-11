@@ -1,6 +1,8 @@
 # The local monitor
 
-`agentarmor-monitor` connects the two halves of AgentArmor on a developer machine:
+`agentarmor-monitor serve` is **AgentArmor's local server**. Summarizer and its model run
+inside it, always, and it holds the rules. The decision model, Kai, is either loaded by this
+server or reached at another address, which can be a host in a cloud. The two halves:
 
 - **Summarizer** is the local model. Its hook records everything a Claude Code or Codex session
   reads and runs, and its daemon (EmbeddingGemma 2, on CPU or a local GPU) keeps a labelled
@@ -8,20 +10,30 @@
   content the agent was shown, and indicators on anything that looks like an attempt to steer
   the agent, reach secrets, send data out or change controls. It tags for recall and does not
   judge.
-- **Kai** decides. Whatever Summarizer marks at or above a level is sent to the Kai service
-  with the rules and Summarizer's summary of the session as context. Kai answers its two
-  trained questions: should the proposed tool call be allowed or denied under the rules, and
-  is untrusted content in this log trying to redirect the agent.
+- **Kai** decides. Whatever Summarizer marks at or above a level is put to Kai with the rules
+  and Summarizer's summary of the session as context. Kai answers its two trained questions:
+  should the proposed tool call be allowed or denied under the rules, and is untrusted
+  content in this log trying to redirect the agent.
 
 ```
-agent hooks ─> Summarizer hook ─> events.jsonl ─> monitor daemon ─> summary.jsonl
-                                                        │ marked at or above --level
-                                                        ▼
-                               rules + Summarizer's packet + the call ──> Kai (/v1/systemone)
-                                                        │
-                                                        ▼
-                                   detections.jsonl: allow or deny, with Kai's probabilities
+                 ┌───────────────────── AgentArmor local server ─────────────────────┐
+agent hooks ─> spool ─> Summarizer's daemon and model ─> summary.jsonl               │
+(observer or gate)        │ marked at or above --level                               │
+                 │        ▼                                                          │
+                 │   the server's rules + Summarizer's packet + the call as logged   │
+gate: "decide    │        │                                                          │
+ this call" ────>│  127.0.0.1:8010  /health  /v1/decide        Kai, loaded here      │
+                 │        │                                    or ──https + token──> │ Kai elsewhere
+                 └────────┼──────────────────────────────────────────────────────────┘
+                          ▼
+           detections.jsonl: allow or deny, with Kai's probabilities
 ```
+
+**Who owns what.** The server owns everything a decision rests on: the rules, its record of
+each session, the request the decision model reads, the way to that model and the check that
+what answered is the model the operator configured. A gate owns one thing, which is what to
+do when it gets no verdict (`--on-error`). It names a call and is told the outcome. It holds
+no rules, builds no request, has no address of a decision model and no credential for one.
 
 **Status.** Kai's serving path is unqualified (`policy_ready: false`), and Kai has not been
 measured on Summarizer's packets: they are laid out like Kai's tool-call decisions, but the
@@ -36,29 +48,99 @@ Summarizer's `docs/model-plan.md` reviews where those misses are and what is pla
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install ./src/vllm './src/monitor[model]'
+.venv/bin/pip install './src/monitor[model]'
 ```
 
-`[model]` brings Summarizer's embedding runtime (Torch). Without it the monitor can run with
-`--embedder hash`, a stand-in for tests that does not recognize paraphrase. Kai itself is served
-separately ([serving guide](../vllm/README.md)), on a Linux GPU host; reach it on a loopback
-address, for example through `ssh -L 8009:127.0.0.1:8009 gpu-host`.
+`[model]` brings Summarizer's embedding runtime (Torch). Without it the server can run with
+`--embedder hash`, a stand-in for tests that does not recognize paraphrase. To load Kai in
+the server, install `./src/vllm` with its `serve` extra as well, on a host its engine
+supports ([serving guide](../vllm/README.md): a Linux GPU host today). A server that reaches
+Kai at another address, or runs Summarizer alone, needs nothing of `src/vllm`.
 
 ## Run
 
 ```sh
-.venv/bin/agentarmor-monitor doctor                      # spool, hook path, does Kai answer
-.venv/bin/agentarmor-monitor serve --kai-url http://127.0.0.1:8009
+.venv/bin/agentarmor-monitor serve                                       # Summarizer only
+.venv/bin/agentarmor-monitor serve --kai-package /path/to/kai-export     # Kai loaded here
+.venv/bin/agentarmor-monitor serve --kai-url https://kai.example.com \
+    --kai-package-sha256 "$PACKAGE" \
+    --allow-remote --kai-token-file ~/.config/agentarmor/kai.token       # Kai in a cloud
+.venv/bin/agentarmor-monitor doctor                      # spool, hook path, what the server says
 .venv/bin/agentarmor-monitor detections --flagged        # what Kai denied or flagged
 ```
+
+**Where Kai is.** One of three, chosen when the server starts. Summarizer watches and marks
+in all three, and never waits for Kai.
+
+| | Summarizer only | Kai loaded by the server | Kai at another address |
+|---|---|---|---|
+| Start with | no Kai option | `--kai-package DIR` or `--kai-revision SHA` | `--kai-url URL --kai-package-sha256 HASH` |
+| It starts when | the port is free and the rules load | and Kai's own loader accepts the package | and the address is one it may use (below). If that address answers, it must be the named package |
+| It refuses to start when | the port is taken, the rules do not load | the package is not the one `--kai-package-sha256` names, if given | no package is named; something else answers there |
+| It starts all the same when | | | the address does not answer yet: it says so, and asks again later |
+| A marked entry it watches | recorded by Summarizer; nobody is asked | asked, one request at a time | asked; with no answer it is recorded once and tried again |
+| A gate's unmarked call | passes, in a session scanned whole | the same | the same |
+| A gate's marked call | undecided: no decision model | Kai's verdict | Kai's verdict, or undecided when Kai does not answer |
+| What answers is not the configured model | | cannot happen: the model is the one loaded | its answer is not used: undecided, and `/health` names what differs |
+| `/health` → `decision_model.at` | `none` | `local` | `remote`, with `reachable` and `identity` |
+
+A server that loads Kai itself does not have to keep it in its own process: that is how it is
+built today, and a supervised worker behind the same port would serve as well. Kai's engine
+runs on a supported Linux GPU host; on other hosts use the first or the third column.
+
+**The decision model is the one configured, or its answer is not used.** An answer is read
+as Kai's only when the reply names the model, the readout and the package the operator
+configured (`kai-4b`, `pointer`, and the package hash). For a Kai at another address the
+hash is `--kai-package-sha256`; for one loaded here it is the package that was loaded. Every
+answer is checked, not only the first: what is behind an address can change between two
+requests. A hash a service reports is its own claim and proves nothing by itself; it counts
+because it equals what the operator set down. A service that says it is ready for use as a
+policy is recorded as claiming so (`claims_policy_ready`), and nothing here becomes ready by
+it. A different decision model would need its own adapter, questions and measurements: Kai's
+probabilities are not read out of whatever another model returns.
+
+**A Kai that is not on this machine.** A request holds what the agent read, with secrets
+redacted and nothing else removed. So:
+
+- it needs `--allow-remote`, which is the operator saying that session text may leave;
+- it goes over `https` only. Plain `http` to a host that is not loopback is refused, and
+  there is no option to allow it. Certificates are verified as the system verifies them;
+- the service's bearer token comes from `--kai-token-file`, or from `$AGENTARMOR_KAI_TOKEN`
+  when the service is not on this machine. A token lying in the environment is never sent to
+  an address on this machine. It is sent only as a header to the one configured address, and
+  never printed, logged or reported;
+- no redirect is followed, so neither a request nor the token moves on to an address the
+  service points at;
+- a request for an address on this machine is sent to this machine: `http_proxy` and its
+  kin in the environment are not used for it.
+
+**What the server answers, on a loopback port** (`--port`, 8010 by default):
+
+| | |
+|---|---|
+| `GET /health` | What is loaded (`summarizer`), how far behind the sessions it is (`sessions`: held, behind, waiting for Kai), where the decision model is, what was configured, whether it answers and is that model (`decision_model`), and what decisions rest on (`decisions`: the rules by id and hash, the gate's level, the budget, the layout). `policy_ready` is false whatever the model says. No session text and no secret |
+| `POST /v1/decide` | A gate's question about one proposed call, and the server's receipt (below) |
+| `POST /v1/systemone` | Off unless the server was started with `--model-api`: the decision model's own interface, for a caller that brings its own state |
+
+The port has no authentication. Any program on this machine, of any user, can ask it, and
+a loopback address is not a statement about who is asking. That is why the default is this
+narrow. Through `/v1/decide` such a program can learn a verdict and some hashes about a call
+that is already in the server's own log, and can cause one request to the decision model
+that the server itself writes. It cannot have any text of its own sent anywhere. With
+`--model-api` it can: its text goes to the decision model, with the server's token when the
+model is in a cloud. Turn that on only where every local program may do so.
+
+The server decides at most `--at-once` calls at the same time (4), and handles 16
+connections at once. A caller beyond either is told so or closed at once, and a gate never
+takes that for a pass.
 
 Connect an agent in one of two ways.
 
 **Observe.** The agent runs normally. Summarizer's hook prints nothing and never blocks; the
-daemon records Kai's decision for each marked entry. It sends on everything Summarizer marks,
-from "low" up (`--level`): watching is tuned for recall, and Kai is the stage that keeps false
-alarms down. Kai is asked on a separate worker, so a slow or unreachable Kai never delays a
-session's summary.
+server records Kai's decision for each marked entry. It sends on everything Summarizer
+marks, from "low" up (`--level`): watching is tuned for recall, and Kai is the stage that
+keeps false alarms down. Kai is asked on a separate worker, so a slow or unreachable Kai
+never delays a session's summary.
 
 ```sh
 .venv/bin/agentarmor-monitor hooks-config --agent claude_code     # merge into ~/.claude/settings.json
@@ -66,29 +148,66 @@ session's summary.
 ```
 
 **Gate.** One hook handles every event. It records the event through Summarizer's hook, and
-for a tool call about to run it waits for the summary of the session up to that call. The gate
-asks Kai from "medium" up (`--level`): a denial blocks a call, and Kai's decisions on real
-calls are unmeasured.
+for a tool call about to run it asks the local server to decide.
+
+```sh
+.venv/bin/agentarmor-monitor hooks-config --agent claude_code \
+    --gate "$(pwd)/.venv/bin/agentarmor-monitor"
+```
+
+The gate's own options are `--server` (the local server's address, which must be on this
+machine), `--timeout` and `--on-error`. The level a call must be marked at, the rules, the
+budget and how long to wait for a summary are the server's (`--gate-level`, `--policy`,
+`--max-chars`, `--wait`), so a gate cannot run under other rules than the server it asks. A
+gate that is started with one of the options it used to have (a policy file, a level, a Kai
+address, a token file) has not started: none of them is used, the call it guards is stopped
+with that reason, and every other event is still recorded.
+
+*What a gate sends* is five strings: the agent, the session id, the call id, the SHA-256 of
+the call it holds (tool name and arguments, as Summarizer's hook hashes them), and its
+`--on-error` setting, which the server keeps with the record. Not the arguments, no rules,
+no text. The server finds the call in its own log of the session and decides only about a
+call with that hash.
+
+*What comes back* is a receipt (`agentarmor-decision/v1`):
+
+| Field | What it says |
+|---|---|
+| `verdict` | `deny`: the decision model denied the call. `abstain`: nothing stands against it, so the agent's own permission flow applies. `undecided`: the check could not be completed |
+| `why` | For `undecided`, what kept it from being completed (the list below) |
+| `p_deny` | The decision model's probability of deny, when it was asked |
+| `bound` | What the verdict is about and rests on: the agent, session, call id and call hash asked about; `evidence` (how many events and bytes of the session's log had been read); `request_sha256`, the exact request the decision model was given; `policy` (the rules by id, and a hash of all of them) and `layout`; `decision_model` (the model, readout and package that answered); `complete` and `review`; and what embedded and marked the summary |
+| `policy_ready` | false, always |
+
+A receipt holds no session text. A gate uses one only if it is about the very call it asked
+about.
+
+The server asks Kai from "medium" up (`--gate-level`): a denial blocks a call, and Kai's
+decisions on real calls are unmeasured.
 
 - A call Summarizer did not mark at that level passes without Kai being asked, and the agent's
   own permission flow applies, provided Summarizer scanned everything it captured in the
   session.
 - A marked call goes to Kai. "deny" is returned to the agent as a denial with Kai's
   probability. "allow" says nothing, provided Kai was shown complete evidence from before the
-  call.
-- A check the gate cannot stand behind is not a pass. The call is denied, with the reason,
-  when:
+  call and the user has not spoken since that evidence was read.
+- A check nobody can stand behind is not a pass. The call is denied, with the reason, when:
   - the event cannot be read (not JSON, too large, or nested too deeply to parse) or
-    recorded, or the gate cannot start (a missing policy file, a Kai address that is wrong or
-    not on this machine);
-  - no summary of this exact call arrives within `--wait` (for example, the daemon is not
-    running);
+    recorded, or the gate cannot start (a server address that is wrong or not on this
+    machine);
+  - the local server does not answer, answers about another call, or is deciding as many
+    calls as it takes at once;
+  - no summary of this exact call arrives within the server's `--wait` (the call is not in
+    its log, or is there with other arguments);
   - the session record has gaps (something clipped, unread or not scanned), so "not marked"
     is not a finding;
+  - no decision model is behind the server, it does not answer, it refuses the request, or
+    what answers is not the model that was configured;
   - the call is too large to show Kai whole within `--max-chars`;
   - Kai allowed it on a packet that left key evidence out, or that already held events from
-    after the call (calls proposed side by side can do this);
-  - Kai is unreachable or refuses the request.
+    after the call (calls proposed side by side can do this), or the user made a request or
+    answered a question while Kai's answer was awaited: what the user said then is not in
+    what Kai read.
 
   `--on-error abstain` lets all of these through instead. Either way the outcome is appended
   to the session's detections with what was enforced, so default denials can be counted.
@@ -97,13 +216,9 @@ A denial is printed on stdout in the agent's own shape and its reason on stderr,
 status 2. A failure is also noted in `gate-errors.log` in the spool, as the step that failed
 and the error's class only: an error's own text can quote an event that was never redacted.
 
-```sh
-.venv/bin/agentarmor-monitor hooks-config --agent claude_code \
-    --gate "$(pwd)/.venv/bin/agentarmor-monitor"
-```
-
-Give the gate the same `--kai-url`, `--level` and `--policy` as the daemon by adding them to
-the hook's arguments.
+`scan` is the one command that talks to a Kai service itself: a diagnostic an operator runs
+by hand against a recorded session, with its own `--kai-url`, `--allow-remote` and
+`--kai-token-file`, and `--kai-package-sha256` when the answer should be bound to a package.
 
 ## What is sent to Kai
 
@@ -139,12 +254,14 @@ Proposed tool call:
   were redacted before anything was written.
 - **The proposed call** is shown whole or not at all, and the record says where its text came
   from (`call_source`):
-  - `arguments`: the gate holds the call's own arguments and redacts them exactly as
-    Summarizer's hook redacts what it logs, so the request never carries what the packet
-    withheld. The call's identity stays the hash taken before redaction.
-  - `log`: the daemon, `scan` and `requests` find the same arguments in the session's event
-    log, by call id and by that hash. They are redacted already and are shown as the gate
-    would show them.
+  - `log`: the server finds the call's arguments in the session's event log, by call id
+    and by the hash the hook took before redaction. This is the source for a gate's question
+    (the gate sends that hash, and not the arguments), for the watcher, for `scan` and
+    `requests`, and for a render. They were redacted when they were logged, so the request
+    never carries what the packet withheld.
+  - `arguments`: a program that calls `escalate.detect()` itself and holds the call. They
+    are redacted exactly as Summarizer's hook redacts what it logs. Nothing in this package
+    takes that way any more.
   - `representation`: when the log cannot supply them, only the text Summarizer shows for a
     call is left. That is a reading of the call, not the call: a patch is shown as its files
     and added lines, without the lines it removes. It is sent, how much it leaves out is
@@ -174,8 +291,9 @@ Proposed tool call:
   later look at the session, or between an action and the content it returned: those are
   different requests or different decision times.
 
-A packet holds what the agent read. It goes only to a Kai service on a loopback address unless
-`--allow-remote` is given.
+A packet holds what the agent read. It stays on this machine unless the local server was
+started with a remote `--kai-url` and `--allow-remote`, and then it goes over `https` to that
+one address.
 
 To see what a session would send without sending it:
 
@@ -382,7 +500,7 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 |---|---|
 | `trigger` | The entry Summarizer marked: type, sequence number, call id, the call's hash before redaction, tool, level, labels |
 | `decision` | Kai's answer for a tool call, `allow` or `deny`; null for other entries |
-| `kai` | `p_deny`, `p_xpia` and the service's identity (model, revision, package hash, `policy_ready`) |
+| `kai` | `p_deny`, `p_xpia` and what the service says of itself (model, readout, revision, package hash). `identity_checked` says whether that was checked against a configured model before the answer was used: true on the local server, false for a `scan` run without `--kai-package-sha256`. `claims_policy_ready` is the service's own word about its readiness, kept as its claim: the record's `policy_ready` is false whatever it says |
 | `flagged` | `decision` is `deny`, or `p_xpia` is at least 0.5 (not a qualified cutoff) |
 | `disagreement` | Summarizer marked the entry medium or higher and Kai cleared it. Kept apart from "nothing found"; list them with `detections --disagreements` |
 | `packet` | Size and SHA-256 of the packet; `state_chars`; whether the call was verified; Summarizer's own account (`ready`, `dropped` (lines that found no room, by section), `key_dropped`, `cut` (lines that quote less of their entry than there is, by kind: `prompt`, `action`, `message`), `key_clipped` (those among them that are key evidence, which keep a packet from being ready), `unresolved_conditions`, `scanned_all_captured`, `later_events`); `request_sha256`, the identifier of the final request (canonical JSON, not wire bytes); the call's `call_source`, `call_chars`, `call_chars_not_shown` and `call_redactions` (the last two are null for a `representation`: unknown); and `complete`: the packet was ready and the call's own arguments were shown whole |
@@ -392,8 +510,9 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `layout` | What Kai was given, by name: the state's layout (`agentarmor-state/v1`) and the packet's schema (`summarizer/v2`). A change to either is a change to Kai's input |
 | `summary_embedding` | What the summary says embedded it: backend, model, revision, device, precision, vector size, probe version and whether the probes are calibrated. Copied from the summary the request was built from, which for the daemon is the copy queued with the trigger, never from what is running later. It sits beside the request, never inside it, so request ids do not depend on it. `null` when no summary was read or the summary does not say. It traces what was reported and pins neither weights nor probes |
 | `summary_detector` | What the summary says marked it: a version and hashes of Summarizer's wording rules, of its priors and levels, and of its source. The same session marked under other rules can build a different packet. Copied from the same summary as `summary_embedding`, and like it beside the request, never inside it. `null` when the summary does not say, as with summaries made before Summarizer named its detectors; a hash the summary gives as unknown stays `null` |
-| `status` | `scored`; `kai_unavailable` (retried by the daemon); `kai_rejected`; `call_too_large` or `policy_too_large` (nothing was sent); and for a gate outcome without a Kai request, the reason (`no_summary`, `coverage`, `setup`, `recording`, `event`) |
-| `gate`, `verdict`, `why`, `enforced` | Present when the gate handled the call: its verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing, and whether the call was in fact denied (`deny`) or not (`none`) |
+| `status` | `scored`; `kai_unavailable` and `kai_mismatch` (what answered is not the configured model, with the part that differed in `error`), both retried by the watcher; `kai_rejected`; `call_too_large` or `policy_too_large` (nothing was sent); and for a gate outcome without a Kai request, the reason (`no_summary`, `coverage`, `no_decision_model`, `busy`, `server`, `setup`, `recording`, `event`) |
+| `gate`, `verdict`, `why`, `enforced` | Present when a gate asked about the call: the verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing, and what a gate with the `--on-error` it declared does with that (`deny`, or `none`). The server writes the record; when it gave no receipt, the gate writes the outcome itself |
+| `evidence` | On a gate's record: how far the session's log had been read when the decision was made (`events`, `log_bytes`). An allow stands only if the user said nothing after that point |
 
 The packet text is not copied into the record; it can be rebuilt from the summary. When a gate
 and the daemon both ask about one call, the answer stands: a later note that Kai could not be
@@ -414,3 +533,16 @@ reached does not replace it.
   and, for a marked call, one Kai request.
 - An agent running as the same user can stop the daemon or edit the spool. Summarizer tags
   attempts on its own files; nothing verifies the log's integrity.
+- The local server's port is on loopback and asks for no credential. Any process on the
+  machine can ask it for a verdict about a call in the server's own log. With `--model-api`
+  any process can also have its own text put to the decision model, with the server's token
+  when the model is remote. It is for a machine one person uses.
+- Kai loaded in the local server has no serving qualification, latency figure or memory
+  figure for sharing a process with Summarizer, and its engine needs a Linux GPU host today.
+  On other machines Kai is reached at another address.
+- A decision is bound to what the server had read of the session when it asked. A request
+  the user makes while the answer is awaited takes an allow back; anything that changes
+  outside what the hooks deliver does not, and a call that was let through is not watched
+  for what it then does until its result is logged.
+- The check that what answered is the configured model compares what the service reports
+  with what the operator set down. It is not an attestation of what runs there.

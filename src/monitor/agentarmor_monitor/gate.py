@@ -1,25 +1,32 @@
-"""The gate: one hook for every event, which lets Kai decide about a suspicious tool call.
+"""The gate: one hook for every event, which asks the local server about a tool call.
 
 Every event is first recorded through Summarizer's hook, so nothing an agent reads or runs is
-missed. For a tool call that is about to run (PreToolUse) the gate then waits for Summarizer's
-summary of the session up to that call and looks at how the call was marked:
+missed. For a tool call that is about to run (PreToolUse) the gate then asks AgentArmor's
+local server to decide about it (local.py, decide.py). The gate names the call and sends
+nothing else. The server waits for Summarizer's summary of the session up to that call and
+looks at how the call was marked:
 
 - not marked at the trigger level, in a session Summarizer scanned whole: the gate says
   nothing, and the agent's own permission flow applies;
-- marked: the call goes to Kai with the rules and Summarizer's packet. Kai's "deny" is
-  returned to the agent as a denial with the reason. Kai's "allow" says nothing, provided Kai
-  was shown complete evidence from before the call (see below).
+- marked: the server puts the call to the decision model with its rules and Summarizer's
+  packet. A "deny" is returned to the agent as a denial with the reason. An "allow" says
+  nothing, provided it was given on complete evidence from before the call (see below).
 
-A check the gate cannot stand behind is not a pass. That covers an event it cannot read or
-record, a gate that cannot start (no policy file, a bad Kai address), no summary of this exact
-call in time, gaps in what Summarizer captured, a call too large to show Kai whole, an "allow"
-Kai gave on a packet that left key evidence out or already held later events, and Kai being
-unreachable or refusing the request. Each is denied with its reason, unless --on-error abstain
-was chosen. Every such outcome is appended to the session's detections, so default denials can
-be counted.
+The gate holds no rules, builds no request, talks to no decision model and has no credential
+for one. The server it asks is on this machine, and any other address is refused.
 
-Kai's serving path is unqualified (policy_ready false): this gate applies an unqualified
-model's decisions and is not a claim of attack prevention.
+A check nobody can stand behind is not a pass. That covers an event the gate cannot read or
+record, a gate that cannot start, a local server that does not answer or answers about another
+call, no summary of this exact call in time, gaps in what Summarizer captured, no decision
+model behind the server, one that is not the model the server was configured for, a call too
+large to show whole, an "allow" given on a packet that left key evidence out or already held
+later events, a user who spoke while the answer was awaited, and a decision model that could
+not be reached or refused the request. Each is denied with its reason, unless --on-error
+abstain was chosen. Every such outcome is appended to the session's detections, so default
+denials can be counted.
+
+The decision model's serving path is unqualified (policy_ready false): this gate applies an
+unqualified model's decisions and is not a claim of attack prevention.
 """
 
 import json
@@ -28,9 +35,10 @@ import sys
 import time
 
 from summarizer.hook import MAX_STDIN, call_sha256, handle
-from summarizer.store import AGENTS, home, load_summary, private_dir, safe_id, session_dir
+from summarizer.store import AGENTS, home, private_dir, session_dir
 
-from .escalate import LEVELS, SCHEMA, append, detect, provenance, read
+from .escalate import SCHEMA, append, provenance, read
+from .local import bound_to, question
 
 DENIED = "AgentArmor: Kai denied this call under the session's rules"
 UNDECIDED = "AgentArmor could not complete the check"
@@ -38,14 +46,19 @@ WHY = {
     "event": "the hook event could not be read",
     "recording": "the event could not be recorded",
     "setup": "the gate could not start",
+    "server": "AgentArmor's local server did not answer for this call",
+    "request": "the local server did not take the question",
+    "busy": "the local server is deciding as many calls as it takes at once",
     "no_summary": "no summary of this exact call arrived in time",
     "coverage": "the session record has gaps",
+    "no_decision_model": "no decision model is behind the local server",
     "incomplete": "Kai was shown incomplete evidence",
     "moved_on": "the session had moved on when the call was checked",
     "call_too_large": "the call is too large to show Kai whole",
     "policy_too_large": "the rules leave no room for the session",
     "kai_unavailable": "Kai did not answer",
     "kai_rejected": "Kai refused the request",
+    "kai_mismatch": "the decision model that answered is not the one configured",
     "failed": "the check failed",
 }
 
@@ -114,48 +127,6 @@ def outcome(agent, session, call_id, why, summary=None):
     return record | provenance(summary)
 
 
-def decide(
-    agent, payload, client, level="medium", max_chars=5000, wait=3.0, rules=None, explain=False
-):
-    """(verdict, record, why) for a PreToolUse payload.
-
-    verdict is "abstain", "deny" or "undecided". record is the detection when Kai was asked;
-    the gate's own record when it read the outcome off a summary without asking; else None.
-    why names, for "undecided", what kept the check from being completed (a key of WHY); the
-    caller applies its error policy.
-    """
-    session, call_id = payload.get("session_id"), payload.get("tool_use_id")
-    if not isinstance(session, str) or not isinstance(call_id, str) or not call_id:
-        return "undecided", None, "event"
-    identity = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
-    summary = load_summary(agent, safe_id(session), wait, call_id, identity)
-    if summary is None or not summary.get("fresh") or summary.get("call") != "verified":
-        return "undecided", None, "no_summary"  # nothing about this exact call to decide on
-    entry = next(
-        e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
-    )
-    if LEVELS.get(entry.get("level"), 0) < LEVELS[level]:
-        # "Not marked" is a finding only when Summarizer scanned everything it captured.
-        if summary["session"]["coverage"]["scanned_all_captured"]:
-            return "abstain", None, None
-        return "undecided", outcome(agent, session, call_id, "coverage", summary), "coverage"
-    record = detect(
-        client, summary, entry, max_chars, rules, payload.get("tool_input"), explain=explain
-    )
-    if record["status"] != "scored":
-        return "undecided", record, record["status"]
-    if record["decision"] == "deny":
-        return "deny", record, None
-    if record["decision"] != "allow":
-        return "undecided", record, "failed"
-    # An allow counts only on complete evidence from before the call.
-    if not record["packet"]["complete"]:
-        return "undecided", record, "incomplete"
-    if record["review"] != "pre_action":
-        return "undecided", record, "moved_on"
-    return "abstain", record, None
-
-
 def keep(agent, payload, record, verdict, why, enforced):
     """Append the gate's outcome for a call to its session's detections. Best effort."""
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
@@ -174,12 +145,13 @@ def keep(agent, payload, record, verdict, why, enforced):
         note(agent, error, "keeping")
 
 
-def examine(agent, raw, prepare):
-    """(verdict, record, why, payload) for one hook event.
+def examine(agent, raw, prepare, on_error):
+    """(verdict, why, payload, receipt) for one hook event.
 
     verdict is "observed" for an event that needs no check, else "abstain", "deny" or
-    "undecided". prepare() gives (client, options for decide) and may fail: a gate that cannot
+    "undecided". prepare() gives the way to the local server and may fail: a gate that cannot
     start has checked nothing, so that is handled like any other check that was not completed.
+    receipt is the server's, or None when it gave none for this call.
     """
     event, payload = read_event(raw)
     recorded = True
@@ -189,51 +161,65 @@ def examine(agent, raw, prepare):
         recorded = False
         note(agent, error, "recording")
     if event is not None and event != "PreToolUse":
-        return "observed", None, None, payload  # every other event is only observed
+        return "observed", None, payload, None  # every other event is only observed
     if payload is None:
-        return "undecided", None, "event", None
+        return "undecided", "event", None, None
     if not recorded:
-        return "undecided", None, "recording", payload
+        return "undecided", "recording", payload, None
+    session, call_id = payload.get("session_id"), payload.get("tool_use_id")
+    if not isinstance(session, str) or not session or not isinstance(call_id, str) or not call_id:
+        return "undecided", "event", payload, None
     try:
-        client, options = prepare()
+        server = prepare()
     except Exception as error:
         note(agent, error, "setup")
-        return "undecided", None, "setup", payload
+        return "undecided", "setup", payload, None
+    # The call is named by the hash of what the gate holds. The server reads the call from
+    # its own log of the session and decides only about one with this hash.
+    identity = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
+    asked = question(agent, session, call_id, identity, on_error)
     try:
-        return (*decide(agent, payload, client, **options), payload)
-    except Exception as error:  # a failed check is not a pass
-        note(agent, error, "failed")
-        return "undecided", None, "failed", payload
+        receipt = server.decide(asked)
+    except Exception as error:  # no answer is not a pass
+        note(agent, error, "server")
+        return "undecided", "server", payload, None
+    if not bound_to(receipt, asked):  # an answer about something else is no answer
+        return "undecided", "server", payload, None
+    return receipt["verdict"], receipt.get("why"), payload, receipt
 
 
 def check(agent, raw, prepare, on_error="deny"):
     """Handle one hook event; returns (what to print or None, exit status).
 
     Nothing leaves this function except its answer: a failure anywhere, in reading, recording,
-    starting or deciding, is a check that was not completed.
+    starting or asking, is a check that was not completed.
     """
     try:
-        verdict, record, why, payload = examine(agent, raw, prepare)
+        verdict, why, payload, receipt = examine(agent, raw, prepare, on_error)
     except Exception as error:
         note(agent, error, "failed")
-        verdict, record, why, payload = "undecided", None, "failed", None
+        verdict, why, payload, receipt = "undecided", "failed", None, None
     if verdict == "observed":
         return None, 0
     denied = verdict == "deny" or (verdict == "undecided" and on_error != "abstain")
-    if payload is not None and (record is not None or verdict != "abstain"):
-        keep(agent, payload, record, verdict, why, "deny" if denied else "none")
+    if receipt is None and payload is not None:
+        # The server kept nothing about this outcome, so the gate does: it stays countable.
+        keep(agent, payload, None, verdict, why, "deny" if denied else "none")
     if not denied:
         return None, 0
     if verdict == "deny":
-        reason = f"{DENIED} (p_deny {record['kai']['p_deny']:.2f}, unqualified model)."
+        odds = receipt.get("p_deny")
+        told = f"p_deny {odds:.2f}, " if isinstance(odds, float) else ""
+        reason = f"{DENIED} ({told}unqualified model)."
     else:
-        reason = f"{UNDECIDED} ({WHY[why]}); this action is denied."
+        reason = f"{UNDECIDED} ({WHY.get(why, WHY['failed'])}); this action is denied."
     return denial("PreToolUse", reason)
 
 
-def run(agent, raw, client, on_error="deny", **options):
-    """check() for a caller that already holds a Kai client and its options."""
-    return check(agent, raw, lambda: (client, options), on_error)
+def run(agent, raw, server, on_error="deny"):
+    """check() for a caller that already holds the way to the local server: local.Local for
+    one that listens on a port, or the server's own Decider when it is in this process."""
+    return check(agent, raw, lambda: server, on_error)
 
 
 def main(args, prepare):
@@ -255,4 +241,4 @@ def main(args, prepare):
     return status
 
 
-__all__ = ["check", "decide", "denial", "main", "read", "run"]
+__all__ = ["check", "denial", "keep", "main", "note", "outcome", "read", "run"]

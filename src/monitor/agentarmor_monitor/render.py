@@ -66,8 +66,8 @@ from summarizer.events import agent_home
 from summarizer.hook import Scripted, call_sha256, handle
 from summarizer.store import AGENTS, safe_id, session_dir, view
 
+from .decide import judge
 from .escalate import detect, key_of, triggers
-from .gate import decide
 from .kai import QUESTIONS, Unsent
 from .policy import INTERPRETATION, LAYOUT, check_rules
 
@@ -77,8 +77,8 @@ REQUIRED = ("root_id", "view_id", "agent", "rules", "events")
 OPTIONAL = ("files", "links", "codex_home")
 SESSION = "render"  # the session id of a script whose events carry none
 # Every source file of this package. source_sha256() is over exactly these.
-SOURCES = ("__init__.py", "cli.py", "daemon.py", "escalate.py", "gate.py", "kai.py")
-SOURCES += ("policy.py", "render.py", "tally.py")
+SOURCES = ("__init__.py", "cli.py", "daemon.py", "decide.py", "escalate.py", "gate.py")
+SOURCES += ("kai.py", "local.py", "policy.py", "render.py", "server.py", "tally.py")
 # What a request row keeps of the record detect() builds. The request itself is added to it.
 KEPT = ("key", "trigger", "review", "layout", "packet", "shown")
 KEPT += ("summary_embedding", "summary_detector")
@@ -212,17 +212,20 @@ def _watch(summary, entry, options, directory):
 def _gate(agent, payload, options):
     """(what the gate would do with a proposed call, record or None, request or None).
 
-    The gate's own decide() is run with a client that sends nothing, so the route is the
-    gate's and not a copy of it. "triggered" says the call was marked at the gate's level,
+    The decision a gate gets from the local server (decide.judge) is run with a client that
+    sends nothing, so the route is the real one and not a copy of it: the call is named as a
+    gate names it, and read from the session's log. "triggered" says the call was marked at
+    the gate's level,
     and "asked" that a request for Kai was built: a call too large to show is triggered and
     not asked. What comes back is one of: asked; abstain (not marked at the gate's level, in
     a session scanned whole); or undecided with the reason, which the gate turns into a
     denial unless it was started with --on-error abstain.
     """
     unsent = Unsent()
-    verdict, record, why = decide(
-        agent, payload, unsent, options["gate_level"], options["max_chars"], 0.0,
-        options["rules"], explain=True,
+    identity = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
+    verdict, record, why = judge(
+        agent, payload.get("session_id"), payload.get("tool_use_id"), identity, unsent,
+        options["gate_level"], options["max_chars"], 0.0, options["rules"], explain=True,
     )  # fmt: skip
     route = {"level": options["gate_level"]}
     if unsent.request is not None:

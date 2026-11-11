@@ -12,6 +12,8 @@ probability into a permission.
 
 import ipaddress
 import json
+import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,6 +62,43 @@ class KaiRejected(Exception):
     """The service refused this request (too large or malformed); the same bytes will not pass."""
 
 
+class KaiMismatch(Exception):
+    """What answered is not the decision model that was configured. Names the part that differs."""
+
+
+# The decision models an answer can be read from. An answer here is a probability from a
+# readout these questions were registered for. Another model needs its own entry, its own
+# questions and its own evaluation: these semantics are not laid over whatever it returns.
+ADAPTERS = {"kai-4b": {"model": "kai-4b", "readout": "pointer"}}
+IDENTITY = ("model", "readout", "package_sha256")  # what a reply must name, and name alike
+
+
+def profile(package_sha256, adapter="kai-4b"):
+    """What an operator says the decision model is: an adapter, and the package it must be.
+
+    The package is named by the hash its service reports for it. That report is the service's
+    own claim and proves nothing by itself: it counts only when it equals what the operator
+    set down here, in a deployment the operator controls.
+    """
+    if adapter not in ADAPTERS:
+        raise ValueError(f"no adapter for a decision model called {adapter!r}")
+    named = isinstance(package_sha256, str) and re.fullmatch("[0-9a-f]{64}", package_sha256)
+    if not named:
+        raise ValueError("a Kai package is named by its SHA-256: 64 lowercase hexadecimal digits")
+    return {"adapter": adapter, **ADAPTERS[adapter], "package_sha256": package_sha256}
+
+
+def admit(reported, expected):
+    """Raise KaiMismatch unless what a service says of itself is the configured model.
+
+    reported is its /health or one of its answers. Every answer is checked, not only the
+    first: what is behind an address can change between two requests.
+    """
+    for name in IDENTITY:
+        if not isinstance(reported, dict) or reported.get(name) != expected[name]:
+            raise KaiMismatch(name)
+
+
 def request(state, questions=(XPIA,)):
     """The request body for one packet and the questions asked of it."""
     return {"model": "kai", "state": state, "questions": {q: QUESTIONS[q] for q in questions}}
@@ -86,11 +125,46 @@ def loopback(url):
         return False
 
 
+TOKEN_ENV = "AGENTARMOR_KAI_TOKEN"
+
+
+def bearer(token_file=None, environment=True):
+    """The token for a Kai service that asks for one: from a file, else from the environment.
+
+    None when neither is given. The token is a credential: it is read here, sent only as a
+    request header to the one configured service, and never printed or logged. Pass
+    environment=False where a token found lying in the environment must not be picked up:
+    for an address on this machine, where it was most likely meant for a service elsewhere.
+    """
+    if not token_file and not environment:
+        return None
+    if token_file:
+        with open(token_file, encoding="utf-8") as handle:
+            if os.name == "posix" and os.fstat(handle.fileno()).st_mode & 0o077:
+                raise ValueError("the Kai token file must be readable by its owner only")
+            token = handle.read().strip()
+    else:
+        token = os.environ.get(TOKEN_ENV, "").strip()
+    if any(ord(char) < 33 or ord(char) > 126 for char in token):
+        raise ValueError("the Kai token must be one line of printable characters")
+    return token or None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A packet and its token go to the configured service and nowhere it points on to."""
+
+    def redirect_request(self, *_):
+        return None
+
+
 class KaiClient:
     """A client for one Kai service. Session text leaves this process only to that service.
 
     The service must be on this machine (a loopback address, which is also what an SSH tunnel
     to a GPU host presents) unless allow_remote is set: a packet holds what the agent read.
+    A service that is not on this machine is reached over https only, so that what the agent
+    read does not cross a network in the clear, and no redirect is followed. token, when the
+    service asks for one, is sent as a bearer token.
 
     A request to this machine goes to this machine. With http_proxy set in the environment,
     as many networks have it, the standard library hands every http request to that proxy,
@@ -99,22 +173,37 @@ class KaiClient:
     whatever the environment says about proxies.
     """
 
-    def __init__(self, url="http://127.0.0.1:8009", timeout=30.0, allow_remote=False):
+    def __init__(
+        self,
+        url="http://127.0.0.1:8009",
+        timeout=30.0,
+        allow_remote=False,
+        token=None,
+        expected=None,
+    ):
+        # expected is profile(): the model this client was set up for. With it, an answer from
+        # anything else is no answer (KaiMismatch). Without it nothing is checked, which is
+        # for a diagnostic an operator runs by hand, and the record says so.
+        self.expected = expected
         parts = urllib.parse.urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise ValueError("the Kai URL must be http(s)://host[:port]")
         self.remote = not loopback(url)
         if self.remote and not allow_remote:
             raise ValueError("the Kai service is not on a loopback address; pass allow_remote")
-        self.url, self.timeout = url.rstrip("/"), timeout
+        if self.remote and parts.scheme != "https":
+            raise ValueError("a Kai service that is not on this machine is reached over https only")
+        self.url, self.timeout, self.token = url.rstrip("/"), timeout, token
         direct = () if self.remote else (urllib.request.ProxyHandler({}),)  # no proxy at all
-        self._open = urllib.request.build_opener(*direct).open
+        self._open = urllib.request.build_opener(_NoRedirect, *direct).open
 
     def _call(self, path, body=None):
         data = None if body is None else json.dumps(body, allow_nan=False).encode("utf-8")
         if data is not None and len(data) > MAX_BYTES:
             raise KaiRejected("request too large")
         headers = {"Content-Type": "application/json"} if data is not None else {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         call = urllib.request.Request(self.url + path, data=data, headers=headers)  # noqa: S310
         try:
             with self._open(call, timeout=self.timeout) as reply:
@@ -129,6 +218,14 @@ class KaiClient:
     def health(self):
         return self._call("/health")
 
+    def identify(self):
+        """The service's /health, admitted: raises KaiMismatch if it is not the configured
+        model, KaiUnavailable if it does not answer."""
+        about = self.health()
+        if self.expected is not None:
+            admit(about, self.expected)
+        return about
+
     def ask(self, state, questions=(XPIA,)):
         """Kai's answers for a packet; raises KaiRejected or KaiUnavailable.
 
@@ -137,6 +234,8 @@ class KaiClient:
         question that was asked, with probabilities in range.
         """
         reply = self._call("/v1/systemone", request(state, questions))
+        if self.expected is not None:  # before anything in the reply is used
+            admit(reply, self.expected)
         if not isinstance(reply, dict) or reply.get("coverage") != "complete":
             raise KaiUnavailable("incomplete reply")
         given, answers = reply.get("answers") or {}, {}
@@ -155,5 +254,11 @@ class KaiClient:
                 answers[question] = {"choice": answer["choice"], "p_deny": value}
             if not isinstance(value, float) or not 0.0 <= value <= 1.0:
                 raise KaiUnavailable("probability missing or out of range")
-        service = {key: value for key, value in reply.items() if key not in ("answers", "coverage")}
+        # What the service says of itself, kept for the record. Its word that it is ready to
+        # be a policy is its own claim and is filed as one: nothing here is made ready by it.
+        apart = ("answers", "coverage", "policy_ready")
+        service = {key: value for key, value in reply.items() if key not in apart}
+        claim = reply.get("policy_ready") is True or reply.get("claims_policy_ready") is True
+        service["claims_policy_ready"] = claim
+        service["identity_checked"] = self.expected is not None
         return {"answers": answers, "service": service}
