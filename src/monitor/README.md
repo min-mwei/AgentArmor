@@ -177,10 +177,14 @@ To see what a session would send without sending it:
 .venv/bin/agentarmor-monitor requests --session <id>     # one JSON line per trigger
 ```
 
-Each line holds the exact request (`state` and `questions`) and the packet's account of
-itself. `sendable` is true only when a request was built; a trigger refused for its size has
-`request: null` and says why in `refused`. This is the serving layout: training, calibration and test inputs for Kai can be
-rendered in it from recorded or authored sessions. The output holds session text; treat it like
+Each line holds the exact request (`state` and `questions`), the packet's account of itself
+and `summary_embedding`, the backend the summary was marked on. `sendable` is true only when a
+request was built; a trigger refused for its size has `request: null` and says why in
+`refused`. This is the serving layout: training, calibration and test inputs for Kai can be
+rendered in it from recorded or authored sessions. The same session can build a different
+request on another device or precision, because a mark near a threshold moves, so keep
+`summary_embedding` with every render. Reruns on one backend have matched where they were
+checked; that is an observation, not a guarantee. The output holds session text; treat it like
 the session's own log.
 
 ## Detections
@@ -200,6 +204,7 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `requests_sent` | How many requests this trigger actually put to Kai: 0 when its answer was one already given for the same request, more than 1 when a larger request was refused first |
 | `same_request_as` | Present only when this record's answer was given for another trigger's identical request in the same summary: that trigger's key. Never set by a refusal, and never the record's own key |
 | `layout` | What Kai was given, by name: the state's layout (`agentarmor-state/v1`) and the packet's schema (`summarizer/v2`). A change to either is a change to Kai's input |
+| `summary_embedding` | What the summary says embedded it: backend, model, revision, device, precision, vector size, probe version and whether the probes are calibrated. Copied from the summary the request was built from, which for the daemon is the copy queued with the trigger, never from what is running later. It sits beside the request, never inside it, so request ids do not depend on it. `null` when no summary was read or the summary does not say. It traces what was reported and pins neither weights nor probes |
 | `status` | `scored`; `kai_unavailable` (retried by the daemon); `kai_rejected`; `call_too_large` or `policy_too_large` (nothing was sent); and for a gate outcome without a Kai request, the reason (`no_summary`, `coverage`, `setup`, `recording`, `event`) |
 | `gate`, `verdict`, `why`, `enforced` | Present when the gate handled the call: its verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing, and whether the call was in fact denied (`deny`) or not (`none`) |
 

@@ -30,7 +30,7 @@ import time
 from summarizer.hook import MAX_STDIN, call_sha256, handle
 from summarizer.store import AGENTS, home, load_summary, private_dir, safe_id, session_dir
 
-from .escalate import LEVELS, SCHEMA, append, detect, read
+from .escalate import LEVELS, SCHEMA, append, detect, embedding_of, read
 
 DENIED = "AgentArmor: Kai denied this call under the session's rules"
 UNDECIDED = "AgentArmor could not complete the check"
@@ -101,12 +101,26 @@ def note(agent, error, where):
         pass
 
 
+def outcome(agent, session, call_id, why, summary=None):
+    """A record of a gate outcome for which Kai was never asked.
+
+    summary is the one the outcome was read from, when there was one, and the record then says
+    what embedded it. With none, that is left unknown and not guessed.
+    """
+    record = {"schema": SCHEMA, "ts": round(time.time(), 3)}
+    record |= {"key": f"gate:{call_id if isinstance(call_id, str) else ''}"}
+    record |= {"agent": agent, "session": session, "status": why, "kai": None}
+    record |= {"advisory": True, "policy_ready": False, "decision": None, "flagged": None}
+    return record | {"summary_embedding": embedding_of(summary)}
+
+
 def decide(agent, payload, client, level="medium", max_chars=5000, wait=3.0, rules=None):
     """(verdict, record, why) for a PreToolUse payload.
 
-    verdict is "abstain", "deny" or "undecided". record is the detection when Kai was asked,
-    else None. why names, for "undecided", what kept the check from being completed (a key of
-    WHY); the caller applies its error policy.
+    verdict is "abstain", "deny" or "undecided". record is the detection when Kai was asked;
+    the gate's own record when it read the outcome off a summary without asking; else None.
+    why names, for "undecided", what kept the check from being completed (a key of WHY); the
+    caller applies its error policy.
     """
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
     if not isinstance(session, str) or not isinstance(call_id, str) or not call_id:
@@ -120,8 +134,9 @@ def decide(agent, payload, client, level="medium", max_chars=5000, wait=3.0, rul
     )
     if LEVELS.get(entry.get("level"), 0) < LEVELS[level]:
         # "Not marked" is a finding only when Summarizer scanned everything it captured.
-        whole = summary["session"]["coverage"]["scanned_all_captured"]
-        return ("abstain", None, None) if whole else ("undecided", None, "coverage")
+        if summary["session"]["coverage"]["scanned_all_captured"]:
+            return "abstain", None, None
+        return "undecided", outcome(agent, session, call_id, "coverage", summary), "coverage"
     record = detect(client, summary, entry, max_chars, rules, payload.get("tool_input"))
     if record["status"] != "scored":
         return "undecided", record, record["status"]
@@ -142,11 +157,8 @@ def keep(agent, payload, record, verdict, why, enforced):
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
     if not isinstance(session, str) or not session:
         return
-    if record is None:  # Kai was never asked: a record of the outcome alone
-        record = {"schema": SCHEMA, "ts": round(time.time(), 3)}
-        record |= {"key": f"gate:{call_id if isinstance(call_id, str) else ''}"}
-        record |= {"agent": agent, "session": session, "status": why, "kai": None}
-        record |= {"advisory": True, "policy_ready": False, "decision": None, "flagged": None}
+    if record is None:  # Kai was never asked, and no summary was read: the outcome alone
+        record = outcome(agent, session, call_id, why)
     record |= {"gate": True, "verdict": verdict, "enforced": enforced}
     if why:
         record["why"] = why

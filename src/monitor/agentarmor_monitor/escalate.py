@@ -22,8 +22,12 @@ Every record says how far its evidence can be relied on:
   to have become of it, and the summary holds nothing from after it; else "retrospective".
   Only a pre-action review is evidence about what could be known in time. Whether the call was
   shown whole and whether the evidence is from before it are separate properties.
+- summary_embedding: what the summary says embedded it (backend, model, revision, device,
+  precision, probes). The same session marked on another device can build another packet, so
+  a record names the one its summary came from. It is not part of the request.
 """
 
+import copy
 import hashlib
 import json
 import os
@@ -183,6 +187,19 @@ def review_of(entry, about):
     return "pre_action" if pending and proposal_seen(entry) else "retrospective"
 
 
+def embedding_of(summary):
+    """What a summary says embedded it, copied; None when it does not say.
+
+    Read from the summary a request is built from, never from a running model: a queued
+    trigger is answered later, and what is running then may differ. The copy is the summary's
+    own report, kept for tracing. It does not pin weights or probes: a revision of "local" or
+    a probe version alone identifies neither.
+    """
+    session = summary.get("session") if isinstance(summary, dict) else None
+    reported = session.get("embedding") if isinstance(session, dict) else None
+    return copy.deepcopy(reported) if isinstance(reported, dict) else None
+
+
 def request_sha256(body, questions):
     """An identifier for one request: SHA-256 of its canonical JSON.
 
@@ -238,6 +255,8 @@ def detect(
     record |= {"decision": None, "flagged": None, "rules": [rule["id"] for rule in rules]}
     # What Kai was given is identified by both: the state's layout and the packet's schema.
     record["layout"] = {"state": LAYOUT, "packet": session.get("schema")}
+    # What marked this summary, by its own report. Kept beside the request, never inside it.
+    record["summary_embedding"] = embedding_of(summary)
     call, account, questions = None, {}, (XPIA,)
     if entry["type"] == "action":
         logged = logged_call(directory, entry) if arguments is None else None

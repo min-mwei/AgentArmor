@@ -144,7 +144,7 @@ def _requests(args):
     for entry in triggers(summary, args.level):
         unsent = _Unsent()
         record = detect(unsent, summary, entry, args.max_chars, rules, directory=directory)
-        kept = ("key", "trigger", "layout", "packet", "review", "rules")
+        kept = ("key", "trigger", "layout", "summary_embedding", "packet", "review", "rules")
         shown = {key: record[key] for key in kept}
         # Sendable means a request was built. A trigger refused for its size has none, and
         # says why, so nothing counts it as input the service could be given.

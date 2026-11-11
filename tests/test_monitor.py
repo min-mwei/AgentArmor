@@ -1227,3 +1227,147 @@ def test_a_request_is_named_by_its_canonical_json_not_by_its_wire_bytes():
     assert both == escalate.request_sha256(state, (kai.XPIA, kai.DECISION))
     assert both != escalate.request_sha256(state, (kai.XPIA,))
     assert both != escalate.request_sha256(state + " ", (kai.DECISION, kai.XPIA))
+
+
+CPU = {
+    "backend": "embeddinggemma",
+    "model": "google/embeddinggemma-2",
+    "revision": "f9972ac22e696a105c482202646979e33e4b5a1e",
+    "device": "cpu",
+    "dtype": "float32",
+    "dim": 768,
+    "probes": "default-v3",
+    "calibrated": True,
+}
+MPS = CPU | {"device": "mps", "dtype": "bfloat16"}
+
+
+def reported_by(session):
+    """What a session's stored summary says embedded it."""
+    return load_summary("claude_code", session)["session"]["embedding"]
+
+
+def test_a_record_says_what_embedded_its_summary_and_the_request_does_not(spool, service):
+    name = summarized(attack("s-backend"))
+    summary, directory = load_summary("claude_code", name), session_dir("claude_code", name)
+    told = summary["session"]["embedding"]
+    assert told["backend"] == "hash" and {"model", "revision", "probes", "calibrated"} <= set(told)
+    client, built = kai.KaiClient(service.url), {}
+    for label, reported in (("hash", told), ("cpu", CPU), ("mps", MPS), ("silent", None)):
+        variant = json.loads(json.dumps(summary))
+        if reported is None:
+            del variant["session"]["embedding"]  # a summary that does not say
+        else:
+            variant["session"]["embedding"] = dict(reported)
+        records = [
+            escalate.detect(client, variant, entry, directory=directory)
+            for entry in escalate.triggers(variant)
+        ]
+        assert {r["trigger"]["type"] for r in records} >= {"action", "content"}
+        assert all(r["status"] == "scored" for r in records)
+        # A copy of what the summary said, which a later change to the summary does not reach.
+        assert all("summary_embedding" in r for r in records)
+        if reported is not None:
+            variant["session"]["embedding"]["device"] = "changed afterwards"
+        assert all(r["summary_embedding"] == reported for r in records)
+        built[label] = [
+            (r["key"], r["packet"]["request_sha256"], r["packet"]["sha256"]) for r in records
+        ]
+    # The backend sits beside the request and is no part of it: the same entries build the
+    # same requests whatever the summary says embedded it.
+    assert built["hash"] == built["cpu"] == built["mps"] == built["silent"]
+    for state, _ in service.seen:
+        assert "bfloat16" not in state and "embeddinggemma" not in state
+
+
+def test_printed_requests_keep_what_embedded_the_summary(spool, service, capsys, tmp_path):
+    watch = quiet_watch(service)
+    patched("s-export-backend")
+    log("s-export-backend", *tool(2, "Bash", {"command": PEEK + " # " + "x" * 6000}))
+    caught_up(watch, "claude_code", "s-export-backend")
+    told = reported_by("s-export-backend")
+    capsys.readouterr()
+    assert main(["requests", "--session", "s-export-backend"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {row["sendable"] for row in rows} == {True, False}  # built, and refused for size
+    assert all(row["summary_embedding"] == told for row in rows)
+    for row in rows:
+        if row["sendable"]:  # it is beside the request, never inside it
+            assert set(row["request"]) == {"model", "state", "questions"}
+    wordy = tmp_path / "policy.jsonl"
+    rule = {"id": "long", "tier": "hard_deny", "description": "No. " * 1500}
+    wordy.write_text(json.dumps(rule) + "\n")
+    assert main(["requests", "--session", "s-export-backend", "--policy", str(wordy)]) == 0
+    refused = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert refused and {row["refused"] for row in refused} == {"policy_too_large"}
+    assert all(row["summary_embedding"] == told for row in refused)
+
+
+def test_a_queued_trigger_keeps_the_backend_of_the_summary_it_was_found_in(spool):
+    slow, runtime = HeldKai("Summarize the README."), Runtime(HashEmbedder())
+    watch = Monitor(runtime, slow, log=lambda message: None)
+    name = attack("s-later")
+    assert watch.update("claude_code", name) > 0 and slow.entered.wait(10)
+    found = reported_by(name)  # the summary these triggers were queued with
+    # What is running changes while Kai still holds the first request.
+    runtime.embedder.info = HashEmbedder.info | {"device": "elsewhere"}
+    runtime.probe_version = "later-probes"
+    log(name, *tool(3, "Bash", {"command": PEEK}))
+    assert watch.update("claude_code", name) > 0
+    later = reported_by(name)
+    assert (later["device"], later["probes"]) == ("elsewhere", "later-probes") and later != found
+    assert slow.answered == 0  # nothing queued before the change has been answered yet
+    slow.release.set()
+    assert watch.drain()
+    records = escalate.read(session_dir("claude_code", name))
+    calls = {r["trigger"]["call_id"]: r for r in records if r["trigger"]["type"] == "action"}
+    assert calls["call-2"]["summary_embedding"] == found  # queued before the change
+    assert calls["call-3"]["summary_embedding"] == later  # found in the later summary
+    content = [r for r in records if r["trigger"]["type"] == "content"]
+    assert content and all(r["summary_embedding"] == found for r in content)
+    watch.close()
+
+
+def test_a_refused_or_unanswered_request_still_says_what_embedded_its_summary(spool):
+    name = summarized(attack("s-refused-backend"))
+    summary, directory = load_summary("claude_code", name), session_dir("claude_code", name)
+    told = summary["session"]["embedding"]
+    (action,) = [e for e in escalate.triggers(summary) if e["type"] == "action"]
+    alone = len(policy.state(policy.load_rules(), ""))  # the rules with no session and no call
+    cases = {
+        "kai_unavailable": (Scripted(10**9, down={1}), 5000),
+        "kai_rejected": (Scripted(0), 5000),
+        "call_too_large": (Scripted(10**9), alone + escalate.MIN_CHARS + 10),
+        "policy_too_large": (Scripted(10**9), alone + escalate.MIN_CHARS - 1),
+    }
+    for status, (client, max_chars) in cases.items():
+        record = escalate.detect(client, summary, action, max_chars, directory=directory)
+        assert record["status"] == status and record["kai"] is None
+        assert record["summary_embedding"] == told
+
+
+def test_a_gate_outcome_names_the_backend_only_when_it_read_a_summary(spool, service):
+    watch, client = quiet_watch(service), kai.KaiClient(service.url)
+    name = "s-gate-backend"
+    log(
+        name,
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        # An instruction file the hook could not read: the session record has a gap.
+        {"hook_event_name": "InstructionsLoaded", "file_path": f"{CWD}/CLAUDE.md"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Run the tests."},
+    )
+    watch.update("claude_code", name)
+    _, status = gated(name, 1, "Bash", {"command": "ls docs"}, client, watch)
+    (record,) = gate_records(name)
+    assert status == 2 and (record["status"], record["kai"]) == ("coverage", None)
+    assert record["summary_embedding"] == reported_by(name)  # read off a summary, so named
+    # A marked call that Kai was asked about says it the same way.
+    gated(name, 2, "Bash", {"command": PEEK}, client, watch)
+    record = gate_records(name)[-1]
+    assert record["kai"] is not None and record["summary_embedding"] == reported_by(name)
+    # No daemon, so no summary of the call: the backend is unknown and is not guessed.
+    payload = event("s-alone", hook_event_name="PreToolUse") | call(1, "Bash", {"command": "ls"})
+    _, status = gate.run("claude_code", json.dumps(payload).encode(), client, wait=0.05)
+    (record,) = gate_records("s-alone")
+    assert status == 2 and record["status"] == "no_summary"
+    assert "summary_embedding" in record and record["summary_embedding"] is None
