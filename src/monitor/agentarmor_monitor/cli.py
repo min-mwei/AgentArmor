@@ -15,7 +15,7 @@ Kai's decisions. With the gate (hooks-config --gate) a suspicious tool call wait
 
     agentarmor-monitor requests --session ID     # what would be sent to Kai, without sending
     agentarmor-monitor render scripts.jsonl --out DIR     # the same for scripted sessions
-    agentarmor-monitor tally DIR/calls.jsonl     # what becomes of every proposed call
+    agentarmor-monitor tally DIR/calls.jsonl     # what the gate would do with every call
 """
 
 import argparse
@@ -174,7 +174,10 @@ def _render(args):
 
 
 def _tally(args):
-    """Count what would become of every proposed call of a render. No session text is read."""
+    """Count what the gate would do with every proposed call of a render.
+
+    It reads the ledger and no session text.
+    """
     from .tally import read, tally
 
     try:
@@ -348,7 +351,7 @@ def main(argv=None):
     scripted.set_defaults(run=_render)
 
     counted = commands.add_parser(
-        "tally", help="count what would become of every proposed call of a render"
+        "tally", help="count what the gate would do with every proposed call of a render"
     )
     counted.add_argument("calls", help="calls.jsonl of a render")
     counted.add_argument("--answers", help="Kai's answers: request_sha256 and decision per line")

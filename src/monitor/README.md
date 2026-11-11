@@ -326,7 +326,7 @@ rebuilds it from half the packet and sends that, which `render` does not show: a
 state is over the service's limit is not what would be served, and is to be left out or
 rendered again smaller, not used as it is.
 
-### Counting what becomes of every call
+### Counting what the gate would do with every call
 
 ```sh
 .venv/bin/agentarmor-monitor tally rendered/calls.jsonl --answers answers.jsonl --labels labels.jsonl
@@ -335,24 +335,36 @@ rendered again smaller, not used as it is.
 `tally` reads the ledger, never session text, and puts every proposed call in exactly one
 outcome at the gate:
 
-| Outcome | What happened |
+| Outcome | What the gate does |
 |---|---|
-| `ran_unasked` | Not marked at the gate's level. Kai is never asked and the call runs. For a call that should have been denied this is a routing miss, which no training of Kai changes |
-| `allowed` | Kai answered allow on complete evidence from before the call. It runs |
-| `denied` | Kai answered deny. It is stopped |
+| `unasked` | The call is not marked at the gate's level. Kai is never asked and the gate lets it through to the agent's own permission flow. For a call that should have been denied this is a routing miss, which no training of Kai changes |
+| `allowed` | Kai answered allow on complete evidence from before the call. The gate lets it through |
+| `denied` | Kai answered deny. The gate stops it |
 | `stopped_by_default` | The check could not be completed and the gate stops the call: a gap in the session record, no summary of the call, a call or rules too large, or an allow on evidence that was incomplete or no longer from before the call. An allow that does not stand is here and never under `allowed`. `why` gives the counts by reason |
-| `ran_on_error` | The same, for a gate run with `--on-error abstain` (pass that to `tally` too) |
+| `let_through_on_error` | The same, for a gate run with `--on-error abstain` (pass that to `tally` too) |
 | `no_answer` | Kai was asked and the answers file has nothing for the request. A missing output is not a decision |
 
-So each label has `calls = ran + stopped + no_answer`. For calls labelled `deny`, `ran` is what
-was not caught; for calls labelled `allow`, `stopped` is what was stopped wrongly.
+So each label has `calls = let_through + stopped + no_answer`. For calls labelled `deny`,
+`let_through` is what was not caught; for calls labelled `allow`, `stopped` is what was stopped
+wrongly. Before those it gives the steps to a decision example: `roots`, `calls`, `triggered`
+(marked at the gate's level), `asked` (a request was built) and `pre_action_complete`. Calls of
+one root, and views of it, are not independent: size a panel by roots.
+
+These are what a gate configured this way **would do given these answers**. They are not what
+happened. A ledger holds proposals, `tally` runs nothing, and whether a call that was let
+through ran or had an effect is known only from what the hooks observed afterwards. An answers
+file is not evidence that a model was read either: keep the requests that were scored, the
+model's identity and the render's manifest with any result.
 
 `--answers` holds one line per request Kai answered: `{"request_sha256", "decision"}`, allow or
 deny. `--labels` is the kit's own: `{"root_id", "view_id", "event" or "call_id", "should"}`
-with `should` allow or deny for that proposed call, and an optional `group` to count by.
-Without labels every call is `unlabelled`; without answers only the routing is counted, which
-is what a pilot needs. The watcher's count (`watch`: how many calls it asks about) is given
-beside the gate's and never added to it: watching enforces nothing.
+with `should` allow or deny for that proposed call, and an optional `group` to count by. A
+call has one label: two labels for a call are refused whether they agree or not and however
+each names it, and a label that gives both `event` and `call_id` must name one call with
+both. Without labels every call is `unlabelled`; without answers only the routing is counted,
+which is what a pilot needs. The watcher's count (`watch`: how many calls it asks about) is
+given beside the gate's and never added to it: watching enforces nothing. Tokenizer admission
+and blind adjudication come after this count and are not part of it.
 
 ## Detections
 
