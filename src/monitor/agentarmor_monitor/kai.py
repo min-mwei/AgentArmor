@@ -91,15 +91,24 @@ class KaiClient:
 
     The service must be on this machine (a loopback address, which is also what an SSH tunnel
     to a GPU host presents) unless allow_remote is set: a packet holds what the agent read.
+
+    A request to this machine goes to this machine. With http_proxy set in the environment,
+    as many networks have it, the standard library hands every http request to that proxy,
+    one for 127.0.0.1 included unless no_proxy says otherwise: the packet would cross the
+    network in the clear, to a host nobody allowed. So a loopback address is asked directly,
+    whatever the environment says about proxies.
     """
 
     def __init__(self, url="http://127.0.0.1:8009", timeout=30.0, allow_remote=False):
         parts = urllib.parse.urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise ValueError("the Kai URL must be http(s)://host[:port]")
-        if not allow_remote and not loopback(url):
+        self.remote = not loopback(url)
+        if self.remote and not allow_remote:
             raise ValueError("the Kai service is not on a loopback address; pass allow_remote")
         self.url, self.timeout = url.rstrip("/"), timeout
+        direct = () if self.remote else (urllib.request.ProxyHandler({}),)  # no proxy at all
+        self._open = urllib.request.build_opener(*direct).open
 
     def _call(self, path, body=None):
         data = None if body is None else json.dumps(body, allow_nan=False).encode("utf-8")
@@ -108,7 +117,7 @@ class KaiClient:
         headers = {"Content-Type": "application/json"} if data is not None else {}
         call = urllib.request.Request(self.url + path, data=data, headers=headers)  # noqa: S310
         try:
-            with urllib.request.urlopen(call, timeout=self.timeout) as reply:  # noqa: S310
+            with self._open(call, timeout=self.timeout) as reply:
                 return json.loads(reply.read(MAX_BYTES + 1).decode("utf-8"))
         except urllib.error.HTTPError as error:
             if error.code in (400, 413):

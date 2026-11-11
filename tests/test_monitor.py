@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -264,6 +265,38 @@ def test_packets_go_only_to_this_machine_unless_told_otherwise():
         with pytest.raises(ValueError):
             kai.KaiClient(url)
     kai.KaiClient("https://kai.example.net", allow_remote=True)
+
+
+def test_a_request_to_this_machine_never_goes_through_a_proxy(service, monkeypatch):
+    # Many networks set http_proxy for every program. The standard library then hands an http
+    # request for 127.0.0.1 to that proxy as well, unless no_proxy says otherwise: the packet
+    # would leave the machine in the clear, for a host nobody allowed.
+    heard, proxy = [], socket.socket()
+    proxy.bind(("127.0.0.1", 0))  # stands for a proxy somewhere else
+    proxy.listen(1)
+    proxy.settimeout(0.5)
+
+    def listen():
+        try:
+            asked, _ = proxy.accept()
+            heard.append(asked.recv(200).split(b"\r\n")[0])
+            asked.close()
+        except TimeoutError:
+            pass
+
+    waiting = threading.Thread(target=listen)
+    waiting.start()
+    for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(name, f"http://127.0.0.1:{proxy.getsockname()[1]}")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        reply = kai.KaiClient(service.url).ask("a log", (kai.XPIA,))
+    finally:
+        waiting.join()
+        proxy.close()
+    assert heard == []  # the proxy was told nothing
+    assert reply["answers"][kai.XPIA] == 0.04 and "a log" in service.seen[-1][0]
 
 
 def test_a_reply_that_is_not_a_complete_answer_is_not_a_decision(service, monkeypatch):
