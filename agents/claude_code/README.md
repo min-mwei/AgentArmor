@@ -45,3 +45,14 @@ incomplete-observation message. Post-effect scans remain advisory even after
 implementation. Trusted policy/session assembly, authenticated transport, and exact content
 snapshots remain prerequisites for connecting the hooks to model-backed enforcement.
 See the [vLLM qualification requirements](../../src/vllm/README.md#qualification).
+
+## Connecting sessions to Kai
+
+The templates above are the placeholder that denies every call. To have Summarizer watch a
+session and Kai decide about what it flags, use the [local monitor](../../src/monitor/README.md)
+and the hooks it prints:
+
+```sh
+agentarmor-monitor hooks-config --agent claude_code
+agentarmor-monitor hooks-config --agent claude_code --gate /absolute/path/to/agentarmor-monitor
+```

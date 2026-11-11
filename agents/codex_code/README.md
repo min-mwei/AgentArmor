@@ -46,3 +46,14 @@ incomplete-observation message. Post-effect scans remain advisory even after
 implementation. Local command hooks require supported local orchestration and
 do not cover cloud or hosted tools where the hook is not invoked. See the
 [vLLM qualification requirements](../../src/vllm/README.md#qualification).
+
+## Connecting sessions to Kai
+
+The templates above are the placeholder that denies every call. To have Summarizer watch a
+session and Kai decide about what it flags, use the [local monitor](../../src/monitor/README.md)
+and the hooks it prints:
+
+```sh
+agentarmor-monitor hooks-config --agent codex_code --toml
+agentarmor-monitor hooks-config --agent codex_code --toml --gate /absolute/path/to/agentarmor-monitor
+```

@@ -1,0 +1,335 @@
+"""Decide what to send to Kai, build the packet, and record what came back.
+
+Summarizer tags; it does not judge. Anything it marks at or above a level is a trigger. For
+each trigger a packet is built: Summarizer's digest of the session focused on the call the
+trigger belongs to, which carries the user's requests, the call, what led to it, where its
+operands were first named, reported outcomes, and what is missing. Kai reads that packet and
+decides: for a proposed call, allow or deny under the rules; for anything, whether untrusted
+content is redirecting the agent. The result is a detection record, appended to the session's
+detections.jsonl. Recording a decision does not enforce it; the gate (gate.py) does that.
+
+Every record says how far its evidence can be relied on:
+
+- packet.complete: Summarizer's packet held what it thinks a decision needs, every captured
+  event was scanned, and the proposed call's own arguments were shown to Kai whole. An answer
+  Kai gave on anything less is recorded but is not a completed check.
+- packet.call_source: where the proposed call's text came from. "arguments": the caller held
+  the call (the gate). "log": the arguments the hook logged for it, found by call id and by
+  the hash the hook took before redaction. "representation": only the text Summarizer shows
+  for a call, which is a reading of it (a patch is shown as its files and added lines) and is
+  never taken for the whole call.
+- review: "pre_action" when the hooks delivered the call's proposal, nothing has been reported
+  to have become of it, and the summary holds nothing from after it; else "retrospective".
+  Only a pre-action review is evidence about what could be known in time. Whether the call was
+  shown whole and whether the evidence is from before it are separate properties.
+"""
+
+import hashlib
+import json
+import os
+import time
+
+from summarizer.redact import compact
+from summarizer.store import EVENTS, read_events
+from summarizer.text import digest
+
+from .kai import DECISION, XPIA, KaiRejected, KaiUnavailable, request
+from .policy import LAYOUT, load_rules, state
+
+SCHEMA = "agentarmor-detection/v1"
+DETECTIONS = "detections.jsonl"
+LEVELS = {"low": 1, "medium": 2, "high": 3}
+FLAG_AT = 0.5  # where the redirection answer counts as flagged. Not a qualified cutoff.
+MIN_CHARS = 1000  # the smallest packet tried when the service refuses a larger one
+
+
+def key_of(entry):
+    """What identifies a trigger across summary updates."""
+    return f"{entry['type']}:{entry['seq']}:{entry.get('sha256') or entry.get('call_id') or ''}"
+
+
+def triggers(summary, minimum="low"):
+    """Entries Summarizer marked at or above minimum, oldest first: actions, content, messages."""
+    floor = LEVELS[minimum]
+    found = [
+        entry
+        for entry in summary["entries"]
+        if entry["type"] in ("action", "content", "message")
+        and LEVELS.get(entry.get("level"), 0) >= floor
+    ]
+    return sorted(found, key=lambda entry: entry["seq"])
+
+
+def packet(summary, entry, max_chars):
+    """Summarizer's digest for the call a trigger belongs to, with its own account of itself."""
+    focus = entry.get("call_id") or None
+    shown = digest(summary, max_chars, focus=focus, call_sha256=entry.get("call_sha256"))
+    coverage = summary["session"]["coverage"]
+    gaps = shown["key_dropped"] or shown["key_clipped"] or shown["unresolved_conditions"]
+    ready = bool(shown["fits"] and not gaps and coverage["scanned_all_captured"])
+    # A call under decision must be the logged one. Content has no call of its own to verify:
+    # the call it came back from is only where the packet is centred.
+    ready = ready and (entry["type"] != "action" or shown["call"] == "verified")
+    text = shown["text"]
+    about = {
+        "chars": len(text),
+        "max_chars": max_chars,
+        "sha256": hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest(),
+        "call": shown["call"],
+        "fits": shown["fits"],
+        "key_dropped": shown["key_dropped"],
+        "key_clipped": shown["key_clipped"],
+        "unresolved_conditions": shown["unresolved_conditions"],
+        "later_events": shown["later_events"],
+        "scanned_all_captured": coverage["scanned_all_captured"],
+        # Whether the packet holds what a decision needs, by Summarizer's own account.
+        "ready": ready,
+    }
+    return text, about
+
+
+def logged_call(directory, entry):
+    """The arguments the hook logged for an action, or None when the log cannot supply them.
+
+    The hook stores every event after redaction, with the hash of the call taken before it.
+    The record whose call id and hash both equal this entry's holds the arguments the entry was
+    built from: redacted, and whole unless the hook clipped a value, which it reports.
+    """
+    wanted = (entry.get("call_id"), entry.get("call_sha256"))
+    if directory is None or not all(wanted):
+        return None
+    try:
+        records, _ = read_events(os.path.join(directory, EVENTS))
+    except OSError:
+        return None
+
+    def inside(note):
+        path = str(note.get("path", ""))
+        return path == "tool_input" or path.startswith(("tool_input.", "tool_input["))
+
+    for record in records:
+        event, meta = record.get("event"), record.get("meta")
+        if not isinstance(event, dict) or not isinstance(meta, dict) or "tool_input" not in event:
+            continue
+        if (event.get("tool_use_id"), meta.get("call_sha256")) != wanted:
+            continue
+        clipped = [note for note in meta.get("clipped", ()) if inside(note)]
+        redacted = [note for note in meta.get("redacted", ()) if inside(note)]
+        return {
+            "arguments": event["tool_input"],
+            "missing": sum(note["chars"] - note["kept"] for note in clipped),
+            "redactions": sum(sum(note["kinds"].values()) for note in redacted),
+        }
+    return None
+
+
+def proposed(entry, arguments=None, logged=None):
+    """(tool, arguments as JSON text, account): the call as Kai is shown it.
+
+    arguments is the call's own input when the caller holds it (the gate does). It is redacted
+    here exactly as Summarizer's hook redacts what it logs, so a request never carries what the
+    packet withheld; the call's identity is the hash the hook took before redaction, which the
+    record keeps. logged is logged_call() for the entry: the same arguments as the hook stored
+    them. With neither, only the text Summarizer shows for the call is left. That is a reading
+    of the call, not the call, so nothing is claimed about how much of the call it holds.
+    """
+    tool, noted = entry.get("tool", ""), {}
+    if arguments is not None:
+        shown, source = compact(arguments, noted), "arguments"
+        missing = sum(item["chars"] - item["kept"] for item in noted.get("clipped", ()))
+        redactions = sum(sum(item["kinds"].values()) for item in noted.get("redacted", ()))
+    elif logged is not None:
+        shown, source = logged["arguments"], "log"
+        missing, redactions = logged["missing"], logged["redactions"]
+    else:
+        shown, source = {"call": entry["text"].removeprefix(tool).lstrip(": ")}, "representation"
+        missing = redactions = None  # unknown: a display text does not say what it left out
+    text = json.dumps(shown, ensure_ascii=False, sort_keys=True)
+    account = {"call_source": source, "call_chars": len(text)}
+    return tool, text, account | {"call_chars_not_shown": missing, "call_redactions": redactions}
+
+
+OUTCOMES = ("returned", "failed", "denied")  # what a later event reports became of a call
+
+
+def proposal_seen(entry):
+    """Whether the hooks delivered this call's proposal, not only a later event that revealed it.
+
+    Summarizer says so itself (proposal_observed false, and no "proposed" step). A summary made
+    before it did carries an inferred "proposed" step at the very event that reported the
+    outcome; an outcome at the proposal's own sequence number gives that away.
+    """
+    if entry.get("proposal_observed") is False:
+        return False
+    steps = entry.get("lifecycle") or ()
+    first = next((step for step in steps if step.get("state") == "proposed"), None)
+    if first is None:
+        return False
+    same = [step for step in steps if step.get("seq") == first.get("seq")]
+    return not any(step.get("state") in OUTCOMES for step in same)
+
+
+def review_of(entry, about):
+    """Whether a packet says only what could be known when the call was proposed.
+
+    Counting later events is not enough: a call first seen at its result has none, and its
+    outcome is already in the packet. So the call itself must still be only proposed, by its
+    status and by every step of its lifecycle, and that proposal must have been observed.
+    """
+    if entry["type"] != "action" or about["later_events"] != 0:
+        return "retrospective"
+    steps = [step.get("state") for step in entry.get("lifecycle") or ()]
+    pending = entry.get("status") == "proposed" and not any(s in OUTCOMES for s in steps)
+    return "pre_action" if pending and proposal_seen(entry) else "retrospective"
+
+
+def request_sha256(body, questions):
+    """An identifier for one request: SHA-256 of its canonical JSON.
+
+    Canonical means the request object (model, state, registered questions) dumped with sorted
+    keys, Python's default separators and non-ASCII characters escaped, so the text is plain
+    ASCII. Two requests have the same identifier exactly when they are the same object. It is
+    not a hash of the bytes on the wire: the client serializes the same object in its own key
+    order.
+    """
+    canonical = json.dumps(request(body, questions), sort_keys=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def detect(
+    client, summary, entry, max_chars=5000, rules=None, arguments=None, directory=None, asked=None
+):
+    """Send one trigger's packet to Kai and return the detection record.
+
+    An action is put to Kai for a decision (allow or deny under the rules) and for whether
+    untrusted content is redirecting the agent; other triggers only for the second. The call is
+    shown from arguments when the caller holds them, else from the session's event log in
+    directory, else as Summarizer's display text, which never counts as the whole call.
+
+    max_chars is the budget for the whole state Kai reads: the rules, Summarizer's packet and
+    the proposed call. The rules and the call are never cut to fit; the packet gets the room
+    they leave, and when that is less than the smallest packet nothing is sent. A state the
+    service refuses as too large is rebuilt from a smaller packet, which then says what it
+    left out.
+
+    asked, when given, holds the requests already put to Kai for this same summary, by
+    request_sha256. A trigger whose request is one of them is not sent again: it takes that
+    answer, and its record names the trigger the answer was given for (same_request_as). A
+    refusal is remembered too, so a request the service turned away is not sent to be turned
+    away again; that is never a link, because a refusal is not an answer. Pass one dict for the
+    triggers of one summary and never across summaries: the same words asked at a later time
+    are a later decision.
+
+    The record's requests_sent counts what this trigger actually put to the service: none when
+    its answer was one already given, more than one when a larger request was refused first.
+
+    status is "scored", "call_too_large", "policy_too_large", "kai_rejected" or
+    "kai_unavailable".
+    """
+    session = summary["session"]
+    rules = load_rules() if rules is None else rules
+    record = {"schema": SCHEMA, "ts": round(time.time(), 3), "key": key_of(entry)}
+    record |= {"agent": session.get("agent"), "session": session.get("session_id")}
+    kept = ("type", "seq", "call_id", "call_sha256", "tool", "status", "level", "confidence")
+    record["trigger"] = {
+        key: entry.get(key) for key in (*kept, "labels") if entry.get(key) is not None
+    }
+    record |= {"advisory": True, "policy_ready": False, "kai": None}
+    record |= {"decision": None, "flagged": None, "rules": [rule["id"] for rule in rules]}
+    # What Kai was given is identified by both: the state's layout and the packet's schema.
+    record["layout"] = {"state": LAYOUT, "packet": session.get("schema")}
+    call, account, questions = None, {}, (XPIA,)
+    if entry["type"] == "action":
+        logged = logged_call(directory, entry) if arguments is None else None
+        tool, shown, account = proposed(entry, arguments, logged)
+        call, questions = (tool, shown), (DECISION, XPIA)
+    size = max_chars - len(state(rules, "", call))  # what the rules and the call leave
+    record["requests_sent"] = 0
+    while True:
+        text, about = packet(summary, entry, max(size, MIN_CHARS))
+        # Whole means the call's own arguments, all of them: a display text never qualifies.
+        whole = account.get("call_source") != "representation"
+        whole = whole and not account.get("call_chars_not_shown")
+        record["packet"] = about | account | {"complete": bool(about["ready"] and whole)}
+        if entry["type"] == "action":
+            record["packet"]["proposal_observed"] = proposal_seen(entry)
+        record["review"] = review_of(entry, about)
+        if size < MIN_CHARS:  # no room for the session: refused, not cut
+            fits_alone = max_chars - len(state(rules, "")) >= MIN_CHARS
+            return record | {"status": "call_too_large" if fits_alone else "policy_too_large"}
+        body = state(rules, text, call)
+        key = request_sha256(body, questions)
+        record["packet"] |= {"state_chars": len(body), "request_sha256": key}
+        earlier = asked.get(key) if asked is not None else None
+        try:
+            if earlier is None:
+                record["requests_sent"] += 1
+                reply = client.ask(body, questions)
+            elif earlier["reply"] is None:
+                raise KaiRejected("the same request was refused")
+            else:
+                reply = earlier["reply"]
+        except KaiRejected:
+            if asked is not None and earlier is None:
+                asked[key] = {"key": record["key"], "reply": None}
+            if size <= MIN_CHARS:
+                return record | {"status": "kai_rejected"}
+            size = max(MIN_CHARS, size // 2)
+            continue
+        except KaiUnavailable as error:
+            return record | {"status": "kai_unavailable", "error": str(error)}
+        # Only the request that produced the answer in hand says whose answer it is. Earlier
+        # attempts in this loop, refused or reused as refusals, leave no mark on that.
+        if earlier is not None:
+            record["same_request_as"] = earlier["key"]
+        elif asked is not None:
+            asked[key] = {"key": record["key"], "reply": reply}
+        answers = reply["answers"]
+        record["kai"] = {"p_xpia": answers[XPIA], **reply["service"]}
+        if DECISION in answers:
+            record["kai"]["p_deny"] = answers[DECISION]["p_deny"]
+            record["decision"] = answers[DECISION]["choice"]  # Kai's answer: allow or deny
+        record["flagged"] = record["decision"] == "deny" or answers[XPIA] >= FLAG_AT
+        # Summarizer marked it and Kai cleared it: kept apart from "nothing was found".
+        marked = LEVELS.get(entry.get("level"), 0) >= LEVELS["medium"]
+        record["disagreement"] = bool(marked and not record["flagged"])
+        return record | {"status": "scored"}
+
+
+def append(directory, record):
+    """Add a detection to a session's file, readable by its owner only."""
+    path = os.path.join(directory, DETECTIONS)
+    handle = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(handle, "a", encoding="utf-8") as out:
+        out.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+
+
+def read(directory):
+    """A session's detections, oldest first; the latest record for a trigger is its state."""
+    path = os.path.join(directory, DETECTIONS)
+    try:
+        with open(path, encoding="utf-8") as lines:
+            return [json.loads(line) for line in lines if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
+# Statuses that need no further attempt.
+FINAL = ("scored", "kai_rejected", "call_too_large", "policy_too_large")
+
+
+def settled(records):
+    """Keys of triggers that need no further attempt: answered, or refused for their size."""
+    return {r["key"] for r in records if r.get("status") in FINAL}
+
+
+def latest(records):
+    """The state of each trigger: its last record, except that an answer is never replaced by
+    a later note that Kai could not be reached (a gate and the daemon may both ask about a call).
+    """
+    state = {}
+    for record in records:
+        held = state.get(record["key"])
+        if held is None or record.get("status") in FINAL or held.get("status") not in FINAL:
+            state[record["key"]] = record
+    return state

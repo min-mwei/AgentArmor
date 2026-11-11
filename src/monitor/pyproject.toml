@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentarmor-monitor"
+version = "0.1.0"
+description = "Run Summarizer as the local session monitor and send suspicious activity to Kai"
+requires-python = ">=3.11,<3.14"
+# The monitor talks to Kai over HTTP with the standard library. Summarizer's own package has no
+# required dependencies; its embedding model comes with the "model" extra.
+# Summarizer is pinned to the commit this monitor was reviewed against. Older ones do not say
+# when a call's proposal was not observed, and write an event's text to the hook's error log.
+dependencies = [
+    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@0b1e763d97d4b3916d95ea881fefcb310125d22c",
+    "numpy>=2,<3",
+]
+
+[project.optional-dependencies]
+model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@0b1e763d97d4b3916d95ea881fefcb310125d22c"]
+
+[project.scripts]
+agentarmor-monitor = "agentarmor_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentarmor_monitor*"]

@@ -18,7 +18,9 @@ Identity and access controls remain essential. AgentArmor adds contextual evalua
 to do with those permissions. The caller supplies the relevant policy, task, history, and proposed action.
 
 **Development status:** the HTTP API returns model scores for evaluation. Enforcement is not yet qualified
-(`policy_ready: false`). The current agent hooks deny synchronous actions and do not call the model service.
+(`policy_ready: false`). The placeholder hooks of `agentarmor hook` deny synchronous actions and do not call the
+model service; the [local monitor](src/monitor/README.md) is the path that connects sessions to Kai, and is
+experimental.
 
 ## Run Kai
 
@@ -99,6 +101,23 @@ These cases informed model selection. Kai is the best of three training runs on 
 reached tool-authorization AUCs of 0.884 and 0.863. The saved scores come from Kai's training runtime, and numerical
 agreement on a vLLM GPU host still needs validation. These results do not establish production accuracy or
 reproducibility. Evidence spans and a reliable check for missing facts are not available yet.
+
+## Monitor agent sessions
+
+The [local monitor](src/monitor/README.md) runs [Summarizer](https://github.com/min-mwei/Summarizer) on
+the developer's machine as a small local model. Its hook records everything a Claude Code or Codex session reads
+and runs; its daemon keeps a labelled summary of each session and filters what looks suspicious. Each suspicious
+entry is sent to Kai with the rules and that summary as context, and Kai answers allow or deny:
+
+```sh
+.venv/bin/pip install ./src/vllm './src/monitor[model]'
+.venv/bin/agentarmor-monitor serve --kai-url http://127.0.0.1:8009
+.venv/bin/agentarmor-monitor detections --flagged
+```
+
+Agents connect through an observer hook, which only records Kai's decisions, or through a gate, which returns
+Kai's "deny" for a suspicious tool call to the agent. Kai has not been measured on Summarizer's packets and its
+serving path is unqualified, so both are experimental; see the monitor's guide for what is sent and its limits.
 
 ## Agent integrations
 
