@@ -123,6 +123,8 @@ def check_script(script):
     if script.get("agent") not in AGENTS:
         raise ValueError("agent is one of " + ", ".join(AGENTS))
     check_rules(script.get("rules"))
+    if any(set(rule) != {"id", "tier", "description"} for rule in script["rules"]):
+        raise ValueError("a rule holds id, tier and description, and nothing else")
     if len({rule["id"] for rule in script["rules"]}) != len(script["rules"]):
         raise ValueError("rule ids are distinct")
     events = script.get("events")
@@ -138,13 +140,13 @@ def check_script(script):
             "the first event has no transcript_path under a .claude or .codex folder, so "
             "nothing says where the agent's home is"
         )
-    given = {event.get("session_id") for event in events if "session_id" in event}
-    if not given:
+    named = [event["session_id"] for event in events if "session_id" in event]
+    if not named:
         events = [event | {"session_id": SESSION} for event in events]
-    elif len(given) > 1 or any("session_id" not in event for event in events):
-        raise ValueError("the events of one view carry one session_id, or none carries any")
-    elif not all(isinstance(name, str) and name for name in given):
+    elif not all(isinstance(name, str) and name for name in named):
         raise ValueError("session_id is a non-empty string")
+    elif len(named) < len(events) or len(set(named)) > 1:
+        raise ValueError("the events of one view carry one session_id, or none carries any")
     for key in ("files", "links"):
         _paths(script.get(key, {}), key)
     home = script.get("codex_home")

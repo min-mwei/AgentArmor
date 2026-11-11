@@ -212,7 +212,7 @@ the input is one view of one root:
 |---|---|
 | `root_id`, `view_id` | Yours. Carried onto every row; the pair is unique in a file. Views of one root stay in one split |
 | `agent` | `claude_code` or `codex_code` |
-| `rules` | The policy this view runs under, as in a policy file: one or more of `{id, tier, description}` with distinct ids. Rule texts, ids, their number, the tiers used and the order within a tier are free. The first line of the state, the empty `environment:`, the order of the tier headings and the "Policy interpretation" paragraph are fixed by the layout |
+| `rules` | The policy this view runs under, as in a policy file: one or more of `{id, tier, description}`, those three fields only, with distinct ids. Rule texts, ids, their number, the tiers used and the order within a tier are free. The first line of the state, the empty `environment:`, the order of the tier headings and the "Policy interpretation" paragraph are fixed by the layout |
 | `events` | The hook events, in order, as the agent delivers them (below). The first must carry a `transcript_path` |
 | `files` | Optional. Instruction files as `{absolute path: text}`: what `InstructionsLoaded` and Codex's `SessionStart` find on disk. A file under a `.git` folder marks a repository root for Codex's search |
 | `links` | Optional. `{absolute path: where it really leads}`, for a path that is a symbolic link |

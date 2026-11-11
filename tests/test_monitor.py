@@ -1722,6 +1722,10 @@ def test_a_render_refuses_what_it_cannot_stand_behind_and_writes_nothing(tmp_pat
     assert "an event is an object with a hook_event_name" in refused(good | {"events": [{}]})
     mixed = good | {"events": [good["events"][0], good["events"][1] | {"session_id": "other"}]}
     assert "one session_id" in refused(mixed)
+    listed = good | {"events": [event | {"session_id": ["s"]} for event in good["events"]]}
+    assert "session_id is a non-empty string" in refused(listed)
+    tagged = good | {"rules": [RULES[0] | {"label": "attack"}, RULES[1]]}
+    assert "a rule holds id, tier and description, and nothing else" in refused(tagged)
     assert "files maps absolute paths to text" in refused(good | {"files": {"notes.md": "x"}})
     assert "unknown fields: label" in refused(good | {"label": "attack"})
     assert "view_id is a non-empty string" in refused(good | {"view_id": ""})
