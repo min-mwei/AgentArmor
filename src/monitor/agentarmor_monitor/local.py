@@ -2,11 +2,17 @@
 
 A gate asks the local server one thing: decide about this call of this session. It names the
 call by what the hook event carries (agent, session id, call id) and by the hash of the call
-it holds. It sends nothing else: no rules, no text about the session, and not the call's
-arguments, which the server reads from its own record of the session and checks against that
-hash. So what a caller says can never become policy, evidence or provenance.
+it holds, and gives this asking a name of its own (an attempt). It sends nothing else: no
+rules, no text about the session, and not the call's arguments, which the server reads from
+its own record of the session and checks against that hash. So what a caller says can never
+become policy, evidence or provenance.
 
 What comes back is a receipt: what was decided, and what it was decided on.
+
+Three things are kept apart, each recorded by whoever knows it. The server records the
+decision it issued. The gate records what it then did, which the server cannot know: a gate
+that gave up waiting has stopped the call whatever the server answers later. And what became
+of the call is whatever the hooks report afterwards. The attempt ties the first two together.
 
 The server is on this machine. A gate holds no credential for a decision model, reads none
 from a file or from the environment, and is refused any address that is not a loopback one.
@@ -16,6 +22,7 @@ operator turns it on.
 """
 
 import json
+import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,8 +34,9 @@ RECEIPT = "agentarmor-decision/v1"
 PORT = 8010  # the local server's own; 8009 is where a Kai service answers
 VERDICTS = ("abstain", "deny", "undecided")
 ON_ERROR = ("deny", "abstain")
-# What a gate sends: these five, and no others.
-ASKED = ("agent", "session_id", "tool_use_id", "call_sha256", "on_error")
+# What a gate sends: these six strings, and nothing else.
+ASKED = ("agent", "session_id", "tool_use_id", "call_sha256", "attempt", "on_error")
+BOUND = ASKED[:5]  # what a receipt must name as the gate named it
 
 
 class ServerUnavailable(Exception):
@@ -40,22 +48,27 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def question(agent, session, call_id, identity, on_error="deny"):
-    """What a gate asks about one proposed call. on_error is what it will do without a verdict:
-    the server keeps it with the record and decides nothing by it."""
+def question(agent, session, call_id, identity, on_error="deny", attempt=None):
+    """What a gate asks about one proposed call.
+
+    attempt names this asking, so that the decision the server records and what the gate then
+    does can be told to belong together; a new one is made unless one is given. on_error is
+    what the gate says it will do without a verdict: the server keeps it with its record and
+    decides nothing by it.
+    """
     asked = {"agent": agent, "session_id": session, "tool_use_id": call_id}
-    return asked | {"call_sha256": identity, "on_error": on_error}
+    asked |= {"call_sha256": identity, "attempt": attempt or secrets.token_hex(8)}
+    return asked | {"on_error": on_error}
 
 
 def bound_to(receipt, asked):
-    """Whether a receipt is about the call that was asked about, and well formed."""
+    """Whether a receipt is the answer to this asking about this call, and well formed."""
     if not isinstance(receipt, dict) or receipt.get("schema") != RECEIPT:
         return False
     if receipt.get("verdict") not in VERDICTS or receipt.get("policy_ready") is not False:
         return False
     bound = receipt.get("bound")
-    names = ("agent", "session_id", "tool_use_id", "call_sha256")
-    return isinstance(bound, dict) and all(bound.get(name) == asked[name] for name in names)
+    return isinstance(bound, dict) and all(bound.get(name) == asked[name] for name in BOUND)
 
 
 class Local:

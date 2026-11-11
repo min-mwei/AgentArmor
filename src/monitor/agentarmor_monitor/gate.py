@@ -54,6 +54,8 @@ WHY = {
     "no_decision_model": "no decision model is behind the local server",
     "incomplete": "Kai was shown incomplete evidence",
     "moved_on": "the session had moved on when the call was checked",
+    "log_unread": "the session's log could not be read to its end when the answer came",
+    "outcome_reported": "the call was already reported as run or refused when the answer came",
     "call_too_large": "the call is too large to show Kai whole",
     "policy_too_large": "the rules leave no room for the session",
     "kai_unavailable": "Kai did not answer",
@@ -127,16 +129,10 @@ def outcome(agent, session, call_id, why, summary=None):
     return record | provenance(summary)
 
 
-def keep(agent, payload, record, verdict, why, enforced):
-    """Append the gate's outcome for a call to its session's detections. Best effort."""
-    session, call_id = payload.get("session_id"), payload.get("tool_use_id")
+def keep(agent, session, record):
+    """Append a record to a session's detections. Best effort, and never raises."""
     if not isinstance(session, str) or not session:
         return
-    if record is None:  # Kai was never asked, and no summary was read: the outcome alone
-        record = outcome(agent, session, call_id, why)
-    record |= {"gate": True, "verdict": verdict, "enforced": enforced}
-    if why:
-        record["why"] = why
     try:
         directory = session_dir(agent, session)
         private_dir(directory)
@@ -145,13 +141,47 @@ def keep(agent, payload, record, verdict, why, enforced):
         note(agent, error, "keeping")
 
 
+def applied(agent, payload, asked, verdict, why, denied, on_error, receipt):
+    """Put on record what this gate did with one proposed call. Only a gate knows that.
+
+    The server records the decision it issued. Whether that decision arrived, and what was
+    then done, is recorded here, by the process that did it: a gate that stopped waiting has
+    stopped the call (or let it go, if it was set to) whatever the server answers later.
+    The two records share the attempt and the call's ids, so they can be laid side by side,
+    and only this one says "enforced". What became of the call afterwards is neither's to
+    say: that is what the hooks report next.
+    """
+    session, call_id = payload.get("session_id"), payload.get("tool_use_id")
+    if not isinstance(session, str) or not session:
+        return
+    asked = asked or {}
+    attempt = asked.get("attempt")
+    bound = (receipt or {}).get("bound") or {}
+    record = {"schema": SCHEMA, "ts": round(time.time(), 3), "status": "applied"}
+    record |= {"key": f"applied:{call_id if isinstance(call_id, str) else ''}:{attempt or ''}"}
+    record |= {"agent": agent, "session": session, "stage": "applied", "attempt": attempt}
+    record |= {"call_id": call_id if isinstance(call_id, str) else None}
+    try:  # the hash of the call this gate held, also when nothing else could be done with it
+        record["call_sha256"] = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
+    except Exception:
+        record["call_sha256"] = None
+    record |= {"verdict": verdict, "why": why, "on_error": on_error}
+    record |= {"enforced": "deny" if denied else "none", "receipt": receipt is not None}
+    # What the receipt was bound to, carried into the record: None where there was none.
+    record |= {"policy_sha256": (bound.get("policy") or {}).get("sha256")}
+    record |= {"evidence": bound.get("evidence"), "request_sha256": bound.get("request_sha256")}
+    record |= {"advisory": True, "policy_ready": False}
+    keep(agent, session, record)
+
+
 def examine(agent, raw, prepare, on_error):
-    """(verdict, why, payload, receipt) for one hook event.
+    """(verdict, why, payload, receipt, question) for one hook event.
 
     verdict is "observed" for an event that needs no check, else "abstain", "deny" or
     "undecided". prepare() gives the way to the local server and may fail: a gate that cannot
     start has checked nothing, so that is handled like any other check that was not completed.
-    receipt is the server's, or None when it gave none for this call.
+    receipt is the server's, or None when it gave none for this asking; question is what was
+    asked, or None when it never came to asking.
     """
     event, payload = read_event(raw)
     recorded = True
@@ -161,19 +191,19 @@ def examine(agent, raw, prepare, on_error):
         recorded = False
         note(agent, error, "recording")
     if event is not None and event != "PreToolUse":
-        return "observed", None, payload, None  # every other event is only observed
+        return "observed", None, payload, None, None  # every other event is only observed
     if payload is None:
-        return "undecided", "event", None, None
+        return "undecided", "event", None, None, None
     if not recorded:
-        return "undecided", "recording", payload, None
+        return "undecided", "recording", payload, None, None
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
     if not isinstance(session, str) or not session or not isinstance(call_id, str) or not call_id:
-        return "undecided", "event", payload, None
+        return "undecided", "event", payload, None, None
     try:
         server = prepare()
     except Exception as error:
         note(agent, error, "setup")
-        return "undecided", "setup", payload, None
+        return "undecided", "setup", payload, None, None
     # The call is named by the hash of what the gate holds. The server reads the call from
     # its own log of the session and decides only about one with this hash.
     identity = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
@@ -182,10 +212,10 @@ def examine(agent, raw, prepare, on_error):
         receipt = server.decide(asked)
     except Exception as error:  # no answer is not a pass
         note(agent, error, "server")
-        return "undecided", "server", payload, None
-    if not bound_to(receipt, asked):  # an answer about something else is no answer
-        return "undecided", "server", payload, None
-    return receipt["verdict"], receipt.get("why"), payload, receipt
+        return "undecided", "server", payload, None, asked
+    if not bound_to(receipt, asked):  # an answer to another asking is no answer to this one
+        return "undecided", "server", payload, None, asked
+    return receipt["verdict"], receipt.get("why"), payload, receipt, asked
 
 
 def check(agent, raw, prepare, on_error="deny"):
@@ -195,16 +225,17 @@ def check(agent, raw, prepare, on_error="deny"):
     starting or asking, is a check that was not completed.
     """
     try:
-        verdict, why, payload, receipt = examine(agent, raw, prepare, on_error)
+        verdict, why, payload, receipt, asked = examine(agent, raw, prepare, on_error)
     except Exception as error:
         note(agent, error, "failed")
-        verdict, why, payload, receipt = "undecided", "failed", None, None
+        verdict, why, payload, receipt, asked = "undecided", "failed", None, None, None
     if verdict == "observed":
         return None, 0
     denied = verdict == "deny" or (verdict == "undecided" and on_error != "abstain")
-    if receipt is None and payload is not None:
-        # The server kept nothing about this outcome, so the gate does: it stays countable.
-        keep(agent, payload, None, verdict, why, "deny" if denied else "none")
+    if payload is not None:
+        # What this gate does with the call, whether or not a receipt came: one such record
+        # for every call it handles, and the only one that says what was enforced.
+        applied(agent, payload, asked, verdict, why, denied, on_error, receipt)
     if not denied:
         return None, 0
     if verdict == "deny":
@@ -241,4 +272,4 @@ def main(args, prepare):
     return status
 
 
-__all__ = ["check", "denial", "keep", "main", "note", "outcome", "read", "run"]
+__all__ = ["applied", "check", "denial", "keep", "main", "note", "outcome", "read", "run"]

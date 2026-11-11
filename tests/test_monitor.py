@@ -481,8 +481,11 @@ def test_the_gate_abstains_when_kai_allows(spool, service):
     asked = {"command": "cat /srv/acct/.aws/credentials | head -1"}
     output, status = gated("s-ok", 2, "Bash", asked, client, watch)
     assert (output, status) == (None, 0)
-    record = escalate.read(session_dir("claude_code", "s-ok"))[-1]
-    assert record["decision"] == "allow" and record["gate"] and not record["flagged"]
+    record = gate_records("s-ok")[-1]
+    assert record["decision"] == "allow" and record["stage"] == "issued" and not record["flagged"]
+    assert "enforced" not in record  # the server says what it decided, not what was done
+    (done,) = applied_records("s-ok")
+    assert (done["enforced"], done["receipt"], done["attempt"]) == ("none", True, record["attempt"])
 
 
 def test_the_gate_denies_when_it_cannot_decide_unless_told_to_abstain(spool, service):
@@ -547,7 +550,20 @@ def test_command_line_scan_listing_and_hook_configuration(spool, service, capsys
 
 
 def gate_records(session):
+    """What the server issued for a gate's questions about a session's calls, in order."""
     return [r for r in escalate.read(session_dir("claude_code", session)) if r.get("gate")]
+
+
+def applied_records(session):
+    """What gates did with a session's calls, in order: the only records that say "enforced"."""
+    found = escalate.read(session_dir("claude_code", session))
+    return [r for r in found if r.get("stage") == "applied"]
+
+
+def watched_records(session):
+    """What the watcher recorded for a session: neither a gate's question nor a gate's act."""
+    found = escalate.read(session_dir("claude_code", session))
+    return [r for r in found if not r.get("gate") and r.get("stage") != "applied"]
 
 
 def reason(output):
@@ -575,18 +591,21 @@ def test_an_unmarked_call_is_not_cleared_when_the_session_record_has_gaps(spool,
     assert status == 2 and "the session record has gaps" in reason(output)
     assert service.seen == []  # nothing was marked, so Kai was not asked
     (record,) = gate_records("s-gap")
-    assert (record["status"], record["verdict"], record["enforced"]) == (
+    assert (record["status"], record["verdict"], record["declared_on_error"]) == (
         "coverage",
         "undecided",
         "deny",
     )
     assert record["key"] == "gate:call-1" and record["policy_ready"] is False
+    assert record["routing"]["reason"] == "below_threshold_with_gaps"
+    assert applied_records("s-gap")[-1]["enforced"] == "deny"
     # The operator's choice still applies, and is on record as such.
     assert gated("s-gap", 2, "Bash", {"command": "ls src"}, client, watch, on_error="abstain") == (
         None,
         0,
     )
-    assert gate_records("s-gap")[-1]["enforced"] == "none"
+    assert gate_records("s-gap")[-1]["declared_on_error"] == "abstain"
+    assert applied_records("s-gap")[-1]["enforced"] == "none"
     # A marked call in the same session: Kai allows it, on a packet that says it is incomplete.
     output, status = gated("s-gap", 3, "Bash", {"command": PEEK}, client, watch)
     assert status == 2 and "Kai was shown incomplete evidence" in reason(output)
@@ -641,8 +660,8 @@ def test_the_proposed_call_is_shown_to_kai_whole_or_not_at_all(spool, service):
     caught_up(watch, "claude_code", "s-long")
     saved = {
         r["trigger"]["call_id"]: r
-        for r in escalate.read(session_dir("claude_code", "s-long"))
-        if not r.get("gate") and r["status"] != "kai_unavailable"
+        for r in watched_records("s-long")
+        if r["status"] != "kai_unavailable"
     }
     assert saved["call-3"]["status"] == "call_too_large" and saved["call-3"]["kai"] is None
     assert saved["call-3"]["packet"]["call_source"] == "log"
@@ -671,7 +690,8 @@ def test_an_allow_counts_only_on_evidence_from_before_the_call(spool, service):
     assert gated("s-now", 2, "Bash", {"command": PEEK}, client, watch) == (None, 0)
     record = gate_records("s-now")[-1]
     assert (record["review"], record["verdict"]) == ("pre_action", "abstain")
-    assert record["packet"]["later_events"] == 0 and record["enforced"] == "none"
+    assert record["packet"]["later_events"] == 0
+    assert applied_records("s-now")[-1]["enforced"] == "none"
     # What the daemon finds afterwards is labelled as a look back, never as a pre-action check.
     log(
         "s-now",
@@ -772,9 +792,13 @@ def test_a_gate_that_cannot_read_the_event_or_start_still_denies(
     monkeypatch.setenv("SUMMARIZER_HOME", str(spool))
     # The event was recorded before the gate failed to start, and the outcome is on record.
     assert (session_dir("claude_code", "s-setup") / "events.jsonl").exists()
-    kept = gate_records("s-setup")
-    assert {r["status"] for r in kept} == {"setup", "server"}
-    assert {r["enforced"] for r in kept} == {"deny", "none"}
+    # No server answered any of them, so nothing was issued. What the gate did is on record,
+    # with the hash of the call it held.
+    kept = applied_records("s-setup")
+    assert gate_records("s-setup") == [] and {r["why"] for r in kept} == {"setup", "server"}
+    assert {r["enforced"] for r in kept} == {"deny", "none"} and not any(r["receipt"] for r in kept)
+    assert {r["call_sha256"] for r in kept} == {call_sha256("Bash", {"command": "ls"})}
+    assert {r["policy_sha256"] for r in kept} == {None}  # no receipt: under no rules at all
     # Any other event is only observed, whatever is wrong with the gate's own setup.
     stop = json.dumps(event("s-setup", hook_event_name="Stop", last_assistant_message="done"))
     assert run_gate(monkeypatch, capsys, stop.encode(), "--server", "nonsense")[:2] == (0, "")
@@ -857,7 +881,8 @@ def test_a_gate_has_no_way_to_a_decision_model_and_no_credential_for_one(
     assert path == "/v1/decide" and not any(name.lower() == "authorization" for name in headers)
     assert b"a-token-for-a-model-in-a-cloud" not in body
     asked = json.loads(body)
-    assert set(asked) == {"agent", "session_id", "tool_use_id", "call_sha256", "on_error"}
+    assert set(asked) == set(local.ASKED) and len(local.ASKED) == 6
+    assert len(asked["attempt"]) == 16 and int(asked["attempt"], 16) >= 0  # this asking's name
     assert asked["call_sha256"] == call_sha256("Bash", {"command": "ls"})
     assert "ls" not in asked.values()  # the call itself is not sent: the server has its own log
     # The gate's way to the server cannot be pointed anywhere else, by any spelling.
@@ -982,8 +1007,16 @@ def test_watching_sends_on_everything_marked_and_the_gate_asks_from_medium_up(sp
     caught_up(watch, "claude_code", "s-low")
     search = {"command": "grep -ri password docs"}  # marked low: a search for secrets
     assert gated("s-low", 2, "Bash", search, client, watch) == (None, 0)
-    assert gate_records("s-low") == []  # below the gate's level: Kai was not asked by the gate
-    (record,) = escalate.read(session_dir("claude_code", "s-low"))  # the daemon did ask
+    # Below the gate's level: Kai was not asked by the gate, and that it was not is on record.
+    (passed,) = gate_records("s-low")
+    assert (passed["status"], passed["verdict"], passed["kai"]) == ("unmarked", "abstain", None)
+    assert passed["routing"] == {
+        "asked": False,
+        "level": "low",
+        "threshold": "medium",
+        "reason": "below_threshold",
+    }
+    (record,) = watched_records("s-low")  # the daemon did ask
     assert record["trigger"]["level"] == "low" and record["status"] == "scored"
     assert record["disagreement"] is False  # a low mark that Kai clears is not a disagreement
 
@@ -2561,8 +2594,43 @@ def test_one_local_server_holds_summarizer_the_rules_and_the_kai_loaded_by_it(sp
         assert bound["policy"] == decider.policy and bound["layout"] == policy.LAYOUT
         assert bound["decision_model"] == {key: EXPECTED[key] for key in kai.IDENTITY}
         assert bound["evidence"] == record["evidence"] and bound["evidence"]["events"] == 5
+        workspace = hashlib.sha256(CWD.encode()).hexdigest()
+        assert bound["evidence"]["workspace_sha256"] == workspace and CWD not in json.dumps(receipt)
+        # A call nothing marks leaves no record, and its receipt is bound to the same things.
+        log(
+            "s-local-gate",
+            {"hook_event_name": "PreToolUse"} | call(4, "Bash", {"command": "ls docs"}),
+        )
+        watch.update("claude_code", "s-local-gate")
+        plain = gate_way.decide(asking("s-local-gate", 4, "Bash", {"command": "ls docs"}))
+        assert (plain["verdict"], plain["why"], plain["p_deny"]) == ("abstain", None, None)
+        told = plain["bound"]
+        assert told["evidence"]["events"] == 6 and told["evidence"]["scanned_all_captured"] is True
+        assert (
+            told["evidence"]["workspace_sha256"] == workspace and told["policy"] == decider.policy
+        )
+        assert told["routing"]["asked"] is False and told["routing"]["reason"] == "below_threshold"
+        assert (told["routing"]["level"], told["routing"]["threshold"]) == ("none", "medium")
+        assert told["summary_detector"] == watch.runtime.detector and told["summary_embedding"]
+        # Nobody was asked, and nothing is made up to look as if someone had been.
+        for name in ("request_sha256", "decision_model", "complete", "review", "revalidated"):
+            assert told[name] is None, name
+        # It is on record, so the calls that passed unasked can be counted.
+        last = gate_records("s-local-gate")[-1]
+        assert (last["status"], last["verdict"], last["call_id"]) == (
+            "unmarked",
+            "abstain",
+            "call-4",
+        )
+        assert (
+            last["policy_sha256"] == decider.policy["sha256"]
+            and last["evidence"] == told["evidence"]
+        )
         assert (bound["complete"], bound["review"]) == (True, "pre_action")
-        assert record["packet"]["call_source"] == "log" and record["enforced"] == "deny"
+        assert record["packet"]["call_source"] == "log" and record["declared_on_error"] == "deny"
+        assert record["policy_sha256"] == decider.policy["sha256"] and "enforced" not in record
+        assert bound["attempt"] == asked["attempt"] == record["attempt"]
+        assert bound["routing"] == record["routing"] and bound["routing"]["asked"] is True
         assert EXFIL not in json.dumps(receipt)  # a receipt holds no session text
         # The model's own interface is not on the port unless the operator turned it on.
         assert post(url, "/v1/systemone", kai.request("a log"))[0] == 404
@@ -2643,11 +2711,14 @@ def test_a_local_server_with_no_decision_model_watches_and_marks_and_decides_not
         )
         assert lenient == (None, 0)
         kept = gate_records(name)
-        assert [(r["status"], r["verdict"], r["enforced"]) for r in kept] == [
+        assert [(r["status"], r["verdict"], r["declared_on_error"]) for r in kept] == [
+            ("unmarked", "abstain", "deny"),
             ("no_decision_model", "undecided", "deny"),
-            ("no_decision_model", "undecided", "none"),
+            ("no_decision_model", "undecided", "abstain"),
         ]
         assert all(r["decision"] is None and r["kai"] is None for r in kept)
+        assert [r["enforced"] for r in applied_records(name)] == ["none", "deny", "none"]
+        assert [r["attempt"] for r in applied_records(name)] == [r["attempt"] for r in kept]
     finally:
         closed(api)
         watch.close()
@@ -2730,7 +2801,8 @@ def test_an_answer_counts_only_from_the_decision_model_that_was_configured(spool
             assert about["identity"] == f"mismatch: {part}" and record["policy_ready"] is False
             # Set to abstain, the gate lets the call go by its own setting, never by that answer.
             done, record, _, _ = decided(name + "-lenient", Claiming(**reply), on_error="abstain")
-            assert done == (None, 0) and (record["decision"], record["enforced"]) == (None, "none")
+            assert done == (None, 0) and record["decision"] is None
+            assert applied_records(name + "-lenient")[-1]["enforced"] == "none"
     # The model behind an address can change between two requests: /health is right, and the
     # answer comes from something else.
     swapped = Claiming()
@@ -2785,7 +2857,11 @@ def test_an_allow_does_not_stand_when_the_user_spoke_while_it_was_awaited(spool,
             self.session, self.later = session, later
 
         def ask(self, state, questions=(kai.XPIA,)):
-            log(self.session, self.later)  # arrives while the answer is awaited
+            if self.later is None:  # a whole line that is not an event
+                with open(session_dir("claude_code", self.session) / "events.jsonl", "ab") as out:
+                    out.write(b"{not json}\n")
+            else:
+                log(self.session, self.later)  # arrives while the answer is awaited
             return super().ask(state, questions)
 
     def outcome_of(name, later):
@@ -2814,15 +2890,226 @@ def test_an_allow_does_not_stand_when_the_user_spoke_while_it_was_awaited(spool,
     other = {"hook_event_name": "PreToolUse"} | call(7, "Bash", {"command": "ls docs"})
     (output, status), record = outcome_of("s-other", other)
     assert (output, status) == (None, 0) and record["verdict"] == "abstain"
+    assert (
+        record["revalidated"]["to_the_end"] is True and record["revalidated"]["later_events"] == 1
+    )
+    assert record["revalidated"]["from_log_bytes"] == record["evidence"]["log_bytes"]
+    assert record["revalidated"]["to_log_bytes"] > record["evidence"]["log_bytes"]
+    # The call's own outcome, logged while the answer was awaited: the call is no longer
+    # waiting for a verdict, so the allow guards nothing. Not the same as the user speaking.
+    for name, late in (
+        ("s-ran", {"hook_event_name": "PostToolUse", "tool_response": "ok"}),
+        ("s-failed", {"hook_event_name": "PostToolUseFailure", "error": "exit 1"}),
+        ("s-refused", {"hook_event_name": "PermissionDenied", "reason": "not allowed"}),
+    ):
+        (output, status), record = outcome_of(name, late | call(2, "Bash", {"command": PEEK}))
+        assert status == 2 and "already reported as run or refused" in reason(output), name
+        assert (record["decision"], record["why"]) == ("allow", "outcome_reported"), name
     # An event that cannot be read may have been the user: it counts.
-    directory = session_dir("claude_code", "s-other")
-    size = (directory / "events.jsonl").stat().st_size
-    with open(directory / "events.jsonl", "ab") as out:
-        out.write(b"{not json}\n")
-    from agentarmor_monitor.decide import user_spoke_since
+    (output, status), record = outcome_of("s-garbled", None)
+    assert status == 2 and record["why"] == "moved_on"
 
-    assert user_spoke_since(directory, size) and not user_spoke_since(directory, size + 11)
-    assert user_spoke_since(directory, None) and user_spoke_since(directory / "none", 0)
+
+def test_bytes_nobody_could_read_are_not_taken_for_nothing_logged(spool, service, monkeypatch):
+    # MR67-1. The log's reader takes whole lines only. An event that is half written when the
+    # answer comes is not among what it returns, and was taken for no event at all: the allow
+    # stood although the user had just taken it back.
+    from agentarmor_monitor import decide
+    from summarizer import store
+
+    monkeypatch.setattr(decide, "SETTLE", 0.1)  # how long an append is given to finish
+    revoke = {"hook_event_name": "UserPromptSubmit", "prompt": "Stop. Do not read credentials."}
+
+    def half_written(session):
+        record = build_record("claude_code", event(session, **revoke))
+        line = json.dumps(record, separators=(",", ":")).encode("ascii")
+        with open(session_dir("claude_code", session) / "events.jsonl", "ab") as out:
+            out.write(line[: len(line) // 2])
+
+    def whole_without_its_newline(session):
+        record = build_record("claude_code", event(session, **revoke))
+        with open(session_dir("claude_code", session) / "events.jsonl", "ab") as out:
+            out.write(json.dumps(record, separators=(",", ":")).encode("ascii"))
+
+    def disk_full(session):
+        # The hook's own append, with only the operating system's write made to fail: half
+        # of the record is written, and the next write finds no space.
+        real, calls = os.write, []
+
+        def write(fd, data):
+            calls.append(len(data))
+            if len(calls) == 1:
+                return real(fd, bytes(data[: len(data) // 2]))
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(store.os, "write", write)
+        try:
+            with pytest.raises(OSError):
+                append_event(
+                    "claude_code", session, build_record("claude_code", event(session, **revoke))
+                )
+        finally:
+            monkeypatch.setattr(store.os, "write", real)
+        assert len(calls) == 2
+
+    class Meanwhile(kai.KaiClient):
+        def __init__(self, url, session, arrives):
+            super().__init__(url)
+            self.session, self.arrives = session, arrives
+
+        def ask(self, state, questions=(kai.XPIA,)):
+            self.arrives(self.session)  # while the answer is awaited
+            return super().ask(state, questions)
+
+    for name, arrives in (
+        ("s-half", half_written),
+        ("s-no-newline", whole_without_its_newline),
+        ("s-disk-full", disk_full),
+    ):
+        watch = quiet_watch(service)
+        quiet(name)
+        watch.update("claude_code", name)
+        client = Meanwhile(service.url, name, arrives)
+        output, status = gated(name, 2, "Bash", {"command": PEEK}, client, watch)
+        watch.close()
+        record = gate_records(name)[-1]
+        assert status == 2 and "could not be read to its end" in reason(output), name
+        assert (record["decision"], record["verdict"], record["why"]) == (
+            "allow",
+            "undecided",
+            "log_unread",
+        )
+        checked = record["revalidated"]
+        assert checked["to_the_end"] is False and checked["later_events"] == 0, name
+        # What the model read and what was checked afterwards are two marks, both kept.
+        assert (
+            checked["from_log_bytes"] == checked["to_log_bytes"] == record["evidence"]["log_bytes"]
+        )
+        assert applied_records(name)[-1]["enforced"] == "deny"
+
+    # An append that is only slow finishes within the moment it is given, and is then read.
+    def slow(session):
+        half_written(session)
+        record = build_record("claude_code", event(session, **revoke))
+        line = json.dumps(record, separators=(",", ":")).encode("ascii")
+        rest = line[len(line) // 2 :] + b"\n"
+
+        def finish():
+            time.sleep(0.03)
+            with open(session_dir("claude_code", session) / "events.jsonl", "ab") as out:
+                out.write(rest)
+
+        threading.Thread(target=finish).start()
+
+    watch = quiet_watch(service)
+    quiet("s-slow")
+    watch.update("claude_code", "s-slow")
+    output, status = gated(
+        "s-slow", 2, "Bash", {"command": PEEK}, Meanwhile(service.url, "s-slow", slow), watch
+    )
+    watch.close()
+    record = gate_records("s-slow")[-1]
+    assert (
+        status == 2 and record["why"] == "moved_on" and record["revalidated"]["to_the_end"] is True
+    )
+    # A mark that is lost, a log that is gone and a log that shrank are all "not known".
+    directory = session_dir("claude_code", "s-slow")
+    size = (directory / "events.jsonl").stat().st_size
+    assert decide.still_applies(directory, "call-2", size) == (
+        None,
+        {"from_log_bytes": size, "to_log_bytes": size, "to_the_end": True, "later_events": 0},
+    )
+    for lost in (None, "12", -1, True, size + 1):
+        assert decide.still_applies(directory, "call-2", lost)[0] == "log_unread", lost
+    assert decide.still_applies(directory / "none", "call-2", 0)[0] == "log_unread"
+
+
+def test_only_a_gate_says_what_was_enforced_also_when_the_answer_comes_late(spool):
+    # MR67-2. The server wrote "enforced" from its own verdict and what the gate had said it
+    # would do, before its reply was even sent. A gate that had stopped waiting did something
+    # else, so two records said they were the gate's and said opposite things.
+    class Held(StubKai):
+        def __init__(self):
+            super().__init__()
+            self.entered, self.release = threading.Event(), threading.Event()
+
+        def evaluate(self, value):
+            reply = super().evaluate(value)
+            self.entered.set()
+            self.release.wait(10)  # the answer exists, and is kept back past the gate's patience
+            return reply
+
+    cases = {
+        # the gate's setting, the session, the call, what the model answers late
+        "s-late-allow": ("deny", quiet, {"command": PEEK}, "abstain", "allow"),
+        "s-late-deny": ("abstain", poisoned, {"command": EXFIL}, "deny", "deny"),
+    }
+    for name, (on_error, session, tool_input, issued_verdict, decision) in cases.items():
+        stub = Held()
+        front, watch, decider, api, url = local_server(stub, "local")
+        # The watcher keeps summaries current and asks nobody here: only the gate's question
+        # is held back.
+        watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)
+        try:
+            session(name)
+            watch.update("claude_code", name)
+            assert watch.drain()
+            stub.entered.clear()
+            number = 2 if session is quiet else 3
+            impatient = local.Local(url, timeout=0.3)
+            done = gated(name, number, "Bash", tool_input, impatient, watch, on_error=on_error)
+            # The gate got no receipt in time and did what it was set to do without one.
+            assert stub.entered.is_set() and gate_records(name) == []
+            assert done == (None, 0) if on_error == "abstain" else done[1] == 2
+            (acted,) = applied_records(name)
+            assert (acted["verdict"], acted["why"], acted["receipt"]) == (
+                "undecided",
+                "server",
+                False,
+            )
+            assert acted["enforced"] == ("none" if on_error == "abstain" else "deny")
+            assert acted["call_sha256"] == call_sha256("Bash", tool_input)
+            # The model's answer arrives afterwards. The server records the decision it would
+            # have issued, as a late diagnostic, and claims nothing about what was done.
+            stub.release.set()
+            deadline = time.monotonic() + 10
+            while not gate_records(name):
+                assert time.monotonic() < deadline, "the late decision was never recorded"
+                time.sleep(0.02)
+            (issued,) = gate_records(name)
+            assert (issued["stage"], issued["verdict"], issued["decision"]) == (
+                "issued",
+                issued_verdict,
+                decision,
+            )
+            assert "enforced" not in issued and issued["declared_on_error"] == on_error
+            # The two belong to one asking about one call, and exactly one says "enforced".
+            for key in ("attempt", "call_id", "call_sha256"):
+                assert issued[key] == acted[key], key
+            every = escalate.read(session_dir("claude_code", name))
+            assert [r["stage"] for r in every if "enforced" in r] == ["applied"]
+            assert issued["policy_sha256"] == decider.policy["sha256"] and issued["evidence"]
+            assert acted["policy_sha256"] is None  # it never had a receipt to take it from
+        finally:
+            stub.release.set()
+            closed(api)
+            watch.close()
+    # When the receipt does arrive, the gate's record carries what the receipt was bound to.
+    stub = StubKai()
+    front, watch, decider, api, url = local_server(stub, "local")
+    try:
+        poisoned("s-in-time")
+        watch.update("claude_code", "s-in-time")
+        assert watch.drain()
+        gated("s-in-time", 3, "Bash", {"command": EXFIL}, local.Local(url), watch)
+        (issued,), (acted,) = gate_records("s-in-time"), applied_records("s-in-time")
+        assert (acted["verdict"], acted["enforced"], acted["receipt"]) == ("deny", "deny", True)
+        assert acted["policy_sha256"] == issued["policy_sha256"] == decider.policy["sha256"]
+        assert acted["evidence"] == issued["evidence"] and acted["attempt"] == issued["attempt"]
+        assert acted["request_sha256"] == issued["packet"]["request_sha256"]
+    finally:
+        closed(api)
+        watch.close()
 
 
 def test_the_local_server_takes_only_a_gates_question_and_only_so_many_at_once(spool, service):

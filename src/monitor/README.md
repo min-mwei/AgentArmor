@@ -163,11 +163,11 @@ gate that is started with one of the options it used to have (a policy file, a l
 address, a token file) has not started: none of them is used, the call it guards is stopped
 with that reason, and every other event is still recorded.
 
-*What a gate sends* is five strings: the agent, the session id, the call id, the SHA-256 of
-the call it holds (tool name and arguments, as Summarizer's hook hashes them), and its
-`--on-error` setting, which the server keeps with the record. Not the arguments, no rules,
-no text. The server finds the call in its own log of the session and decides only about a
-call with that hash.
+*What a gate sends* is six strings: the agent, the session id, the call id, the SHA-256 of
+the call it holds (tool name and arguments, as Summarizer's hook hashes them), a name it
+makes up for this asking (the attempt), and its `--on-error` setting, which the server keeps
+with its record and decides nothing by. Not the arguments, no rules, no text. The server
+finds the call in its own log of the session and decides only about a call with that hash.
 
 *What comes back* is a receipt (`agentarmor-decision/v1`):
 
@@ -176,11 +176,29 @@ call with that hash.
 | `verdict` | `deny`: the decision model denied the call. `abstain`: nothing stands against it, so the agent's own permission flow applies. `undecided`: the check could not be completed |
 | `why` | For `undecided`, what kept it from being completed (the list below) |
 | `p_deny` | The decision model's probability of deny, when it was asked |
-| `bound` | What the verdict is about and rests on: the agent, session, call id and call hash asked about; `evidence` (how many events and bytes of the session's log had been read); `request_sha256`, the exact request the decision model was given; `policy` (the rules by id, and a hash of all of them) and `layout`; `decision_model` (the model, readout and package that answered); `complete` and `review`; and what embedded and marked the summary |
+| `bound` | What the verdict is about and rests on: the agent, session, call id, call hash and attempt asked about; `evidence` (how many events and bytes of the session's log had been read, whether all of it was scanned, and a hash of the workspace); `routing` (whether the decision model was asked, the level the call was marked at, the threshold, and why); `revalidated` (for an allow: how far the log was read again when the answer came, and whether that was its end); `request_sha256`, the exact request the decision model was given; `policy` (the rules by id, and a hash of all of them) and `layout`; `decision_model` (the model, readout and package that answered); `complete` and `review`; and what embedded and marked the summary. Where the decision model was not asked, as for a call nothing marks, the request, the model and `complete` are null: nothing is made up to look like a request |
 | `policy_ready` | false, always |
 
-A receipt holds no session text. A gate uses one only if it is about the very call it asked
-about.
+A receipt holds no session text. A gate uses one only if it answers the very asking it made
+about the very call it holds.
+
+**Three things, recorded by whoever knows them.**
+
+1. *The decision as issued*, by the server: a record with `stage: issued` for every question
+   it answers, a call nothing marks included (`status: unmarked`), so the calls that passed
+   without Kai can be counted. It has the verdict, the attempt, the call's id and hash, the
+   hash of the rules, the evidence it read, and `declared_on_error`: what the gate said it
+   would do without a verdict. It never says what was enforced. The server cannot know.
+2. *What the gate did*, by the gate: a record with `stage: applied` for every call it
+   handles, with `enforced` (`deny` or `none`), whether a receipt came, and what that receipt
+   was bound to. A gate that stopped waiting has stopped the call, or let it go if it was set
+   to, whatever the server answers later: the late answer is on record as issued, and only
+   this record says what happened at the gate.
+3. *What became of the call*, by the hooks: the result, failure or refusal that the session's
+   log reports afterwards. A call that was let through is not thereby a call that ran.
+
+The attempt and the call's ids tie the first two together. Count enforcement from the
+`applied` records alone.
 
 The server asks Kai from "medium" up (`--gate-level`): a denial blocks a call, and Kai's
 decisions on real calls are unmeasured.
@@ -205,9 +223,12 @@ decisions on real calls are unmeasured.
     what answers is not the model that was configured;
   - the call is too large to show Kai whole within `--max-chars`;
   - Kai allowed it on a packet that left key evidence out, or that already held events from
-    after the call (calls proposed side by side can do this), or the user made a request or
-    answered a question while Kai's answer was awaited: what the user said then is not in
-    what Kai read.
+    after the call (calls proposed side by side can do this);
+  - Kai allowed it, and the allow no longer applied when it came. Every byte the session
+    logged while the answer was awaited is read again: the user made a request or answered a
+    question (what the user said then is not in what Kai read), the hooks already report the
+    call as run, failed or refused, or the log could not be read to its end, as when an event
+    is half written or the disk filled up. Another call proposed meanwhile changes nothing.
 
   `--on-error abstain` lets all of these through instead. Either way the outcome is appended
   to the session's detections with what was enforced, so default denials can be counted.
@@ -510,9 +531,10 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `layout` | What Kai was given, by name: the state's layout (`agentarmor-state/v1`) and the packet's schema (`summarizer/v2`). A change to either is a change to Kai's input |
 | `summary_embedding` | What the summary says embedded it: backend, model, revision, device, precision, vector size, probe version and whether the probes are calibrated. Copied from the summary the request was built from, which for the daemon is the copy queued with the trigger, never from what is running later. It sits beside the request, never inside it, so request ids do not depend on it. `null` when no summary was read or the summary does not say. It traces what was reported and pins neither weights nor probes |
 | `summary_detector` | What the summary says marked it: a version and hashes of Summarizer's wording rules, of its priors and levels, and of its source. The same session marked under other rules can build a different packet. Copied from the same summary as `summary_embedding`, and like it beside the request, never inside it. `null` when the summary does not say, as with summaries made before Summarizer named its detectors; a hash the summary gives as unknown stays `null` |
-| `status` | `scored`; `kai_unavailable` and `kai_mismatch` (what answered is not the configured model, with the part that differed in `error`), both retried by the watcher; `kai_rejected`; `call_too_large` or `policy_too_large` (nothing was sent); and for a gate outcome without a Kai request, the reason (`no_summary`, `coverage`, `no_decision_model`, `busy`, `server`, `setup`, `recording`, `event`) |
-| `gate`, `verdict`, `why`, `enforced` | Present when a gate asked about the call: the verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing, and what a gate with the `--on-error` it declared does with that (`deny`, or `none`). The server writes the record; when it gave no receipt, the gate writes the outcome itself |
-| `evidence` | On a gate's record: how far the session's log had been read when the decision was made (`events`, `log_bytes`). An allow stands only if the user said nothing after that point |
+| `status` | `scored`; `kai_unavailable` and `kai_mismatch` (what answered is not the configured model, with the part that differed in `error`), both retried by the watcher; `kai_rejected`; `call_too_large` or `policy_too_large` (nothing was sent); for a gate's question that was answered without a Kai request, `unmarked` or the reason (`no_summary`, `coverage`, `no_decision_model`, `busy`); and `applied` on the gate's own record of what it did |
+| `gate`, `stage: issued`, `attempt`, `verdict`, `why`, `declared_on_error` | On the server's record of a decision it issued for a gate's question: the verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing (also `moved_on`, `log_unread`, `outcome_reported` for an allow that no longer applied), and what the gate said it would do without a verdict. With `call_id`, `call_sha256` and `policy_sha256`. Never `enforced` |
+| `stage: applied`, `enforced`, `receipt`, `on_error` | On the gate's record of what it did with a call: `enforced` is `deny` or `none`; `receipt` says whether the server's answer arrived; `why` is the server's reason or the gate's own (`server`, `setup`, `recording`, `event`). With the attempt, the call's id and hash, and from the receipt the hash of the rules, the evidence and the request's hash, null where no receipt came. The only record that says what was enforced |
+| `evidence`, `routing`, `revalidated` | On the server's record: how far the session's log had been read when the decision was made (`events`, `log_bytes`), whether all of it was scanned and a hash of the workspace; whether Kai was asked, at which level and threshold and why; and for an allow, how far the log was read again when the answer came and whether that was its end |
 
 The packet text is not copied into the record; it can be rebuilt from the summary. When a gate
 and the daemon both ask about one call, the answer stands: a later note that Kai could not be
