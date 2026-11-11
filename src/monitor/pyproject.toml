@@ -11,14 +11,16 @@ requires-python = ">=3.11,<3.14"
 # required dependencies; its embedding model comes with the "model" extra.
 # Summarizer is pinned to the commit this monitor was reviewed against. Older ones do not say
 # when a call's proposal was not observed, write an event's text to the hook's error log, do
-# not say what marked a summary, and cannot replay a session without asking the machine.
+# not say what marked a summary, cannot replay a session without asking the machine, and
+# stop summarizing a session whose text holds a string the embedding model takes for a
+# control token such as "<|image|>".
 dependencies = [
-    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@542b9d63606bb5f16e469d72ee530bb8ab678321",
+    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@61461bcf59db6b5b0d3a089e37b89fcdb909fafa",
     "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]
-model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@542b9d63606bb5f16e469d72ee530bb8ab678321"]
+model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@61461bcf59db6b5b0d3a089e37b89fcdb909fafa"]
 
 [project.scripts]
 agentarmor-monitor = "agentarmor_monitor.cli:main"
