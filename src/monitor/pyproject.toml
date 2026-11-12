@@ -17,12 +17,12 @@ requires-python = ">=3.11,<3.14"
 # cuts short, quotes a command without the colon or spaces it begins with, and can neither
 # embed nor show as UTF-8 a text that holds half a surrogate pair.
 dependencies = [
-    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@fbe608d7f509d1d3249f19a532d5b94098119716",
+    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@08b4e40c588ebed7ec2a5bf4f392bbf9ceef95c0",
     "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]
-model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@fbe608d7f509d1d3249f19a532d5b94098119716"]
+model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@08b4e40c588ebed7ec2a5bf4f392bbf9ceef95c0"]
 
 [project.scripts]
 agentarmor-monitor = "agentarmor_monitor.cli:main"
