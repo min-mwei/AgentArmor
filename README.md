@@ -112,7 +112,7 @@ context, and Kai answers allow or deny. Kai is loaded in the same server or reac
 be a host in a cloud:
 
 ```sh
-.venv/bin/pip install ./src/vllm './src/monitor[model]'
+.venv/bin/pip install ./src/vllm './src/summarizer[runtime]' ./src/monitor
 .venv/bin/agentarmor-monitor serve --kai-package /path/to/kai-export          # Kai in the local server
 .venv/bin/agentarmor-monitor serve --kai-url https://kai.example.com \
     --kai-package-sha256 "$PACKAGE" \

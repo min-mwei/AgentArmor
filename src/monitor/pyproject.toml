@@ -7,26 +7,19 @@ name = "agentarmor-monitor"
 version = "0.1.0"
 description = "Run Summarizer as the local session monitor and send suspicious activity to Kai"
 requires-python = ">=3.11,<3.14"
-# The monitor talks to Kai over HTTP with the standard library. Summarizer's own package has no
-# required dependencies; its embedding model comes with the "model" extra.
-# Summarizer is pinned to the commit this monitor was reviewed against. Older ones do not say
-# when a call's proposal was not observed, write an event's text to the hook's error log, do
-# not say what marked a summary, cannot replay a session without asking the machine, and
-# stop summarizing a session whose text holds a string the embedding model takes for a
-# control token such as "<|image|>". The one before the last does not count the lines a packet
-# cuts short, quotes a command without the colon or spaces it begins with, and can neither
-# embed nor show as UTF-8 a text that holds half a surrogate pair. The last one (08b4e40) cuts
-# a text longer than the encoder's window without saying so, takes the probe numbers beside a
-# model directory on trust, gives a result that repeats an earlier text to no call after the
-# ninth time, ranks a tool's member names as a call's outcome, and cannot say whether a
-# summary was made by the model that is running. Kai's board was told before this pin moved.
+# The monitor talks to Kai over HTTP with the standard library. Summarizer is this
+# repository's own library (src/summarizer): install it from there first, then this package.
+#     pip install -e src/summarizer -e src/monitor
+# It has no required dependencies; its embedding model comes with its "runtime" extra. No
+# version is pinned here because the two are one checkout: a build is named by its commit.
+# Kai's board was told before the monitor moved off the external pin (2026-11-13).
 dependencies = [
-    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@38e5bc64254bc777662e9e9499c7ba3edea8d802",
+    "summarizer",
     "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]
-model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@38e5bc64254bc777662e9e9499c7ba3edea8d802"]
+model = ["summarizer[runtime]"]
 
 [project.scripts]
 agentarmor-monitor = "agentarmor_monitor.cli:main"

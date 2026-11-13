@@ -241,7 +241,7 @@ record. An incomplete history never inherits readiness from the current session.
   words, `summarizer index status`, and `Index.like()` for the exact scan by vector, which
   only compares vectors one encoder made.
 - The lookup (`summarizer.history`) is reviewed and measured offline. No server calls it.
-- The monitor still installs Summarizer `38e5bc6`. Its tests pass against the tree here.
+- The monitor now installs the Summarizer of this tree (2026-11-13; Kai's board was told first). The 480 packets of development file 002 render byte for byte as they did with the separate package. Its live packet is still the single-session digest.
 - Not built: `marks`, `removed`, compaction, retention, and candidates in a packet. No
   search result reaches Kai yet.
 

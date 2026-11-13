@@ -48,7 +48,7 @@ Summarizer's `docs/model-plan.md` reviews where those misses are and what is pla
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install './src/monitor[model]'
+.venv/bin/pip install './src/summarizer[runtime]' ./src/monitor
 ```
 
 `[model]` brings Summarizer's embedding runtime (Torch). Without it the server can run with
