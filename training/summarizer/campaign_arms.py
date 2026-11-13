@@ -114,16 +114,20 @@ def views_of(laid, summaries, budget):
     }
 
 
-def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS):
+def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None):
     """One record for each run and arm: the packet of the first replay with what the
-    scorer found of it, and how the arm's packet fared in every replay of the run."""
+    scorer found of it, and how the arm's packet fared in every replay of the run.
+
+    variants are the replays to run, all of them unless named. Rendering requests from the
+    first replay alone (the session as it is, in one memory) gives the same packets and
+    the same scores of them; only the counts across replays are then of one replay."""
     rows = []
     for campaign in campaigns:
         story = campaign.get("story") or {}
         for agent in agents:
             laid = cc.layout(campaign, agent)
             replays = []
-            for variant in cc.VARIANTS:
+            for variant in variants or cc.VARIANTS:
                 summaries, _ = cc.replay(laid, runtime, **variant)
                 built = views_of(laid, summaries, budget)
                 scores = {arm: cc.score(laid, summaries, built[arm], budget, RULES) for arm in ARMS}
@@ -527,6 +531,13 @@ def main(argv=None):
     write.add_argument("--out", required=True, help="a new folder for the packets; never tracked")
     write.add_argument("--budget", type=int, default=3000)
     write.add_argument("--embedder", choices=("hash", "embeddinggemma"), default="hash")
+    write.add_argument(
+        "--replays",
+        choices=("all", "first"),
+        default="all",
+        help="first: the session as it is, in one memory, and no other replay (for rendering "
+        "requests; the encoder is run again over a whole session at every event otherwise)",
+    )
     scoring = commands.add_parser("score", help="count what the model answered")
     scoring.add_argument("out", help="the folder a write filled")
     scoring.add_argument("--answers", required=True, help="a JSON Lines file of answers")
@@ -552,13 +563,15 @@ def main(argv=None):
         before = {"code": cc.code_version(), "source_sha256": _sha256(args.campaigns)}
         before["package"] = str(Path(summarizer.__file__).resolve().parent)
         runtime = Runtime(create(args.embedder))
-        rows = packets(campaigns, runtime, args.budget)
+        variants = cc.VARIANTS[:1] if args.replays == "first" else None
+        rows = packets(campaigns, runtime, args.budget, variants=variants)
         after = {"code": cc.code_version(), "source_sha256": _sha256(args.campaigns)}
         if any(before[name] != after[name] for name in after):
             raise SystemExit("write: the code or the campaign file changed while this ran")
         write_jsonl(out / "packets.jsonl", rows)
         roster = roster_of(rows, _sha256(out / "packets.jsonl"), before["source_sha256"])
         roster |= {"scorer": cc.SCORERS[RULES], "code": before["code"]}
+        roster["replays"] = args.replays
         roster["package"] = before["package"]
         # What made the summaries: the encoder, its revision, device, number type and
         # policy, the probes and the detector. A measurement names it and is held to it.
