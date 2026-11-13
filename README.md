@@ -134,9 +134,9 @@ python3 -m venv .venv
 .venv/bin/agentarmor doctor
 ```
 
-[Codex](agents/codex_code/README.md) and [Claude Code](agents/claude_code/README.md) templates invoke the installed
-CLI by absolute path. They are development placeholders: synchronous checks deny actions, and background events
-report incomplete observations.
+The [Codex](agents/codex_code/README.md) and [Claude Code](agents/claude_code/README.md) guides install the
+hooks: one generated configuration for each agent, the monitor's gate in shadow mode. Templates that deny every
+call without a model are kept beside them in `fixture/`, for tests only.
 
 The [path-policy reference](docs/policy_paths.md) describes deterministic path and quantity facts in `src/hostfacts`.
 These facts support policy evaluation; they do not authorize actions on their own.

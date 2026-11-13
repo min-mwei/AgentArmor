@@ -213,7 +213,7 @@ record. An incomplete history never inherits readiness from the current session.
 | Today there are two | There will be one |
 |---|---|
 | A Summarizer the monitor installs from another repository, and the tree here | The tree here. The monitor depends on it by path |
-| Hook templates under `agents/` and under `src/summarizer/agents/` | `agents/`, installing the observer and the gate together |
+| Hook templates under `agents/` and under `src/summarizer/agents/` | Done: `agents/` holds the one generated installation (the gate, in shadow, in the observer's place); the deny-all templates are in `agents/*/fixture`, test only |
 | `summarizer doctor` and `agentarmor-monitor doctor` | The monitor's report calls the core's; each fact is read in one place |
 | Two test suites with helper modules of the same names | One runner; the helpers are named for their component |
 | Two definitions of a completed Kai read (Kai's retention tool and the campaign tool) | One verifier, imported by both |

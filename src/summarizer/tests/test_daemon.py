@@ -7,7 +7,6 @@ import sys
 import threading
 import time
 import tomllib
-from pathlib import Path
 
 import pytest
 from sessions import ATTACKER, CWD, Script, attack, benign
@@ -18,8 +17,6 @@ from summarizer.embedder import HashEmbedder
 from summarizer.events import evidence
 from summarizer.store import SUMMARY, list_sessions, load_summary, session_dir
 from summarizer.summarize import Runtime
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def send(events, agent="claude_code"):
@@ -231,18 +228,16 @@ def test_doctor_reports_setup(home):
 
 
 @pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
-def test_hook_templates_match_the_generator(agent):
-    placeholder = "/ABSOLUTE/PATH/summarizer-hook"
-    config = cli.hooks_config(agent, placeholder)
-    name = "settings.json.example" if agent == "claude_code" else "hooks.json.example"
-    assert json.loads((ROOT / "agents" / agent / name).read_text()) == config
+def test_the_generated_hooks_cover_every_event_once(agent):
+    # The installable examples live in the repository's agents/ folder and are checked
+    # there against the monitor's generator; this is the catalogue they are made from.
+    config = cli.hooks_config(agent, "/ABSOLUTE/PATH/summarizer-hook")
     for event, groups in config["hooks"].items():
         (handler,) = groups[0]["hooks"]
         assert handler["type"] == "command" and "async" not in handler
         assert ("timeout" in handler) == (event != "SessionEnd")
     if agent == "codex_code":
-        toml = tomllib.loads((ROOT / "agents" / agent / "config.toml.example").read_text())
-        assert toml == config
+        assert tomllib.loads(cli.hooks_toml(config)) == config
 
 
 def test_hooks_config_prints_the_installed_hook(home):

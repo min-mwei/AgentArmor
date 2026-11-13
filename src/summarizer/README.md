@@ -55,8 +55,9 @@ absolute path; merge them into the agent's own settings yourself:
 .venv/bin/summarizer hooks-config --agent codex_code      # save as ~/.codex/hooks.json
 ```
 
-See [agents/claude_code](agents/claude_code/README.md) and
-[agents/codex_code](agents/codex_code/README.md) for details. To read summaries:
+That is the plain observer. The installation for a product, with the gate, is in the
+repository's [agents/claude_code](../../agents/claude_code/README.md) and
+[agents/codex_code](../../agents/codex_code/README.md). To read summaries:
 
 ```sh
 .venv/bin/summarizer list                      # sessions, how many entries are marked, freshness

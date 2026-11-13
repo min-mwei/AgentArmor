@@ -1,39 +1,69 @@
-# Merge into a trusted project's .codex/config.toml or ~/.codex/config.toml.
-# Replace /ABSOLUTE/PATH/agentarmor with the trusted installed executable.
-# Hook policy evaluation is unqualified: synchronous checks currently deny.
-# Install this inline configuration OR hooks.json.example, once.
-[features]
-hooks = true
+[[hooks.SessionStart]]
 
-[[hooks.PreToolUse]]
-matcher = ".*"
-
-[[hooks.PreToolUse.hooks]]
-type = "command"
-command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
-timeout = 30
-statusMessage = "Checking AgentArmor policy readiness"
-
-[[hooks.PostToolUse]]
-matcher = ".*"
-
-[[hooks.PostToolUse.hooks]]
-type = "command"
-command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
-timeout = 120
-async = true
+[[hooks.SessionStart.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
 
 [[hooks.UserPromptSubmit]]
 
 [[hooks.UserPromptSubmit.hooks]]
-type = "command"
-command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
-timeout = 120
-async = true
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.PreToolUse]]
+
+[[hooks.PreToolUse.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.PermissionRequest]]
+
+[[hooks.PermissionRequest.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.PostToolUse]]
+
+[[hooks.PostToolUse.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.SubagentStart]]
+
+[[hooks.SubagentStart.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.SubagentStop]]
+
+[[hooks.SubagentStop.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
 
 [[hooks.Stop]]
 
 [[hooks.Stop.hooks]]
-type = "command"
-command = '"/ABSOLUTE/PATH/agentarmor" hook --agent codex_code'
-timeout = 30
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.PostCompact]]
+
+[[hooks.PostCompact.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60
+
+[[hooks.SessionEnd]]
+
+[[hooks.SessionEnd.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/agentarmor-monitor" gate --shadow --agent codex_code'
+timeout = 60

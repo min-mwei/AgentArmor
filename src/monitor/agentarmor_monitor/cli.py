@@ -445,40 +445,49 @@ def _gates(args):
     return 0
 
 
-def _hooks(args):
-    from summarizer.cli import hook_path, hooks_config, hooks_toml
+def hooks(agent, hook=None, gate=None, shadow=False, failure_block=True):
+    """The hooks block that installs this monitor for an agent: the one place it is made.
 
-    config = hooks_config(args.agent, args.hook or hook_path())
-    if args.gate:  # the gate records every event itself, so it replaces the observer hook
-        config = hooks_config(args.agent, args.gate)
-        for event, groups in config["hooks"].items():
-            for handler in groups[0]["hooks"]:
-                words = "gate --shadow" if args.shadow else "gate"
-                if "args" in handler:
-                    handler["args"] = [*words.split(), *handler["args"]]
-                else:
-                    handler["command"] = handler["command"].replace(
-                        f'"{args.gate}"', f'"{args.gate}" {words}'
-                    )
-                handler["timeout"] = (
-                    max(handler.get("timeout", 0), 60) if "timeout" in handler else 60
-                )
-                # The one handler that decides. Every other event is only recorded, and a
-                # recording that fails must not stop the agent.
-                # A shadow gate stops nothing, so it must not stop a call by failing either.
-                blocks = args.failure_block and not args.shadow
-                if event == "PreToolUse" and args.agent == "claude_code" and blocks:
-                    handler["onFailure"] = "block"
-        if args.shadow:
-            print(
-                "agentarmor-monitor: a shadow gate stops nothing. It asks the local server "
-                "about every call and records what it would have answered.",
-                file=sys.stderr,
-            )
-        else:
-            _say_what_a_failed_hook_does(args)
-    elif args.shadow:
-        raise SystemExit("hooks-config: --shadow is a setting of the gate: give --gate as well")
+    Without a gate it is the plain observer. With one, the gate takes the observer's place
+    on every event, because it records each event itself: the two are never installed side
+    by side, or every event would be logged twice. A shadow gate stops nothing.
+    """
+    from summarizer.cli import hook_path, hooks_config
+
+    if not gate:
+        if shadow:
+            raise SystemExit("hooks-config: --shadow is a setting of the gate: give --gate as well")
+        return hooks_config(agent, hook or hook_path())
+    config = hooks_config(agent, gate)
+    words = "gate --shadow" if shadow else "gate"
+    for event, groups in config["hooks"].items():
+        for handler in groups[0]["hooks"]:
+            if "args" in handler:
+                handler["args"] = [*words.split(), *handler["args"]]
+            else:
+                handler["command"] = handler["command"].replace(f'"{gate}"', f'"{gate}" {words}')
+            handler["timeout"] = max(handler.get("timeout", 0), 60) if "timeout" in handler else 60
+            # The one handler that decides. Every other event is only recorded, and a
+            # recording that fails must not stop the agent.
+            # A shadow gate stops nothing, so it must not stop a call by failing either.
+            blocks = failure_block and not shadow
+            if event == "PreToolUse" and agent == "claude_code" and blocks:
+                handler["onFailure"] = "block"
+    return config
+
+
+def _hooks(args):
+    from summarizer.cli import hooks_toml
+
+    config = hooks(args.agent, args.hook, args.gate, args.shadow, args.failure_block)
+    if args.gate and args.shadow:
+        print(
+            "agentarmor-monitor: a shadow gate stops nothing. It asks the local server "
+            "about every call and records what it would have answered.",
+            file=sys.stderr,
+        )
+    elif args.gate:
+        _say_what_a_failed_hook_does(args)
     print(hooks_toml(config) if args.toml else json.dumps(config, indent=2))
     return 0
 

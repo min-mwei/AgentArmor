@@ -1,63 +1,38 @@
-# Claude Code integration
+# Claude Code: installing AgentArmor's hooks
 
-> **These templates are a development fixture.** They call `agentarmor hook`, which
-> denies every tool call and asks no model. To have Summarizer watch a session and Kai
-> decide, use the [local monitor](../../src/monitor/README.md) and the hooks it prints
-> (`agentarmor-monitor hooks-config`), described at the end of this page.
+One installation, made by one command. `agentarmor-monitor hooks-config` prints the hooks for
+Claude Code with the installed program's own path in them; [settings.json.example](settings.json.example) in this folder is what it
+prints with a placeholder path, kept equal to it by a test.
 
-[settings.json.example](settings.json.example) invokes the installed Python CLI:
+**Start in shadow.** A shadow gate stops nothing: for every proposed call it asks the local
+server and records what it would have answered. Nothing here is qualified to allow or deny on
+its own yet (`policy_ready` is false), so shadow is the mode to install.
 
-```sh
-"/absolute/path/to/agentarmor" hook --agent claude_code
-```
+1. Install the monitor in a trusted virtual environment and start its server, as the
+   [monitor's guide](../../src/monitor/README.md) describes.
+2. Print the hooks with the absolute path of the installed program:
 
-Install with `python3 -m pip install ./src/vllm` in a trusted virtual environment.
-The entry point uses that environment’s Python interpreter and does not import
-vLLM, Torch, or a GPU runtime. See the [root guide](../../README.md).
-See the [Claude Code hook contract](https://code.claude.com/docs/en/hooks).
+   ```sh
+   agentarmor-monitor hooks-config --agent claude_code --gate "$(command -v agentarmor-monitor)" --shadow
+   ```
 
-**Current status:** hook policy evaluation is unqualified. Every
-`PreToolUse` check returns an explicit denial and exit code 2. Observation hooks
-report incomplete coverage; they do not scan files, tool output, or logs yet.
-The CLI does not call the diagnostic model service.
-These templates are for integration development and will block normal tool use.
-`agentarmor doctor` reports `policy_ready: false`.
+3. Merge the printed `hooks` entries into `~/.claude/settings.json`, keeping what is already there.
+4. Restart Claude Code and review the registered commands with `/hooks`.
 
-1. Find the installed executable's absolute path with `command -v agentarmor`.
-   Replace `/ABSOLUTE/PATH/agentarmor` in the template with that trusted path.
-   Keep its quotes so paths containing spaces work.
-2. Merge the `hooks` entries into your user settings at
-   `~/.claude/settings.json` or a reviewed `.claude/settings.json`. Preserve
-   existing settings and avoid duplicate entries. Prefer user-level or managed
-   settings outside an untrusted repository.
-3. Restart Claude Code and inspect the configured commands with `/hooks`.
+**What is installed.** One handler for each event that carries session evidence (14 kinds:
+prompts, proposed calls, results and failures, compaction, session start and end). The gate
+records every event itself and, on a proposed call, asks the server. It takes the place of the
+plain observer: do not install the observer beside it, or every event is logged twice. A hook
+process loads no model and uses the standard library only.
 
-Check the command directly before enabling the template:
+**Other forms the same command prints.**
 
-```sh
-printf '%s\n' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pwd"}}' \
-  | /absolute/path/to/agentarmor hook --agent claude_code
-```
+- Without `--gate`: the plain observer (`summarizer-hook`), which records and never answers.
+- With `--gate` and without `--shadow`: a gate whose answer is acted on. For Claude Code it sets `onFailure: block` on the proposed-call handler, so a gate that cannot run stops the call. Do not install
+  it as protection while `policy_ready` is false.
 
-Expect `hookSpecificOutput.permissionDecision: deny` and exit code 2. A future
-qualified allow must emit no permission decision and preserve Claude Code's
-existing permission flow. The CLI also handles `PermissionRequest` denials,
-but expanding template coverage requires client-version qualification.
+Prefer user-level or managed settings over a repository's own: a repository you do not control
+should not decide what runs on your machine.
 
-`PostToolUse` and `UserPromptSubmit` are asynchronous; `Stop` is synchronous to
-permit a future durable handoff before exit. Currently all three return only an
-incomplete-observation message. Post-effect scans remain advisory even after
-implementation. Trusted policy/session assembly, authenticated transport, and exact content
-snapshots remain prerequisites for connecting the hooks to model-backed enforcement.
-See the [vLLM qualification requirements](../../src/vllm/README.md#qualification).
-
-## Connecting sessions to Kai
-
-The templates above are the placeholder that denies every call. To have Summarizer watch a
-session and Kai decide about what it flags, use the [local monitor](../../src/monitor/README.md)
-and the hooks it prints:
-
-```sh
-agentarmor-monitor hooks-config --agent claude_code
-agentarmor-monitor hooks-config --agent claude_code --gate /absolute/path/to/agentarmor-monitor
-```
+The [fixture](fixture/README.md) folder holds templates that deny every call without asking a
+model. They are for testing the hook entry point and are not an installation.

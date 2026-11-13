@@ -1,14 +1,45 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
-            "timeout": 30,
-            "statusMessage": "Checking AgentArmor policy readiness"
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
           }
         ]
       }
@@ -18,22 +49,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
-            "timeout": 120,
-            "async": true
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
           }
-        ],
-        "matcher": ".*"
+        ]
       }
     ],
-    "UserPromptSubmit": [
+    "SubagentStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
-            "timeout": 120,
-            "async": true
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
           }
         ]
       }
@@ -43,8 +82,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
-            "timeout": 30
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor-monitor\" gate --shadow --agent codex_code",
+            "timeout": 60
           }
         ]
       }

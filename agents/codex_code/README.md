@@ -1,64 +1,38 @@
-# Codex integration
+# Codex: installing AgentArmor's hooks
 
-> **These templates are a development fixture.** They call `agentarmor hook`, which
-> denies every tool call and asks no model. To have Summarizer watch a session and Kai
-> decide, use the [local monitor](../../src/monitor/README.md) and the hooks it prints
-> (`agentarmor-monitor hooks-config`), described at the end of this page.
+One installation, made by one command. `agentarmor-monitor hooks-config` prints the hooks for
+Codex with the installed program's own path in them; [hooks.json.example](hooks.json.example) and [config.toml.example](config.toml.example) in this folder are what it
+prints with a placeholder path, kept equal to it by a test.
 
-The templates invoke the installed Python CLI directly:
+**Start in shadow.** A shadow gate stops nothing: for every proposed call it asks the local
+server and records what it would have answered. Nothing here is qualified to allow or deny on
+its own yet (`policy_ready` is false), so shadow is the mode to install.
 
-```sh
-"/absolute/path/to/agentarmor" hook --agent codex_code
-```
+1. Install the monitor in a trusted virtual environment and start its server, as the
+   [monitor's guide](../../src/monitor/README.md) describes.
+2. Print the hooks with the absolute path of the installed program:
 
-Install with `python3 -m pip install ./src/vllm` in a trusted virtual environment.
-The entry point uses that environment’s Python interpreter and does not import
-vLLM, Torch, or a GPU runtime. See the [root guide](../../README.md).
-Setup follows the [Codex hook contract](https://learn.chatgpt.com/docs/hooks).
+   ```sh
+   agentarmor-monitor hooks-config --agent codex_code --toml --gate "$(command -v agentarmor-monitor)" --shadow
+   ```
 
-**Current status:** hook policy evaluation is unqualified. Every
-`PreToolUse` check returns an explicit denial and exit code 2. The observation
-hooks report incomplete coverage; they do not scan content or queue work yet.
-The CLI does not call the diagnostic model service.
-These templates are for integration development and will block normal tool use.
-`agentarmor doctor` reports `policy_ready: false`. They must not be presented as
-a working policy-based allow/deny installation.
+3. Merge the printed tables into `~/.codex/config.toml`, or drop `--toml` and save the JSON as `~/.codex/hooks.json`. Install one of the two, so that each hook runs once.
+4. Restart Codex and review the registered commands with `/hooks`.
 
-1. Find the installed executable's absolute path with `command -v agentarmor`.
-   Replace `/ABSOLUTE/PATH/agentarmor` in the chosen template with that trusted
-   path. Keep its quotes so paths containing spaces work.
-2. Merge [config.toml.example](config.toml.example) into a trusted
-   `.codex/config.toml` or `~/.codex/config.toml`, or install
-   [hooks.json.example](hooks.json.example) as `.codex/hooks.json` or
-   `~/.codex/hooks.json`. Install one representation so hooks run once.
-3. Restart Codex and use `/hooks` to review and trust the exact commands.
-   Prefer user-level or managed configuration outside an untrusted repository.
+**What is installed.** One handler for each event that carries session evidence (10 kinds:
+prompts, proposed calls, results and failures, compaction, session start and end). The gate
+records every event itself and, on a proposed call, asks the server. It takes the place of the
+plain observer: do not install the observer beside it, or every event is logged twice. A hook
+process loads no model and uses the standard library only.
 
-Check the command directly before enabling the template:
+**Other forms the same command prints.**
 
-```sh
-printf '%s\n' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pwd"}}' \
-  | /absolute/path/to/agentarmor hook --agent codex_code
-```
+- Without `--gate`: the plain observer (`summarizer-hook`), which records and never answers.
+- With `--gate` and without `--shadow`: a gate whose answer is acted on. Codex has no setting that stops a call when a hook cannot start or runs out of time: the call then runs, so keep Codex's approvals and sandbox on. Do not install
+  it as protection while `policy_ready` is false.
 
-Expect `hookSpecificOutput.permissionDecision: deny` and exit code 2, because
-model-backed hook enforcement is not qualified. A future qualified allow must emit no
-permission decision and preserve Codex's existing permission flow.
+Prefer user-level or managed settings over a repository's own: a repository you do not control
+should not decide what runs on your machine.
 
-`PostToolUse` and `UserPromptSubmit` are asynchronous; `Stop` is synchronous to
-permit a future durable handoff before exit. Currently all three return only an
-incomplete-observation message. Post-effect scans remain advisory even after
-implementation. Local command hooks require supported local orchestration and
-do not cover cloud or hosted tools where the hook is not invoked. See the
-[vLLM qualification requirements](../../src/vllm/README.md#qualification).
-
-## Connecting sessions to Kai
-
-The templates above are the placeholder that denies every call. To have Summarizer watch a
-session and Kai decide about what it flags, use the [local monitor](../../src/monitor/README.md)
-and the hooks it prints:
-
-```sh
-agentarmor-monitor hooks-config --agent codex_code --toml
-agentarmor-monitor hooks-config --agent codex_code --toml --gate /absolute/path/to/agentarmor-monitor
-```
+The [fixture](fixture/README.md) folder holds templates that deny every call without asking a
+model. They are for testing the hook entry point and are not an installation.

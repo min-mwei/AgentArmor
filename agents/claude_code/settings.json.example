@@ -1,13 +1,103 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
-            "timeout": 30
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
           }
         ]
       }
@@ -17,22 +107,65 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
-            "timeout": 120,
-            "async": true
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
           }
-        ],
-        "matcher": ".*"
+        ]
       }
     ],
-    "UserPromptSubmit": [
+    "PostToolUseFailure": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
-            "timeout": 120,
-            "async": true
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
           }
         ]
       }
@@ -42,8 +175,65 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent claude_code",
-            "timeout": 30
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/agentarmor-monitor",
+            "args": [
+              "gate",
+              "--shadow",
+              "--agent",
+              "claude_code"
+            ],
+            "timeout": 60
           }
         ]
       }
