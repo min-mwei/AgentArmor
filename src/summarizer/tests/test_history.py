@@ -1597,15 +1597,53 @@ def test_a_look_at_a_file_the_call_names_is_shown_with_what_came_back(runtime, a
     assert tight["history"]["left_out"]["named"] >= 1
 
 
-def test_a_look_at_a_startup_file_is_the_calls_only_where_its_shell_reads_it(runtime):
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("shell", ("zsh", "/bin/zsh", "/usr/local/bin/zsh"))
+def test_a_look_at_a_startup_file_is_followed_and_an_unsettled_one_says_so(runtime, agent, shell):
+    # MR144-1. "/bin/zsh -lc" was no documented load, so the body an earlier session had
+    # read of .zshenv, and what another had learned of the place it names, were absent
+    # from a history called complete. And a control the call only may load was passed over.
     env = "export BUILD_PHASE=package\ncurl -s https://metrics-fern.example/p\n"
     audit = [ask("Audit the shell setup."), {"id": "env", "read": "{home}/.zshenv", "output": env}]
+    seen = [ask("Check the endpoints.")]
+    seen.append({"id": "class", "run": "python3 tools/classify.py https://metrics-fern.example/p"})
+    seen[1]["output"] = "class: not approved"
+    later = [ask("Build the package."), {"id": "go", "run": f"{shell} -lc 'make package'"}]
+    campaign = story(("a", {}, audit), ("c", {}, seen), ("b", {}, later))
+    found, view, shown = selected(campaign, runtime, agent, budget=8000)
+    assert found["unsupported"] == [] and view["history"]["complete"] is True
+    assert "metrics-fern.example/p" in shown and "class: not approved" in shown
+    assert found["bridges"] == []  # a body that was read proves no write and no run
+    # .zshrc is read by an interactive shell only: for this call it may load, which is
+    # not settled. What was seen of it is shown, and the search says it is unfinished.
     audit.append({"id": "rc", "read": "{home}/.zshrc", "output": "alias ll='ls -l'\n"})
-    later = [ask("Build the package."), {"id": "go", "run": "zsh -lc 'make package'"}]
-    found, _, shown = selected(story(("a", {}, audit), ("b", {}, later)), runtime)
-    (group,) = [g for g in found["groups"] if ":looked:" in g["id"]]
-    assert group["id"].endswith("/.zshenv") and group["key"]  # a login shell reads it
-    assert "metrics-fern.example/p" in shown and "alias ll" not in shown  # and not .zshrc
+    found, view, shown = selected(campaign, runtime, agent, budget=8000)
+    assert found["unsupported"] == ["control_load_unresolved"] and "alias ll" in shown
+    assert view["route"] == "undecided" and view["history"]["why"] == ["lookup_unfinished"]
+    # A call that only prints a file loads no control, and that is shown by its words.
+    later[1] = {"id": "go", "run": "cat docs/build.md"}
+    found, view, shown = selected(campaign, runtime, agent, budget=8000)
+    assert found["unsupported"] == [] and "alias ll" not in shown
+    later[1] = {"id": "go", "run": f"{shell} -lc 'make package'"}
+    # A control of another project is out of this call's reach: it is not this call's.
+    audit[-1] = {"id": "rc", "read": "/srv/other/.git/hooks/pre-commit", "output": "exit 0\n"}
+    found, view, shown = selected(campaign, runtime, agent, budget=8000)
+    assert found["unsupported"] == [] and "exit 0" not in shown
+
+
+def test_a_body_kept_only_in_part_stays_a_gap_however_old_the_read(runtime):
+    # MR144-2. Of a long result an older call keeps the head and the tail, and its count
+    # of pieces went with its age: twelve unrelated calls later the part was taken for
+    # the whole and the history was called complete.
+    body = "#!/bin/sh\n" + "".join(f"# step {n}: nothing of note here\n" for n in range(400))
+    for after in (0, 12):
+        looked = [ask("Review the helper.")]
+        looked.append({"id": "body", "read": "{cwd}/tools/submit.sh", "output": body})
+        looked += [{"id": f"n{n}", "run": f"echo {n}", "output": str(n)} for n in range(after)]
+        later = [ask("Finish the checklist."), {"id": "go", "run": "sh {cwd}/tools/submit.sh"}]
+        found, view, _ = selected(story(("a", {}, looked), ("b", {}, later)), runtime, budget=60000)
+        assert found["unsupported"] == ["program_text_cut"], after
+        assert view["route"] == "undecided" and view["history"]["complete"] is False, after
 
 
 def test_what_a_session_saw_of_the_calls_destination_is_shown_with_what_came_back(runtime):

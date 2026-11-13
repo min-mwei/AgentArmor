@@ -513,7 +513,7 @@ def governs(resource, cwd):
 # There is no "not loaded". -f turns automatic startup off, and the command may still
 # source the file; a later +f turns it on again. A planted control within reach stays a
 # possible load.
-_EXPECTED = re.compile(r"zsh -(?P<options>[il]{0,2})c '[^']*'\Z")
+_EXPECTED = re.compile(r"(?:/[\w./-]*/)?zsh -(?P<options>[il]{0,2})c '[^']*'\Z")
 
 
 def activates(command, resource):

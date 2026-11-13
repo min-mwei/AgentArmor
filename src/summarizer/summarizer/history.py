@@ -241,7 +241,7 @@ CLIPPED = "…"  # how events.clip ends a call's text that it cut
 
 # The one invocation whose startup files are documented well enough to expect a load: see
 # docs/multi-session-contract.md, section 4. Anything else is a possible load.
-_STARTUP = re.compile(r"zsh -(?P<options>[il]{0,2})c '[^']*'\Z")
+_STARTUP = re.compile(r"(?:/[\w./-]*/)?zsh -(?P<options>[il]{0,2})c '[^']*'\Z")
 # Words by which a user states a limit, a condition or a permission (contract section 11).
 # They make a statement a candidate; they never decide what it means.
 _BOUNDS = re.compile(
@@ -710,6 +710,21 @@ def _use(path, mine_uses, command, call, cwd, home):
     return None
 
 
+def _only_reads(command):
+    """Whether a command is made of nothing but programs that print a file: cat, head and
+    their like, with no substitution in it. Such a call loads no control file, whichever
+    is within its reach: that much is shown by its words, where for any other program
+    whether a control applies is not settled."""
+    if any(mark in command for mark in "()`"):
+        return False
+    segments = list(shell_segments(command, split_assignments=False, redirections=False))
+    for words in segments:
+        at = _command(words)[0]
+        if at is None or _program(words[at]) not in _READERS:
+            return False
+    return bool(segments)
+
+
 def startup_expected(command, path, home):
     """Whether zsh documents that this exact invocation reads that startup file."""
     started = _STARTUP.match(command)
@@ -848,9 +863,8 @@ def select(mine, call_id, others, home):
     # earlier session read the file the call runs, or a startup file its shell reads, is
     # that file's body as it was observed then, whoever wrote it and whenever (MR143-1).
     # A body that was observed is a lead to evidence and no proof that it will run, and
-    # it stays lower-trust text. A control the call only may load is followed from its
-    # writes and not from every read of it: instruction files are read in most sessions.
-    places = _places(call)
+    # it stays lower-trust text. So is what was read of a control the call may load.
+    places, printing = _places(call), _only_reads(command)
     for other, acted in sources:
         results = {}
         for content in _lower(other["summary"]["entries"]):
@@ -861,12 +875,22 @@ def select(mine, call_id, others, home):
                 bodies, cut = [entry], "text_chars" in entry
             uses_of = {p: _use(p, mine_uses, command, call, cwd, home) for p in theirs["read"]}
             seen = [p for p, use in uses_of.items() if use in ("run", "load")]
+            seen += [p for p, use in uses_of.items() if use == "may_load" and not printing]
             if seen:
                 path = seen[0]
-                bodies = [
-                    e for e in results.get(entry.get("call_id"), ()) if e["seq"] > entry["seq"]
-                ]
-                cut = entry.get("result_chunks", len(bodies)) > len(bodies)
+                back = results.get(entry.get("call_id"), ())
+                bodies = [e for e in back if e["seq"] > entry["seq"] and not e.get("aside")]
+                # Whole only when the summary says how many pieces came back and every one
+                # is here. A count that is not known is not taken to be the number kept: an
+                # older call keeps the head and the tail of what it returned (MR144-2).
+                cut = entry.get("result_pieces") != len(bodies)
+                # A control the call only may load: whether it applies is not settled by
+                # its words, and what was seen of it is followed all the same. That it is
+                # unsettled is said, and never taken for "does not apply" (MR144-1). Only a
+                # call that does nothing but print files is shown to load no control.
+                unsettled = all(uses_of[p] == "may_load" for p in seen)
+                if unsettled and "control_load_unresolved" not in unsupported:
+                    unsupported.append("control_load_unresolved")
             for body in bodies:
                 mine_uses["named"] |= _said(body, cwd, home) - {path}
                 places |= _places(body)
@@ -1064,7 +1088,8 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
                 take(content, "shown", group, bears=bears)
 
     def loaded(path):
-        return _use(path, mine_uses, command, call, cwd, home) == "load"
+        use = _use(path, mine_uses, command, call, cwd, home)
+        return use == "load" or (use == "may_load" and not _only_reads(command))
 
     for entry, theirs in acted:
         reads.append((entry["seq"], entry.get("call_id"), theirs["read"]))

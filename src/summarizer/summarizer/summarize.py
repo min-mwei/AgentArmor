@@ -1041,6 +1041,15 @@ class Session:
             entry["text"] = unit.text
             if unit.chars > len(unit.text):
                 entry["text_chars"] = unit.chars  # the call was longer than the text kept here
+            # How many pieces the call's result came in, schema apart, for every call that
+            # is kept: a reader can then tell a result shown whole from its head and tail.
+            # None came back for a call that returned with nothing; where no result was
+            # seen at all the count is absent, which is "not known" and never "none".
+            if unit.call_id in self.returned_by:
+                pieces = [index for index, schema in self.returned_by[unit.call_id] if not schema]
+                entry["result_pieces"] = len(pieces)
+            elif unit.status == "returned":
+                entry["result_pieces"] = 0
             if self._returned.get(unit.call_id):  # which pieces its result came in
                 # Identities are listed up to a cap. result_chunks is the true count, so a
                 # reader can tell a short list from a whole one.
