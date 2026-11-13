@@ -282,10 +282,14 @@ it is tied to, and `order`:
 
 A report and an answer for one call are written by two hook processes. Each takes a lock
 beside the session's detections for its read-and-append, so the two cannot interleave; a
-gate does not wait for that lock for more than a second. `gates` does not rely on what a
-record says of itself either: it puts each report beside the answers on record by where
-each was appended and when, and where the two disagree it says the order is not known
-(`reported_in_an_order_not_known`) and makes nothing of that report.
+gate does not wait for that lock for more than a second, and each record says whether it
+was written under it (`locked`). `gates` does not rely on what a record says of itself
+either. It puts each report beside the answers of the same agent, session and call, and
+takes an order from two things only: both records written under the lock, where the
+file's order is the order; or their places and their times agreeing, with the times
+different. Equal times, a time that contradicts the place, and a missing time say
+nothing: the order is then not known (`reported_in_an_order_not_known`) and nothing is
+made of that report.
 
 A failure or a refusal after a deny is left as reported: either can be how an agent
 reports the denial. A reported result is not proof of any effect. A gate that could not

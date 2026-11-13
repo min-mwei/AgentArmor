@@ -4584,3 +4584,78 @@ def test_a_report_and_an_answer_written_at_once_are_still_joined(spool, monkeypa
     counted = cli.gates_summary(plain)
     assert (counted["ran_after_deny"], counted["ran_before_answer"]) == (1, 1)
     assert counted["reported_with_no_answer"] == 1
+
+
+def test_a_join_is_one_agents_call_and_takes_no_order_from_equal_times():
+    # MR123-3. Two things the audit's join got wrong. An answer of Claude Code was given
+    # to a result of Codex that had the same session and call ids, depending on which file
+    # was read first. And an answer dated in the same millisecond as a report, appended
+    # before it, was taken to have come first.
+    def answer(agent, ts, **more):
+        base = {"stage": "answered", "agent": agent, "session": "s", "call_id": "c", "ts": ts}
+        return base | {"answered": "deny", "attempt": "a1"} | more
+
+    def report(agent, ts, **more):
+        base = {"stage": "observed", "agent": agent, "session": "s", "call_id": "c", "ts": ts}
+        return base | {"reported": "PostToolUse", "order": "no_answer"} | more
+
+    claude, codex = answer("claude_code", 5.0), report("codex_code", 6.0)
+    for records in ([claude, codex], [codex, claude]):  # either file read first
+        (joined,) = gate.joined(records)
+        assert (joined["agent"], joined["order"], joined["answered"]) == (
+            "codex_code",
+            "no_answer",
+            None,
+        )
+        counted = cli.gates_summary(records)
+        assert (counted["reported_with_no_answer"], counted["ran_after_deny"]) == (1, 0)
+        assert counted["reported_in_an_order_not_known"] == 0
+    assert gate.joined([codex])[0]["order"] == "no_answer"  # as Codex's own file says
+    # Without the lock: the same millisecond says nothing, whichever is first in the file.
+    tie = [answer("claude_code", 1000.125), report("claude_code", 1000.125)]
+    for records in (tie, tie[::-1]):
+        assert gate.joined(records)[0]["order"] == "unknown"
+        counted = cli.gates_summary(records)
+        assert (counted["ran_after_deny"], counted["ran_before_answer"]) == (0, 0)
+        assert counted["reported_in_an_order_not_known"] == 1
+    # A time that contradicts the place says nothing either; times that agree with it do.
+    assert (
+        gate.joined([answer("claude_code", 1000.126), report("claude_code", 1000.125)])[0]["order"]
+        == "unknown"
+    )
+    assert (
+        gate.joined([answer("claude_code", 1000.124), report("claude_code", 1000.125)])[0]["order"]
+        == "after_answer"
+    )
+    assert (
+        gate.joined([report("claude_code", 1000.124), answer("claude_code", 1000.125)])[0]["order"]
+        == "before_answer"
+    )
+    # Under the lock the file's order is the order, equal times or not.
+    locked = [
+        answer("claude_code", 1000.125, locked=True),
+        report("claude_code", 1000.125, locked=True),
+    ]
+    assert gate.joined(locked)[0]["order"] == "after_answer"
+    assert gate.joined(locked[::-1])[0]["order"] == "before_answer"
+    half = [answer("claude_code", 1000.125, locked=True), report("claude_code", 1000.125)]
+    assert gate.joined(half)[0]["order"] == "unknown"  # one of the two was not under it
+    # A missing time is no evidence.
+    assert (
+        gate.joined([answer("claude_code", None), report("claude_code", 9.0)])[0]["order"]
+        == "unknown"
+    )
+
+
+def test_records_say_whether_they_were_written_under_the_lock(spool):
+    payload = event("s-lock", hook_event_name="PostToolUse") | call(3, "Bash", {"command": "ls"})
+    gate.observe("claude_code", payload, "PostToolUse")
+    gate.answered("claude_code", payload, {"attempt": "a1"}, "deny", None, True, "deny", None)
+    kept = audit_of("s-lock")
+    assert [(r["stage"], r["locked"]) for r in kept[:2]] == [("observed", True), ("answered", True)]
+    (joined,) = gate.joined(kept)
+    assert (joined["order"], joined["agent"], joined["answered"]) == (
+        "before_answer",
+        "claude_code",
+        "deny",
+    )
