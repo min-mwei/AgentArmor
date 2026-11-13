@@ -3812,8 +3812,8 @@ def test_bytes_unread_before_routing_are_not_taken_for_nothing_logged(
             watch.update(which, session)
             assert watch.drain()
 
-        def loaded(*arguments):
-            summary = real_load(*arguments)
+        def loaded(*arguments, **options):
+            summary = real_load(*arguments, **options)
             assert summary["fresh"] and summary["call"] == "verified"
             covered.append(summary["session"]["coverage"]["log_bytes"])
             arrives(session)
@@ -4888,3 +4888,47 @@ def test_the_doctor_reads_what_is_registered_and_never_says_that_it_works(
     assert report["gate"]["registration"]["registered"] and report["gate"]["mode"]["server"] is None
     assert cli.main(["doctor", "--server", "http://127.0.0.1:9"]) == 0
     assert "gate" not in json.loads(capsys.readouterr().out)
+
+
+def test_a_summary_made_by_another_model_is_no_basis_for_a_decision(spool):
+    # Summarizer MR113-4, the consumer's part. A summary can cover every event and still be
+    # one that another encoder, other probes or other rules made: its marks are that
+    # model's, and a call is routed on marks. A server that knows what its own Summarizer
+    # makes does not decide on any other.
+    class Allows:
+        def ask(self, state, questions):
+            answers = {kai.XPIA: 0.01, kai.DECISION: {"choice": "allow", "p_deny": 0.02}}
+            return {"answers": answers, "service": {"model": "kai-4b"}}
+
+    from agentarmor_monitor import decide
+
+    runtime = Runtime(HashEmbedder())
+    watch = Monitor(runtime, kai.Unsent(), log=lambda message: None)
+    quiet("s-made")
+    asked = asking_logged("s-made", 2, "Bash", {"command": PEEK}, watch)
+    watch.close()
+    mine = runtime.identity()
+
+    def judged(made_with):
+        identity = asked["call_sha256"]
+        options = {"wait": 1.0, "settle": 0.2, "made_with": made_with}
+        return decide.judge("claude_code", "s-made", "call-2", identity, Allows(), "low", **options)
+
+    verdict, record, why = judged(mine)
+    assert verdict in ("abstain", "undecided") and why != "summary_made_otherwise"
+    assert record is not None  # the summary was read and used
+    # Another model, other probes, other rules: each is another maker.
+    other_model = {"embedding": mine["embedding"] | {"revision": "0"}, "detector": mine["detector"]}
+    other_rules = {"embedding": mine["embedding"], "detector": mine["detector"] | {"version": 0}}
+    for made_with in (other_model, other_rules):
+        assert judged(made_with) == ("undecided", None, "summary_made_otherwise")
+    # A caller that does not know what makes its summaries checks nothing, as before.
+    assert judged(None)[2] != "summary_made_otherwise"
+    # The server says in /health whether it checks, and a gate's question is decided so.
+    checking = Decider(Allows(), wait=1.0, made_with=other_model)
+    assert checking.about()["summary_identity_checked"] is True
+    assert Decider(Allows()).about()["summary_identity_checked"] is False
+    question = {"agent": "claude_code", "session_id": "s-made", "tool_use_id": "call-2"}
+    question |= {"call_sha256": asked["call_sha256"], "attempt": "a1", "on_error": "deny"}
+    receipt = checking.decide(question)
+    assert (receipt["verdict"], receipt.get("why")) == ("undecided", "summary_made_otherwise")

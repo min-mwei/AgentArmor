@@ -120,9 +120,11 @@ def _runtime(args):
     except (OSError, ValueError, KeyError) as error:
         raise SystemExit(f"summarizer: the probes cannot be used: {error}") from None
     if not runtime.calibrated and not uncalibrated:
+        why = getattr(runtime, "uncalibrated_why", None)
         raise SystemExit(
-            "summarizer: none of those probes is calibrated, so no probe label would be given. "
-            "Calibrate them for this model, or say --uncalibrated"
+            "summarizer: none of those probes is calibrated, so no probe label would be given"
+            + (f" ({why})" if why else "")
+            + ". Calibrate them for this model, or say --uncalibrated"
         )
     return runtime
 
@@ -208,7 +210,14 @@ def _serve(args):
     monitor = Monitor(runtime, asks, args.level, args.max_chars)
     monitor.rules = rules
     decider = Decider(
-        asks, rules, gate_level(args), args.max_chars, args.wait, args.at_once, mode=mode_of(args)
+        asks,
+        rules,
+        gate_level(args),
+        args.max_chars,
+        args.wait,
+        args.at_once,
+        mode=mode_of(args),
+        made_with=runtime.identity(),
     )
     try:
         api, _ = listen(front, decider, args.port, monitor, args.model_api)

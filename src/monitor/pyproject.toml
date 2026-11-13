@@ -13,16 +13,20 @@ requires-python = ">=3.11,<3.14"
 # when a call's proposal was not observed, write an event's text to the hook's error log, do
 # not say what marked a summary, cannot replay a session without asking the machine, and
 # stop summarizing a session whose text holds a string the embedding model takes for a
-# control token such as "<|image|>". The one before this does not count the lines a packet
+# control token such as "<|image|>". The one before the last does not count the lines a packet
 # cuts short, quotes a command without the colon or spaces it begins with, and can neither
-# embed nor show as UTF-8 a text that holds half a surrogate pair.
+# embed nor show as UTF-8 a text that holds half a surrogate pair. The last one (08b4e40) cuts
+# a text longer than the encoder's window without saying so, takes the probe numbers beside a
+# model directory on trust, gives a result that repeats an earlier text to no call after the
+# ninth time, ranks a tool's member names as a call's outcome, and cannot say whether a
+# summary was made by the model that is running. Kai's board was told before this pin moved.
 dependencies = [
-    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@08b4e40c588ebed7ec2a5bf4f392bbf9ceef95c0",
+    "summarizer @ git+https://github.com/min-mwei/Summarizer.git@38e5bc64254bc777662e9e9499c7ba3edea8d802",
     "numpy>=2,<3",
 ]
 
 [project.optional-dependencies]
-model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@08b4e40c588ebed7ec2a5bf4f392bbf9ceef95c0"]
+model = ["summarizer[runtime] @ git+https://github.com/min-mwei/Summarizer.git@38e5bc64254bc777662e9e9499c7ba3edea8d802"]
 
 [project.scripts]
 agentarmor-monitor = "agentarmor_monitor.cli:main"

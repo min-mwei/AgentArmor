@@ -151,6 +151,7 @@ def judge(
     rules=None,
     explain=False,
     settle=None,
+    made_with=None,
 ):
     """(verdict, record, why) for one proposed call, named as a hook event names it.
 
@@ -163,6 +164,12 @@ def judge(
     when no summary of this call was read at all. why names, for "undecided", what kept the
     check from being completed.
 
+    made_with is what the caller's own Summarizer says makes a summary (a runtime's
+    identity()), when the caller has one. A summary that another encoder, other probes or
+    other rules made is fresh and is not this server's: its marks are another model's, and
+    a call is routed on marks. With made_with given, such a summary is no basis for a
+    decision and the verdict is "undecided", why "summary_made_otherwise".
+
     A record says how far the session's log had been read when its evidence was taken
     ("evidence"), how the call was routed ("routing": asked or not, and the level and
     threshold that decided it), and for an answer that had to still apply when it came, what
@@ -172,9 +179,11 @@ def judge(
         return "undecided", None, "event"
     directory = session_dir(agent, session)
     settle = SETTLE if settle is None else settle
-    summary = load_summary(agent, directory.name, wait, call_id, identity)
+    summary = load_summary(agent, directory.name, wait, call_id, identity, made_with=made_with)
     if summary is None or not summary.get("fresh") or summary.get("call") != "verified":
         return "undecided", None, "no_summary"  # nothing about this exact call to decide on
+    if made_with is not None and summary.get("compatible") is not True:
+        return "undecided", None, "summary_made_otherwise"  # marked by another model or rules
     entry = next(
         e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
     )
@@ -267,10 +276,14 @@ class Decider:
         wait=3.0,
         slots=SLOTS,
         mode="enforce",
+        made_with=None,
     ):
         if mode not in MODES:
             raise ValueError(f"a server's mode is one of {MODES}")
         self.mode = mode
+        # What this server's own Summarizer says makes a summary. A summary made otherwise
+        # is not decided on. None when the server does not know (then nothing is checked).
+        self.made_with = made_with
         self.client = client
         self.rules = load_rules() if rules is None else rules
         self.level, self.max_chars, self.wait = level, max_chars, wait
@@ -287,6 +300,7 @@ class Decider:
             "max_chars": self.max_chars,
             "layout": LAYOUT,
             "at_once": self.slots,
+            "summary_identity_checked": self.made_with is not None,
         }
 
     def decide(self, asked):
@@ -313,6 +327,7 @@ class Decider:
                     self.max_chars,
                     self.wait,
                     self.rules,
+                    made_with=self.made_with,
                 )
             except Exception as error:
                 note(asked["agent"], error, "failed")
