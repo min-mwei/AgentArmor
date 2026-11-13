@@ -230,6 +230,9 @@ def _prune(args):
             removed.append((agent, name))
             print(f"removed {agent}/{name}")
     if removed and path().is_file():  # what is gone from the spool is gone from the index
+        if _daemon_running():  # the daemon is the index's one writer: it forgets them itself
+            print("the search index forgets them when the daemon next starts", file=sys.stderr)
+            return 0
         try:
             with Index(write=True) as index:
                 for agent, name in removed:
@@ -241,7 +244,7 @@ def _prune(args):
 
 def _index(args):
     """The search index: how far it has read, or read every log again."""
-    from .index import Index, IndexError_, behind, path, record
+    from .index import Index, IndexError_, behind, forget_missing, path, record
 
     sessions = list_sessions()
     if args.action == "status":
@@ -272,11 +275,8 @@ def _index(args):
                 session.add(item)
             record(index, agent, name, session)
             kept.add((agent, name))
-        listed = [(row["agent"], row["name"]) for row in index.sessions()]
-        gone = [key for key in listed if key not in kept]
-        for agent, name in gone:
-            index.forget(agent, name)
-        told = index.status() | {"rebuilt": len(kept), "forgotten": len(gone)}
+        told = {"rebuilt": len(kept), "forgotten": forget_missing(index, sessions)}
+        told = index.status() | told
     print(json.dumps(told, indent=1))
     return 0
 

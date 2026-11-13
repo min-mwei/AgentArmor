@@ -14,7 +14,7 @@ import sys
 import time
 from collections import OrderedDict
 
-from .index import Index
+from .index import Index, forget_missing
 from .index import record as index_session
 from .store import (
     AGENTS,
@@ -92,6 +92,8 @@ class Daemon:
         try:
             if self.index is None:
                 self.index = Index(write=True)
+                # What was pruned while no daemon ran: the daemon is the one writer.
+                forget_missing(self.index, list_sessions())
             known = self.indexed.get(key)
             # Another Session object for the same key is the log read again from its start.
             start, open_calls = (known[1], known[2]) if known and known[0] is session else (0, ())

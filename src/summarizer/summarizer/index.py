@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     units INTEGER NOT NULL,
     names_dropped INTEGER NOT NULL DEFAULT 0,  -- names the summarizer had no room to track
     UNIQUE (agent, name)
-);
+) STRICT;
 CREATE TABLE IF NOT EXISTS units (
     id INTEGER PRIMARY KEY,
     session INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
@@ -84,14 +84,14 @@ CREATE TABLE IF NOT EXISTS units (
     status TEXT NOT NULL,               -- of a call: proposed | returned | failed | denied
     text TEXT NOT NULL,
     UNIQUE (session, unit)
-);
+) STRICT;
 CREATE INDEX IF NOT EXISTS units_by_time ON units (ts);
 CREATE TABLE IF NOT EXISTS names (
     kind TEXT NOT NULL,                 -- path | host | ... as the summarizer names them
     value TEXT NOT NULL,
     unit_id INTEGER NOT NULL REFERENCES units (id) ON DELETE CASCADE,
     PRIMARY KEY (kind, value, unit_id)
-) WITHOUT ROWID;
+) WITHOUT ROWID, STRICT;
 CREATE INDEX IF NOT EXISTS names_by_unit ON names (unit_id);
 """
 _WORDS = "CREATE VIRTUAL TABLE IF NOT EXISTS words USING fts5(text, tokenize = 'unicode61')"
@@ -120,7 +120,12 @@ class Index:
             # Made private before SQLite opens it: it holds what the session logs hold.
             os.close(os.open(self.file, os.O_RDWR | os.O_CREAT, 0o600))
             self.db = sqlite3.connect(self.file, timeout=5.0, isolation_level=None)
-            self.db.execute("PRAGMA journal_mode = WAL")
+            # A write-ahead log lets readers go on while the daemon writes. Before SQLite
+            # 3.51.3 such a log could be corrupted when two connections wrote or
+            # checkpointed at the same instant. There is one writer here; an older SQLite
+            # gets a rollback journal all the same, and readers then wait their turn.
+            mode = "WAL" if sqlite3.sqlite_version_info >= (3, 51, 3) else "DELETE"
+            self.db.execute(f"PRAGMA journal_mode = {mode}")
             self.db.execute("PRAGMA synchronous = NORMAL")
         else:
             if not self.file.is_file():
@@ -366,6 +371,17 @@ def record(index, agent, name, session, start=0, also=()):
         names_dropped=session.counts["observables_dropped"],
     )
     return units
+
+
+def forget_missing(index, sessions):
+    """Remove from an index the sessions whose logs are no longer in the spool. sessions is
+    what store.list_sessions gives. Returns how many were removed."""
+    logged = {(agent, name) for agent, name, *_ in sessions}
+    gone = [(row["agent"], row["name"]) for row in index.sessions()]
+    gone = [key for key in gone if key not in logged]
+    for agent, name in gone:
+        index.forget(agent, name)
+    return len(gone)
 
 
 def behind(index, sessions):

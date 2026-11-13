@@ -250,6 +250,42 @@ def test_prune_forgets_what_it_removes(home, capsys):
         assert index.naming(ATTACKER) == [] and index.status()["sessions"] == 1
 
 
+def test_the_daemon_is_the_one_writer_even_when_a_prune_runs_beside_it(home, capsys, monkeypatch):
+    served = daemon()
+    for name, events in (("a", attack(session_id="a")), ("b", benign(session_id="b"))):
+        send(events)
+        served.update("claude_code", name)
+    served.index.close()
+    os.utime(session_dir(*KEY) / EVENTS, (1_000_000_000, 1_000_000_000))
+    monkeypatch.setattr(cli, "_daemon_running", lambda: True)
+    assert cli.main(["prune", "--days", "1"]) == 0
+    assert "forgets them when the daemon next starts" in capsys.readouterr().err
+    with Index() as index:  # the prune wrote nothing: a second writer never opened
+        assert [row["name"] for row in index.sessions()] == ["a", "b"]
+    restarted = daemon()
+    restarted.update("claude_code", "b")
+    with Index() as index:
+        assert [row["name"] for row in index.sessions()] == ["b"] and index.naming(ATTACKER) == []
+
+
+def test_an_older_sqlite_gets_a_rollback_journal(home, monkeypatch):
+    with Index(write=True) as index:
+        assert index.db.execute("PRAGMA journal_mode").fetchone()["journal_mode"] == "wal"
+    os.unlink(path())
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 45, 1))
+    with Index(write=True) as index:
+        assert index.db.execute("PRAGMA journal_mode").fetchone()["journal_mode"] == "delete"
+
+
+def test_a_column_holds_only_what_it_is_declared_to_hold(home):
+    with Index(write=True) as index:
+        with pytest.raises(sqlite3.IntegrityError):
+            index.db.execute(
+                "INSERT INTO sessions (agent, name, session_id, log_bytes, events, units)"
+                " VALUES ('a', 'b', 'c', 'not a number', 0, 0)"
+            )
+
+
 def test_search_prints_hits_as_lines_and_says_when_there_is_no_index(home, capsys):
     with pytest.raises(SystemExit, match="no index yet"):
         cli.main(["search", "--name", ATTACKER])
