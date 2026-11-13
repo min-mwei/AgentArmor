@@ -4796,3 +4796,95 @@ def test_packets_built_elsewhere_become_the_requests_the_monitor_would_make(tmp_
     source.write_text("".join(json.dumps(row) + "\n" for row in twice))
     with pytest.raises(SystemExit, match="has two packets under the arm none"):
         cli.main(["panels", str(source), "--out", str(tmp_path / "bad")])
+
+
+def test_the_doctor_reads_what_is_registered_and_never_says_that_it_works(
+    tmp_path, monkeypatch, capsys
+):
+    # MR117. Printing a configuration is not installing it, and the doctor only probed the
+    # server. Registration, the program, the mode and the server are four things: each can
+    # hold while the next does not, so each is said apart, from files that are only read.
+    from agentarmor_monitor import doctor
+
+    home, project = tmp_path / "home", tmp_path / "proj"
+    program = tmp_path / "bin" / "agentarmor-monitor"
+    program.parent.mkdir()
+    program.write_text("#!/bin/sh\n")
+    program.chmod(0o755)
+    env = {}
+
+    def told(agent, server=None):
+        return doctor.report(agent, project, env, home, server)
+
+    # Nothing registered anywhere: every file is absent, and that is said of each.
+    bare = told("claude_code")
+    assert bare["registration"]["registered"] is False and bare["program"] == []
+    assert {entry["state"] for entry in bare["registration"]["files"]} == {"absent"}
+    assert bare["mode"]["gate"] is None and bare["exercised"] is False
+    # What hooks-config prints, merged into the user's settings beside a hook of their own.
+    monkeypatch.setattr(cli, "client_version", lambda agent: (2, 1, 300))  # whatever is installed
+    assert cli.main(["hooks-config", "--agent", "claude_code", "--gate", str(program)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    printed["hooks"]["PreToolUse"].append({"hooks": [{"type": "command", "command": "/x/lint"}]})
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(json.dumps(printed))
+    found = told("claude_code", {"decisions": {"mode": "enforce"}})
+    registration = found["registration"]
+    assert registration["registered"] and "PreToolUse" in registration["events"]
+    assert registration["registered_more_than_once"] is False
+    assert found["program"] == [
+        {"path": str(program), "absolute": True, "exists": True, "executable": True}
+    ]
+    assert found["mode"]["gate"] == "enforce" and found["mode"]["agree"] is True
+    assert found["mode"]["a_failing_gate_blocks"] is True  # hooks-config gave onFailure
+    # Reading files says nothing of trust, of an invocation, or of a call that was stopped.
+    assert found["client_trust"] == "not_readable" and found["exercised"] is False
+    # A shadow gate against an enforcing server is said, and so is a gate registered twice.
+    assert (
+        cli.main(["hooks-config", "--agent", "claude_code", "--gate", str(program), "--shadow"])
+        == 0
+    )
+    (project / ".claude").mkdir(parents=True)
+    (project / ".claude" / "settings.json").write_text(capsys.readouterr().out)
+    both = told("claude_code", {"decisions": {"mode": "enforce"}})
+    assert both["registration"]["registered_more_than_once"] is True
+    assert both["mode"]["gate"] == "mixed" and both["mode"]["agree"] is False
+    # A program that is not there, and one given by a bare name.
+    program.unlink()
+    assert told("claude_code")["program"][0]["exists"] is False
+    loose = {"hooks": {"PreToolUse": [{"hooks": [{"command": "agentarmor-monitor"}]}]}}
+    loose["hooks"]["PreToolUse"][0]["hooks"][0] |= {"type": "command", "args": ["gate"]}
+    (home / ".claude" / "settings.json").write_text(json.dumps(loose))
+    (project / ".claude" / "settings.json").unlink()
+    named = told("claude_code")
+    assert named["program"] == [
+        {"path": "agentarmor-monitor", "absolute": False, "exists": None, "executable": None}
+    ]
+    assert named["mode"]["a_failing_gate_blocks"] is False
+    # A file that cannot be parsed is said to be that, and registers nothing.
+    (home / ".claude" / "settings.json").write_text("{not json")
+    broken = told("claude_code")
+    assert broken["registration"]["files"][0]["state"] == "not_parsed"
+    assert broken["registration"]["registered"] is False
+    # Codex writes one command line, and keeps its hooks elsewhere. What it does when a
+    # hook fails cannot be set, so it is not known.
+    assert cli.main(["hooks-config", "--agent", "codex_code", "--gate", str(program)]) == 0
+    env["CODEX_HOME"] = str(tmp_path / "codex")
+    (tmp_path / "codex").mkdir()
+    (tmp_path / "codex" / "hooks.json").write_text(capsys.readouterr().out)
+    codex = told("codex_code")
+    assert codex["registration"]["registered"] and codex["mode"]["gate"] == "enforce"
+    assert codex["mode"]["a_failing_gate_blocks"] is None and codex["program"][0]["path"] == str(
+        program
+    )
+    assert told("claude_code")["registration"]["registered"] is False  # another agent's files
+    with pytest.raises(ValueError, match="unknown agent"):
+        doctor.report("other", project, env, home)
+    # The command: the server did not answer, and the gate's part is there all the same.
+    monkeypatch.setenv("CODEX_HOME", env["CODEX_HOME"])
+    assert cli.main(["doctor", "--server", "http://127.0.0.1:9", "--agent", "codex_code"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["local_server"] is None and report["policy_ready"] is False
+    assert report["gate"]["registration"]["registered"] and report["gate"]["mode"]["server"] is None
+    assert cli.main(["doctor", "--server", "http://127.0.0.1:9"]) == 0
+    assert "gate" not in json.loads(capsys.readouterr().out)

@@ -74,6 +74,17 @@ Kai at another address, or runs Summarizer alone, needs nothing of `src/vllm`.
 .venv/bin/agentarmor-monitor detections --flagged        # what Kai denied or flagged
 ```
 
+`doctor --agent claude_code` (or `codex_code`, with `--project DIR` for a project's own
+settings) also reads what that agent's settings register of the gate, and runs nothing. It
+reports four things apart, because each can hold while the next does not: **registration**
+(which files register the gate, for which events, and whether in more than one file, which
+would run it twice); the **program** (an absolute path to a file that can be run, or not);
+the **mode** (shadow or enforce by the registrations against what the server says, and for
+Claude Code whether a failing hook blocks the call); and the **server**. It never says that
+interception works: whether the client trusts and runs a registered hook is the client's to
+know, and `exercised` is always false. Only a call a real client was seen not to run shows
+that a deny stops a call.
+
 **Where Kai is.** One of three, chosen when the server starts. Summarizer watches and marks
 in all three, and never waits for Kai.
 

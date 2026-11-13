@@ -77,7 +77,8 @@ REQUIRED = ("root_id", "view_id", "agent", "rules", "events")
 OPTIONAL = ("files", "links", "codex_home")
 SESSION = "render"  # the session id of a script whose events carry none
 # Every source file of this package. source_sha256() is over exactly these.
-SOURCES = ("__init__.py", "cli.py", "daemon.py", "decide.py", "escalate.py", "gate.py")
+SOURCES = ("__init__.py", "cli.py", "daemon.py", "decide.py", "doctor.py", "escalate.py")
+SOURCES += ("gate.py",)
 SOURCES += ("kai.py", "local.py", "panels.py", "policy.py", "render.py", "server.py")
 SOURCES += ("tally.py",)
 # What a request row keeps of the record detect() builds. The request itself is added to it.

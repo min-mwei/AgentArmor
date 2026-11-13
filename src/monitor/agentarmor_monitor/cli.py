@@ -528,6 +528,12 @@ def _doctor(args):
     except ServerUnavailable as error:
         report["local_server"] = None
         report["server_error"] = str(error)
+    if args.agent:
+        # What the agent's own settings register, read and never run: registration, the
+        # program, the mode and the server are four things, and each is said apart.
+        from . import doctor
+
+        report["gate"] = doctor.report(args.agent, args.project, server=report["local_server"])
     print(json.dumps(report, indent=2))
     return 0
 
@@ -790,6 +796,12 @@ def main(argv=None):
         "doctor", help="report the local setup and what the local server says of itself"
     )
     server(doctor)
+    doctor.add_argument(
+        "--agent",
+        choices=tuple(CLIENTS),
+        help="also read what this agent's settings register of the gate; nothing is run",
+    )
+    doctor.add_argument("--project", help="a project folder whose own settings are read as well")
     doctor.set_defaults(run=_doctor)
 
     args = parser.parse_args(argv)
