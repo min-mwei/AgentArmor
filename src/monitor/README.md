@@ -267,11 +267,24 @@ decisions on real calls are unmeasured.
   `--on-error abstain` lets all of these through instead. Either way the outcome is appended
   to the session's detections with what the gate answered, so default denials can be counted.
 
-**What the agent reported next.** When a result, a failure or a refusal of a call arrives
-for which a gate answered, the gate appends a record with `stage: observed`: what was
-reported, the answer it follows, and `ran_after_deny`, which is true when a result came
-back for a call the gate answered `deny` for. That call ran all the same. A failure or a
-refusal after a deny is left as reported: either can be how an agent reports the denial.
+**What the agent reported, and when.** When a result, a failure or a refusal of a call
+arrives, the gate appends a record with `stage: observed`: what was reported, the answer
+it is tied to, and `order`:
+
+- `after_answer`: the gate's answer was on record when the report came. `ran_after_deny`
+  is true when a result came back for a call the gate answered `deny` for: that call ran
+  all the same.
+- `no_answer`: no answer for that call was on record. The report is kept as it is. If
+  no answer is ever tied to it, the gate was never run for that call.
+- `before_answer`: written when the answer is recorded, for each report that had come
+  first. A result among them is `ran_before_answer`: the client did not wait, and
+  whatever the gate then answered came too late for that call.
+
+A failure or a refusal after a deny is left as reported: either can be how an agent
+reports the denial. A reported result is not proof of any effect. A gate that could not
+run at all (a missing executable, a client's deadline) leaves no record, so the gate's
+records are not a count of every call: `gates` counts what gates answered, and
+`elapsed_ms` starts when the gate has started, not when the client started it.
 
 **Shadow.** `serve --shadow` issues every decision as a shadow one, and puts every marked
 call to Kai (the gate's level is `low` unless `--gate-level` names another).
@@ -588,7 +601,7 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `summary_detector` | What the summary says marked it: a version and hashes of Summarizer's wording rules, of its priors and levels, and of its source. The same session marked under other rules can build a different packet. Copied from the same summary as `summary_embedding`, and like it beside the request, never inside it. `null` when the summary does not say, as with summaries made before Summarizer named its detectors; a hash the summary gives as unknown stays `null` |
 | `status` | `scored`; `kai_unavailable` and `kai_mismatch` (what answered is not the configured model, with the part that differed in `error`), both retried by the watcher; `kai_rejected` (refused by the service); `too_large_to_send` (refused here for its bytes on the wire: nothing was sent); `call_too_large` or `policy_too_large` (nothing was sent); for a gate's question that was answered without a Kai request, `unmarked` or the reason (`no_summary`, `coverage`, `no_decision_model`, `busy`, `log_unread`, `moved_on`, `outcome_reported`); and `applied` on the gate's own record of what it did |
 | `gate`, `stage: issued`, `attempt`, `verdict`, `why`, `declared_on_error` | On the server's record of a decision it issued for a gate's question: the verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing (also `moved_on`, `log_unread`, `outcome_reported` for an allow that no longer applied), and what the gate said it would do without a verdict. With `call_id`, `call_sha256` and `policy_sha256`. Never `enforced` |
-| `stage: observed`, `reported`, `answered`, `ran_after_deny` | On the gate's record of what the agent reported of a call it had answered about: the hook event, the answer it follows and its mode, and whether a result came back for a call answered `deny` |
+| `stage: observed`, `reported`, `order`, `answered`, `ran_after_deny`, `ran_before_answer` | On the gate's record of what the agent reported of a call: the hook event; whether it came after the gate's answer, before it, or with none on record; the answer it is tied to and its mode; whether a result came back for a call answered `deny`, or before the answer |
 | `stage: answered`, `answered`, `would`, `mode`, `delivery`, `elapsed_ms`, `receipt`, `on_error` | On the gate's record of what it answered about a call: `answered` is `deny` or `none`; `would` is what it answers outside shadow; `delivery` is always `unknown`; `receipt` says whether the server's answer arrived; `why` is the server's reason or the gate's own (`server`, `setup`, `recording`, `event`). With the attempt, the call's id and hash, and from the receipt the hash of the rules, the evidence and the request's hash, null where no receipt came. The only record that says what was enforced |
 | `evidence`, `routing`, `revalidated` | On the server's record: how far the session's log had been read when the decision was made (`events`, `log_bytes`), whether all of it was scanned and a hash of the workspace; whether Kai was asked, at which level and threshold and why; and for an allow, how far the log was read again when the answer came and whether that was its end |
 

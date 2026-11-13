@@ -392,8 +392,22 @@ def gates_summary(records):
     told["no_receipt"] = sum(1 for r in answers if not r.get("receipt"))
     told["elapsed_ms"] = {"measured": len(took), "median": at(0.5), "p95": at(0.95)}
     told["elapsed_ms"]["max"] = took[-1] if took else None
-    told["reported_after_an_answer"] = len(observed)
+    # A report by the order it came in beside the gate's answer. One recorded with no answer
+    # is counted as that only while no answer has been tied to it since.
+    after = [r for r in observed if r.get("order", "after_answer") == "after_answer"]
+    before = [r for r in observed if r.get("order") == "before_answer"]
+    tied = {(r.get("session"), r.get("call_id"), r.get("reported")) for r in before}
+    alone = [
+        r
+        for r in observed
+        if r.get("order") == "no_answer"
+        and (r.get("session"), r.get("call_id"), r.get("reported")) not in tied
+    ]
+    told["reported_after_an_answer"] = len(after)
+    told["reported_before_the_answer"] = len(before)
+    told["reported_with_no_answer"] = len(alone)
     told["ran_after_deny"] = sum(1 for r in observed if r.get("ran_after_deny"))
+    told["ran_before_answer"] = sum(1 for r in observed if r.get("ran_before_answer"))
     return told | {"advisory": True, "policy_ready": False}
 
 

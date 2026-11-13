@@ -207,17 +207,39 @@ def answered(
     record |= {"evidence": bound.get("evidence"), "request_sha256": bound.get("request_sha256")}
     record |= {"advisory": True, "policy_ready": False}
     keep(agent, session, record)
+    if isinstance(call_id, str) and call_id:
+        reconcile(agent, session, call_id, record)
+
+
+def _observed(agent, session, call_id, event, answer, order):
+    """A record of what the agent reported of a call, beside the answer it is tied to."""
+    answer = answer or {}
+    record = {"schema": SCHEMA, "ts": round(time.time(), 3), "status": "observed"}
+    record |= {"agent": agent, "session": session, "stage": "observed", "call_id": call_id}
+    record |= {"attempt": answer.get("attempt"), "reported": event, "order": order}
+    record |= {"answered": answer.get("answered"), "mode": answer.get("mode")}
+    denied = answer.get("answered") == "deny"
+    record["ran_after_deny"] = order == "after_answer" and event == "PostToolUse" and denied
+    record["ran_before_answer"] = order == "before_answer" and event == "PostToolUse"
+    return record | {"advisory": True, "policy_ready": False}
 
 
 def observe(agent, payload, event):
-    """Put on record what the agent reported of a call a gate answered about. Never raises.
+    """Put on record what the agent reported of a call. Never raises.
 
     A gate's answer is not what happened. This ties the two: the report (a result, a
     failure, a refusal by the agent's own permissions) with the last answer a gate gave
-    for that call. A result for a call the gate answered "deny" for means the call ran all
-    the same, and "ran_after_deny" says so. Nothing is recorded for a call no gate answered
-    about, and a failure or a refusal after a deny is left as reported: either can be how
-    an agent reports the denial itself.
+    for that call, and says in which order they came ("order"):
+
+    - "after_answer": the answer was on record when the report came. A result for a call
+      the gate answered "deny" for means the call ran all the same ("ran_after_deny").
+    - "no_answer": no answer for that call is on record yet. The report is kept as it is,
+      so that it is not lost if the answer is still being awaited, and so that a call for
+      which no gate ever answered can be counted. When an answer is recorded it is tied to
+      the report (reconcile) in a record of its own with "before_answer".
+
+    A failure or a refusal after a deny is left as reported: either can be how an agent
+    reports the denial itself. A reported result is not proof of any effect.
     """
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
     if not isinstance(session, str) or not session or not isinstance(call_id, str) or not call_id:
@@ -227,15 +249,35 @@ def observe(agent, payload, event):
         for record in read(session_dir(agent, session)):
             if record.get("stage") == "answered" and record.get("call_id") == call_id:
                 last = record
-        if last is None:
-            return
-        record = {"schema": SCHEMA, "ts": round(time.time(), 3), "status": "observed"}
-        record |= {"key": f"observed:{call_id}:{event}", "agent": agent, "session": session}
-        record |= {"stage": "observed", "attempt": last.get("attempt"), "call_id": call_id}
-        record |= {"reported": event, "answered": last.get("answered"), "mode": last.get("mode")}
-        record["ran_after_deny"] = event == "PostToolUse" and last.get("answered") == "deny"
-        record |= {"advisory": True, "policy_ready": False}
+        order = "after_answer" if last is not None else "no_answer"
+        record = _observed(agent, session, call_id, event, last, order)
+        record["key"] = f"observed:{call_id}:{event}"
         keep(agent, session, record)
+    except Exception as error:
+        note(agent, error, "observing")
+
+
+def reconcile(agent, session, call_id, answer):
+    """Tie an answer to the reports of its call that came before it. Never raises.
+
+    A result can be reported while the gate still waits for the server: the client did
+    not wait, or ended the hook and went on. Such a report was recorded with no answer
+    beside it. Now that there is one, each is recorded again as "before_answer" with this
+    answer and its attempt, and a result among them is "ran_before_answer": whatever the
+    gate then answered came too late for that call. Each report is tied once.
+    """
+    try:
+        found = read(session_dir(agent, session))
+        mine = [r for r in found if r.get("stage") == "observed" and r.get("call_id") == call_id]
+        tied = {r.get("reported") for r in mine if r.get("order") == "before_answer"}
+        for report in mine:
+            event = report.get("reported")
+            if report.get("order") != "no_answer" or event in tied:
+                continue
+            tied.add(event)
+            record = _observed(agent, session, call_id, event, answer, "before_answer")
+            record |= {"key": f"observed:{call_id}:{event}:before", "reported_ts": report.get("ts")}
+            keep(agent, session, record)
     except Exception as error:
         note(agent, error, "observing")
 
@@ -353,4 +395,4 @@ def main(args, prepare):
 
 
 __all__ = ["answered", "check", "denial", "keep", "main", "note", "observe", "outcome", "read"]
-__all__ += ["run"]
+__all__ += ["reconcile", "run"]

@@ -4397,16 +4397,71 @@ def test_what_the_agent_reports_next_is_tied_to_what_the_gate_answered(spool, se
         True,
     )
     assert ran["attempt"] == applied_records("s-ran")[-1]["attempt"] and ran["call_id"] == "call-3"
-    # A report about a call no gate answered for is not a record of this kind.
+    assert (refused["order"], ran["order"]) == ("after_answer", "after_answer")
+    # A report about a call no gate answered for is kept as that, so such calls can be
+    # counted: a result with no answer beside it is a call the gate was never run for.
     other = event("s-ran", hook_event_name="PostToolUse") | call(9, "Bash", {"command": "ls"})
-    before = len(escalate.read(session_dir("claude_code", "s-ran")))
     assert gate.run("claude_code", json.dumps(other).encode(), deciding(client)) == (None, 0)
-    assert len(escalate.read(session_dir("claude_code", "s-ran"))) == before
+    alone = escalate.read(session_dir("claude_code", "s-ran"))[-1]
+    assert (alone["stage"], alone["order"], alone["answered"]) == ("observed", "no_answer", None)
+    assert alone["call_id"] == "call-9" and alone["ran_after_deny"] is False
     # And the count an operator reads: what was answered, what ran all the same, how long.
     counted = cli.gates_summary(escalate.read(session_dir("claude_code", "s-ran")))
     assert (counted["calls"], counted["answered_deny"], counted["would_deny"]) == (1, 1, 1)
     assert (counted["put_to_kai"], counted["kai_denied"], counted["ran_after_deny"]) == (1, 1, 1)
+    assert (counted["reported_after_an_answer"], counted["reported_with_no_answer"]) == (2, 1)
     assert counted["elapsed_ms"]["measured"] == 1 and counted["policy_ready"] is False
+
+
+def test_a_result_reported_before_the_gates_answer_is_tied_to_it_when_it_comes(spool, service):
+    # MR120. A result that arrived while the gate still waited for its answer found no
+    # answer on record and was dropped: the audit then showed a denial and nothing after
+    # it. The report is now kept, and the answer is tied to it when it is recorded.
+    watch = monitor(service)
+    watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)
+    client = kai.KaiClient(service.url)
+    poisoned("s-early")
+    watch.update("claude_code", "s-early")
+    result = event("s-early", hook_event_name="PostToolUse") | call(3, "Bash", {"command": EXFIL})
+    result |= {"tool_response": {"stdout": "ok", "stderr": ""}}
+    assert gate.run("claude_code", json.dumps(result).encode(), deciding(client)) == (None, 0)
+    (early,) = [
+        r
+        for r in escalate.read(session_dir("claude_code", "s-early"))
+        if r.get("stage") == "observed"
+    ]
+    assert (early["order"], early["answered"], early["ran_before_answer"]) == (
+        "no_answer",
+        None,
+        False,
+    )
+    counted = cli.gates_summary(escalate.read(session_dir("claude_code", "s-early")))
+    assert (counted["calls"], counted["reported_with_no_answer"]) == (0, 1)
+    # Now the gate's answer for that same call is recorded: deny, too late for it.
+    output, status = gated("s-early", 3, "Bash", {"command": EXFIL}, client, watch)
+    assert status == 2
+    (answer,) = applied_records("s-early")
+    observed = [
+        r
+        for r in escalate.read(session_dir("claude_code", "s-early"))
+        if r.get("stage") == "observed"
+    ]
+    tied = observed[-1]
+    assert [r["order"] for r in observed] == ["no_answer", "before_answer"]
+    assert (tied["answered"], tied["attempt"]) == ("deny", answer["attempt"])
+    assert tied["ran_before_answer"] is True and tied["ran_after_deny"] is False
+    assert tied["reported_ts"] == early["ts"] and tied["reported"] == "PostToolUse"
+    counted = cli.gates_summary(escalate.read(session_dir("claude_code", "s-early")))
+    assert (counted["reported_before_the_answer"], counted["ran_before_answer"]) == (1, 1)
+    assert (counted["reported_with_no_answer"], counted["reported_after_an_answer"]) == (0, 0)
+    # A report is tied once: a second answer for the call does not tie it again.
+    gated("s-early", 3, "Bash", {"command": EXFIL}, client, watch)
+    again = [
+        r
+        for r in escalate.read(session_dir("claude_code", "s-early"))
+        if r.get("stage") == "observed"
+    ]
+    assert [r["order"] for r in again] == ["no_answer", "before_answer"]
 
 
 def test_a_shadow_gate_is_configured_to_stop_nothing_also_by_failing(capsys, monkeypatch):
