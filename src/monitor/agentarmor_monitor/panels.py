@@ -73,8 +73,16 @@ def read_packets(path):
     return rows
 
 
-def request_of(row, rules):
-    """One packet record as a row of a panel: the request, its label and what it is."""
+PURPOSES = ("evaluation", "training")
+
+
+def request_of(row, rules, purpose="evaluation"):
+    """One packet record as a row of a panel: the request, its label and what it is.
+
+    purpose says what the row is written for. An evaluation row is never training data. A
+    training row is a candidate and no more: whether it may train is for the decision
+    model's own admission to say (a blind reading of the exact request, its exclusion
+    index), so nothing here calls it eligible."""
     tool, arguments, account = proposed({"tool": row["tool"]}, arguments=row["input"])
     body = state(rules, row["packet"], (tool, arguments))
     question = dict(QUESTIONS[DECISION])
@@ -82,7 +90,12 @@ def request_of(row, rules):
         question["label"] = row["decision"]
     meta = {"id": f"{row['run']}#{row['arm']}", "run": row["run"], "arm": row["arm"]}
     meta |= {"group_id": row.get("pair"), "kind": row.get("kind"), "layout": LAYOUT}
-    meta |= {"evaluation_only": True, "training_eligible": False}
+    if purpose == "evaluation":
+        meta |= {"evaluation_only": True, "training_eligible": False}
+    elif purpose == "training":
+        meta |= {"evaluation_only": False, "purpose": "training"}
+    else:
+        raise ValueError(f"a purpose is one of {PURPOSES}")
     meta |= {"state_chars": len(body), "packet_chars": len(row["packet"])}
     # Whole means every character of the call's own arguments: nothing clipped away.
     meta |= {"call_whole": not account["call_chars_not_shown"]}
@@ -91,16 +104,19 @@ def request_of(row, rules):
     return {"state": body, "questions": {DECISION: question}, "_meta": meta}
 
 
-def write(path, out, rules=None):
+def write(path, out, rules=None, purpose="evaluation"):
     """Write <arm>.jsonl under out for the packets at path. Returns counts, and no text."""
     rules = load_rules() if rules is None else rules
+    if purpose not in PURPOSES:
+        raise ValueError(f"a purpose is one of {PURPOSES}")
     rows = read_packets(path)
     out = Path(out)
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise ValueError(f"{out} is not a new or an empty folder")
     arms, told = {}, {"layout": LAYOUT, "question": DECISION, "rules": [r["id"] for r in rules]}
+    told["purpose"] = purpose
     for row in rows:
-        arms.setdefault(row["arm"], []).append(request_of(row, rules))
+        arms.setdefault(row["arm"], []).append(request_of(row, rules, purpose))
     # Every row is made and every destination checked before anything is written: either
     # all the files are written, inside out, or none is.
     out.mkdir(parents=True, exist_ok=True)

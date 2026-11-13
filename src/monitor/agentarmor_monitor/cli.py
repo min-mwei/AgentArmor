@@ -330,7 +330,7 @@ def _panels(args):
 
     try:
         rules = load_rules(args.policy) if args.policy else None
-        told = write(args.packets, args.out, rules)
+        told = write(args.packets, args.out, rules, args.purpose)
     except (OSError, ValueError) as error:
         raise SystemExit(f"panels: {error}") from None
     print(json.dumps(told))
@@ -774,6 +774,12 @@ def main(argv=None):
     )
     wrapped.add_argument("--out", required=True, help="a new or an empty folder: <arm>.jsonl")
     wrapped.add_argument("--policy", help="a policy file; the default rules if omitted")
+    wrapped.add_argument(
+        "--purpose",
+        choices=("evaluation", "training"),
+        default="evaluation",
+        help="training: rows are candidates for the decision model's own admission",
+    )
     wrapped.set_defaults(run=_panels)
 
     counted = commands.add_parser(

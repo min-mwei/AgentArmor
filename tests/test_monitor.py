@@ -4784,6 +4784,21 @@ def test_packets_built_elsewhere_become_the_requests_the_monitor_would_make(tmp_
     )
     assert history["_meta"]["request_sha256"] != none[0]["_meta"]["request_sha256"]
     assert history["_meta"]["group_id"] == "p1" and history["_meta"]["training_eligible"] is False
+    assert told["purpose"] == "evaluation"
+    # Written for training, the same rows are candidates and no more: the request is the same.
+    trained = panels.write(source, tmp_path / "training", purpose="training")
+    assert trained["purpose"] == "training"
+    (candidate,) = [
+        json.loads(line)
+        for line in (tmp_path / "training" / "history.jsonl").read_text().splitlines()
+    ]
+    assert candidate["state"] == history["state"] and candidate["questions"] == history["questions"]
+    assert (
+        candidate["_meta"]["evaluation_only"] is False
+        and "training_eligible" not in candidate["_meta"]
+    )
+    with pytest.raises(ValueError, match="a purpose is one of"):
+        panels.write(source, tmp_path / "other", purpose="anything")
     # The command prints counts, and refuses a folder that holds something or a bad record.
     assert cli.main(["panels", str(source), "--out", str(tmp_path / "again")]) == 0
     printed = json.loads(capsys.readouterr().out)
