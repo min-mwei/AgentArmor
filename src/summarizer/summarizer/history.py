@@ -1285,6 +1285,7 @@ def _fits(path, patterns):
 
 TITLE = "EARLIER SESSIONS"  # the section docs/multi-session-contract.md gives a packet
 COMPLETE, INCOMPLETE = "history: ", "history: incomplete"  # how its second line begins
+OWN_SHARE = 2  # a session's own lines keep at least one part in this many of a packet's budget
 # Why a view of earlier sessions is incomplete: a fixed list, each with its one wording.
 REASONS = {
     "capture_gap": "a session's log has a gap",
@@ -1358,11 +1359,22 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     those that bear on the route before the rest, then context. A group whose lines do not
     all fit, or one with a line that cannot be shown, is left out whole. When that group is
     key evidence the account says so and the route is undecided. Nothing is cut to fit.
+
+    The session's own lines come first and take what they need of the budget. Where that
+    leaves key evidence of other sessions without room, the session's own digest is made
+    again in less, down to one part in OWN_SHARE of the budget, and only if every key group
+    then finds room: a long session does not crowd out the write that planted the file it
+    is about to run. What the shorter digest leaves out it counts, as it does at any size.
     """
     from .text import digest, entry_lines
 
-    view = digest(mine["summary"], budget, focus=call_id, call_sha256=call_sha256)
-    view["scanned"] = mine["summary"]["session"]["coverage"]["scanned_all_captured"]
+    def digested(room):
+        """This session's own digest, focused on the call, in that much room."""
+        view = digest(mine["summary"], room, focus=call_id, call_sha256=call_sha256)
+        view["scanned"] = mine["summary"]["session"]["coverage"]["scanned_all_captured"]
+        return view
+
+    view = digested(budget)
     parts = {other["key"]: other for other in others}
     found = select(mine, call_id, others, home)
     # Each source's own lines, every one with the account of the entry it was written for
@@ -1410,18 +1422,32 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     def members(group):
         return [index for index, item in enumerate(found["items"]) if group["id"] in item["groups"]]
 
-    room = budget - len(view["text"]) - len(TITLE) - 80
-    chosen, left, why = set(), {}, list(found["why"])
-    for group in sorted(found["groups"], key=lambda g: (not g["key"], not g["bears"])):
-        inside = members(group)
-        need = sum(cost(index) for index in inside if index not in chosen)
-        if need > room or any(not rendered[index] for index in inside):
-            left[group["kind"]] = left.get(group["kind"], 0) + 1
-            if group["key"] and "key_group_left_out" not in why:
-                why.append("key_group_left_out")
-            continue
-        chosen |= set(inside)
-        room -= need
+    frame = len(TITLE) + 80  # the section's title and its second line
+
+    def placed(view):
+        """The groups that find room beside a digest: (chosen items, left out, why)."""
+        room = budget - len(view["text"]) - frame
+        chosen, left, why = set(), {}, list(found["why"])
+        for group in sorted(found["groups"], key=lambda g: (not g["key"], not g["bears"])):
+            inside = members(group)
+            need = sum(cost(index) for index in inside if index not in chosen)
+            if need > room or any(not rendered[index] for index in inside):
+                left[group["kind"]] = left.get(group["kind"], 0) + 1
+                if group["key"] and "key_group_left_out" not in why:
+                    why.append("key_group_left_out")
+                continue
+            chosen |= set(inside)
+            room -= need
+        return chosen, left, why
+
+    chosen, left, why = placed(view)
+    if "key_group_left_out" in why:
+        key = {index for group in found["groups"] if group["key"] for index in members(group)}
+        less = max(budget - frame - sum(cost(index) for index in key), budget // OWN_SHARE)
+        shorter = digested(less) if less < len(view["text"]) else view
+        again = placed(shorter)
+        if "key_group_left_out" not in again[2]:
+            view, (chosen, left, why) = shorter, again
     items = [line for index in sorted(chosen) for line in rendered[index]]
     used = {(found["items"][index]["key"], found["items"][index]["seq"]) for index in chosen}
     bridges = [

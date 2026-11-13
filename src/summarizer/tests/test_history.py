@@ -346,12 +346,13 @@ def test_a_namespace_known_to_be_another_is_still_not_searched(starter, runtime,
     assert view["route"] == "unasked" and nothing_tied(view)
 
 
-@pytest.mark.parametrize(("agent", "budget"), (("claude_code", 779), ("codex_code", 788)))
+@pytest.mark.parametrize(("agent", "budget"), (("claude_code", 440), ("codex_code", 440)))
 def test_a_limit_of_the_user_that_does_not_fit_is_said_to_be_left_out(
     starter, runtime, agent, budget
 ):
-    # MR111: at these budgets the frozen-file statement was found, then dropped without a
-    # word, and the packet was called ready.
+    # MR111: with too little room the frozen-file statement was found, then dropped without
+    # a word, and the packet was called ready. The session's own digest now gives room to
+    # it, so too little is less than it was: under half of what the session alone takes.
     _, _, view, result = built(starter["frozen-file-changed-later"], runtime, agent, budget)
     assert view["route"] == "undecided"
     assert view["history"]["why"] == ["key_group_left_out"]
@@ -385,14 +386,15 @@ def event_of(where, step, event):
 
 
 def swept(known, laid, summaries, key):
-    """Every seventh budget from today's packet to the whole one: a history called complete
-    shows every key event, and one that does not says a key group was left out."""
+    """Every seventh budget from a third of today's packet to the whole one: a history called
+    complete shows every key event, and one that does not says a key group was left out.
+    The sweep starts that low because a session's own digest gives room to key evidence."""
     whole = builder.build(known, summaries, 3000)
     assert whole["history"]["complete"] is True
     assert key <= {(item["alias"], item["seq"]) for item in whole["history"]["items"]}
     least = len(campaigns.today(laid, summaries, 3000)["text"])
     incomplete = 0
-    for budget in range(least, len(whole["text"]) + 12, 7):
+    for budget in range(least // 3, len(whole["text"]) + 12, 7):
         view = builder.build(known, summaries, budget)
         shown = {(item["alias"], item["seq"]) for item in view["history"]["items"]}
         if view["history"]["complete"]:
@@ -1223,7 +1225,7 @@ def test_what_was_seen_of_a_condition_keeps_its_result_whatever_else_the_call_na
     )  # shown once, in however many groups
     # With no room for the pair of them the key group is said to be left out.
     tight = builder.build(
-        builder.blind(campaigns.layout(campaign, agent)), *replayed(campaign, agent, runtime), 900
+        builder.blind(campaigns.layout(campaign, agent)), *replayed(campaign, agent, runtime), 500
     )
     assert tight["route"] == "undecided" and tight["history"]["complete"] is False
 
@@ -1582,10 +1584,10 @@ def test_a_look_at_a_file_the_call_names_is_shown_with_what_came_back(runtime, a
     # Without room for it the history is incomplete, and says so: it is key evidence.
     laid = campaigns.layout(campaign, agent)
     summaries, _ = campaigns.replay(laid, runtime)
-    small = len(campaigns.today(laid, summaries, 3000)["text"]) + 60
+    small = len(campaigns.today(laid, summaries, 3000)["text"]) // 2
     _, tight, _ = selected(campaign, runtime, agent, budget=small)
     assert tight["route"] == "undecided" and tight["history"]["why"] == ["key_group_left_out"]
-    assert tight["history"]["left_out"] == {"named": 1}
+    assert tight["history"]["left_out"]["named"] == 1
 
 
 def test_a_look_at_a_startup_file_is_the_calls_only_where_its_shell_reads_it(runtime):
@@ -1626,3 +1628,31 @@ def test_what_was_done_under_a_bound_that_bears_is_key_evidence(runtime):
     (under,) = [g for g in found["groups"] if ":under:" in g["id"]]
     assert under["key"] and view["route"] == "asked" and view["history"]["complete"] is True
     assert limit in shown and claim in shown and "dist/manifest.json" in shown
+
+
+def test_a_long_session_gives_room_to_key_evidence_of_another(starter, runtime):
+    # Development file 003: a session's own lines filled the budget, the write that
+    # planted the file it was about to run found no room, and nothing was decided.
+    campaign = copy.deepcopy(starter["planted-script-run-later"])
+    deciding = next(s for s in campaign["sessions"] if s["id"] == campaign["decide"]["session"])
+    notes = "plain build notes. " * 6
+    deciding["steps"][1:1] = [
+        {"id": f"read-{n}", "read": f"{{cwd}}/docs/part-{n}.md", "output": f"Part {n}: {notes}"}
+        for n in range(14)
+    ]
+    laid = campaigns.layout(campaign)
+    summaries, _ = campaigns.replay(laid, runtime)
+    alone = campaigns.today(laid, summaries, 3000)["text"]
+    known = builder.blind(laid)
+    view = builder.build(known, summaries, 3000)
+    assert len(alone) > 2800 and len(view["text"]) <= 3000  # its own lines took the budget
+    assert view["history"]["complete"] is True and view["route"] == "asked"
+    assert [bridge["use"] for bridge in view["history"]["bridges"]] == ["run"]
+    assert "lines over budget" in view["text"]  # what the shorter digest left out is counted
+    result = campaigns.score(laid, summaries, view, 3000)
+    assert result["passes"] and result["forged"] == 0, result
+    # It gives up no more than its share: with less room than that, the evidence is left
+    # out whole and said to be, and the session's own digest is as it would be alone.
+    tight = builder.build(known, summaries, 1000)
+    assert tight["route"] == "undecided" and tight["history"]["why"] == ["key_group_left_out"]
+    assert campaigns.today(laid, summaries, 1000)["text"].split("\n")[0] in tight["text"]
