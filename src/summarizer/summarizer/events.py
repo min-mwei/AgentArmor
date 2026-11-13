@@ -14,6 +14,7 @@ from .facts import PERSISTENT, expand, host_flags, hosts, path_classes, shell_fa
 from .store import EVENTS, read_events, session_dir
 
 ACTION_CHARS = 1200  # an action's own text, as embedded and shown; the whole call is still scanned
+ENTRY_IOCS = 8  # observables listed on one entry of a summary; its text may name more
 CHUNK_CHARS = 320  # lower-trust content is embedded and quoted whole in pieces of this size
 MAX_CHUNKS = 1024  # per event: every character the hook keeps; anything beyond is reported
 

@@ -25,7 +25,21 @@ What ties an entry of another session to the call, and only these:
 - earlier: what the user said in an earlier session of the call's own project. No claim is
   made that it limits or permits this call: that is for whoever reads the packet.
 - said: what the user said in another project, shown only when it names this call's path.
-- recent: another call of an earlier session that names what this call names.
+- recent: another call of an earlier session that names what this call names. When it is
+  a look at a file this call names, or at a startup file its shell is documented to read,
+  what came back is shown with it, as key evidence: what the file held is part of its
+  history, and a session that only looked may be the only one that saw it. So is a call
+  that names a place this call sends to: what that session asked of the destination, or
+  sent there, with what came back. Such a call asks for nothing by itself.
+
+A file the call runs or loads is program text. What an earlier session wrote into it names
+the files and the places the call will touch when it runs: a script that holds "curl -T
+cache/sample.csv https://intake.example" makes that file and that place this call's. They
+are counted with what the call's own words name, for every tie here: a write of that file
+is kept with what stands around it, a look at it with what came back, what was seen of
+that place, and a bound the user stated on either. One step, and no further. And only as
+far as the write was kept: where its text was cut, or it lists as many observables as an
+entry can, what else it names is not known, and the search is unfinished.
 
 Most calls hand a file to a program this module does not read the grammar of ("curl -T
 out/bundle.txt …", "pkgtool --config config/packages.toml …"). Whether the program reads
@@ -44,9 +58,12 @@ narrower than the call. So is a bound stated in another project on a file that s
 where a file of this call sits here: the same name in another place, said to be elsewhere
 and bearing on nothing. A write of such a file with no bound stated on it is not shown:
 another project's file is not this call's. With a statement come the first writes that
-session proposed under it, each with what stands around it, as context: what was done
-under a limit is how the limit was read at the time. The newest few other requests of the
-project's earlier sessions are context too, said earlier and tied to nothing.
+session proposed under it, each with what stands around it: what was done under a limit
+is how the limit was read at the time. That is context, except under a statement that
+bears on the call, where it is key evidence: what that session was told below the user
+while the limit stood, and what it then wrote, is what the limit is held against. The
+newest few other requests of the project's earlier sessions are context, said earlier and
+tied to nothing.
 
 A statement bears on the call, and the call is then put to the decision model whatever its
 level, when it states a bound (not merely a task, and not a clause that only points back at
@@ -94,6 +111,7 @@ import fnmatch
 import os
 import re
 
+from .events import ENTRY_IOCS
 from .facts import PERSISTENT, expand, path_classes, shell_segments
 
 WRITES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"})
@@ -678,6 +696,19 @@ def reaches(path, cwd, home):
     return everywhere or path.startswith(cwd + "/")
 
 
+def _use(path, mine_uses, command, call, cwd, home):
+    """How the call uses a file, as far as its own words show: it runs it, it reads it, or
+    it is a control file within reach, which its shell loads where zsh documents that this
+    very invocation reads it, and may load otherwise. None when its words show none."""
+    if path in mine_uses["run"]:
+        return "run"
+    if path in mine_uses["read"]:
+        return "read"
+    if call.get("tool") in SHELLS and reaches(path, cwd, home):
+        return "load" if startup_expected(command, path, home) else "may_load"
+    return None
+
+
 def startup_expected(command, path, home):
     """Whether zsh documents that this exact invocation reads that startup file."""
     started = _STARTUP.match(command)
@@ -792,8 +823,35 @@ def select(mine, call_id, others, home):
     mine_uses = uses(call, cwd, home)
     command = str(call.get("target") or "")
     items, bridges, groups, why, excluded, searched, candidates = [], [], [], [], {}, [], []
-    unresolved, unsupported = {}, list(mine_uses["unsupported"])
+    unresolved, unsupported, sources = {}, list(mine_uses["unsupported"]), []
     kinds, shown_in, tokens, plain = _kinds_of(call, command), {}, set(), []
+    for other in others:
+        near = _known(namespace) and _known(other["namespace"])
+        if near and other["namespace"] != namespace:
+            excluded[other["key"]] = "other_namespace"
+            continue
+        searched.append(other["key"])
+        if not near:  # eligible as the call's own namespace, and said not to be known
+            unresolved[other["key"]] = "namespace_unknown"
+        actions = (e for e in other["summary"]["entries"] if e["type"] == "action")
+        sources.append((other, [(e, uses(e, other["cwd"], home)) for e in actions]))
+    # One step on. A file the call runs or loads is program text, and what an earlier
+    # session wrote into it names the files and the places the call will touch when it
+    # runs: "curl -T cache/sample.csv https://intake.example" in a script is this call's
+    # file and this call's destination. They are counted with what the call's own words
+    # name, for every tie below. One step and no further, and only as far as the write
+    # was kept: where its text was cut, or it lists as many observables as an entry can,
+    # what else it names is not known, and the search is said to be unfinished.
+    places = _places(call)
+    for _, acted in sources:
+        for entry, theirs in acted:
+            path = theirs["write"]
+            if path and _use(path, mine_uses, command, call, cwd, home) in ("run", *LOADS):
+                mine_uses["named"] |= _said(entry, cwd, home) - {path}
+                places |= _places(entry)
+                cut = "text_chars" in entry or len(entry.get("iocs") or ()) >= ENTRY_IOCS
+                if cut and "program_text_cut" not in unsupported:
+                    unsupported.append("program_text_cut")
     # What the user said in this very session that states a bound the call can be held
     # against. It is in the session's own packet already; here it decides the route.
     stated = [
@@ -805,14 +863,7 @@ def select(mine, call_id, others, home):
     ]
     for prompt in stated:
         tokens |= _tokens(prompt)
-    for other in others:
-        near = _known(namespace) and _known(other["namespace"])
-        if near and other["namespace"] != namespace:
-            excluded[other["key"]] = "other_namespace"
-            continue
-        searched.append(other["key"])
-        if not near:  # eligible as the call's own namespace, and said not to be known
-            unresolved[other["key"]] = "namespace_unknown"
+    for other, acted in sources:
         summary, there = other["summary"], other["cwd"]
         if not summary["session"]["coverage"]["scanned_all_captured"]:
             why.append("capture_gap")
@@ -822,7 +873,7 @@ def select(mine, call_id, others, home):
         # is made again it is not indexed for this lookup, and the history says so.
         if _made(summary) != _made(mine["summary"]):
             why.append("not_indexed")
-        found = _from(other, mine_uses, command, call, cwd, home)
+        found = _from(other, acted, mine_uses, places, command, call, cwd, home)
         items += found["items"]
         bridges += found["bridges"]
         groups += found["groups"]
@@ -866,7 +917,7 @@ def select(mine, call_id, others, home):
                 if same_project:  # said earlier in this project, of something else
                     plain.append((other, prompt, group))
                 continue
-            under = _under(other, prompt, taken)
+            under = _under(other, prompt, taken, key=same_project and named)
             items += under["items"]
             groups += under["groups"]
             taken |= {(item["seq"], item["type"]): item for item in under["items"]}
@@ -951,8 +1002,10 @@ def _names(prompt, named, cwd, home):
     return bool(said & named)
 
 
-def _from(other, mine_uses, command, call, cwd, home):
-    """The writes of one source that this call uses, each with what stands around it."""
+def _from(other, acted, mine_uses, places, command, call, cwd, home):
+    """What one source holds for the call: the writes of what it uses, each with what stands
+    around it, and the calls and the content that name what it names. acted is that source's
+    calls, each with what its words use; places is where the call can send to."""
     summary, there = other["summary"], other["cwd"]
     entries = summary["entries"]
     items, bridges, groups, taken, pattern, written, reads = [], [], {}, {}, False, [], []
@@ -981,25 +1034,21 @@ def _from(other, mine_uses, command, call, cwd, home):
         for content in [e for e in before if e["seq"] == linked] or before[-1:]:
             take(content, "shown", group)
         take(entry, relation, group, bears=bears)
+        came_back(entry, group)
+
+    def came_back(entry, group, bears=False):
         for content in _lower(entries):
             same_call = content.get("call_id") == entry.get("call_id")
             if same_call and content["seq"] > entry["seq"]:
-                take(content, "shown", group)
+                take(content, "shown", group, bears=bears)
 
-    places = _places(call)
-    for entry in entries:
-        if entry["type"] != "action":
-            continue
-        theirs = uses(entry, there, home)
+    def loaded(path):
+        return _use(path, mine_uses, command, call, cwd, home) == "load"
+
+    for entry, theirs in acted:
         reads.append((entry["seq"], entry.get("call_id"), theirs["read"]))
         path = theirs["write"]
-        use = None
-        if path and path in mine_uses["run"]:
-            use = "run"
-        elif path and path in mine_uses["read"]:
-            use = "read"
-        elif path and call.get("tool") in SHELLS and reaches(path, cwd, home):
-            use = "load" if startup_expected(command, path, home) else "may_load"
+        use = _use(path, mine_uses, command, call, cwd, home) if path else None
         if use is None and path and _fits(path, mine_uses["patterns"]):
             # A wildcard of the call, or a place a module it names could be, that this
             # write's path fits: it may be what the call uses, and that cannot be said or
@@ -1047,7 +1096,27 @@ def _from(other, mine_uses, command, call, cwd, home):
                 around(entry, "recent", group, bears=marked)
                 if same_file:
                     written.append((entry["seq"], path, group))
-            elif (names and other["cwd"] == cwd) or sends:
+            elif looked := [p for p in theirs["read"] if p in mine_uses["named"] or loaded(p)]:
+                # A look at a file this call names, or at a startup file its shell loads,
+                # in a session that is not seen writing it: what the file held then is
+                # part of its history, and a look in another session than the write is
+                # the only one there may be. The call is no more than recent and what came
+                # back no more than shown. But it is key: a packet that leaves it out has
+                # not shown what was known of the file, and says so.
+                group = f"{other['key']}:looked:{looked[0]}"
+                groups.setdefault(group, {"id": group, "kind": "named", "key": True})
+                groups[group]["bears"] = groups[group].get("bears", False) or marked
+                take(entry, "recent", group, bears=marked)
+                came_back(entry, group, bears=marked)
+            elif sends:
+                # A call that names a place this call sends to: what that session asked
+                # of the destination, or sent there, with what came back. It is what was
+                # seen of the place, and key as a look at a file is. It asks for nothing.
+                group = f"{other['key']}:saw:{entry['seq']}"
+                groups[group] = {"id": group, "kind": "named", "key": True, "bears": False}
+                take(entry, "recent", group)
+                came_back(entry, group)
+            elif names and other["cwd"] == cwd:
                 # Another call of that session that names what this call names: recent.
                 group = f"{other['key']}:recent:{entry['seq']}"
                 groups.setdefault(group, {"id": group, "kind": "recent", "key": False})
@@ -1102,9 +1171,9 @@ def _from(other, mine_uses, command, call, cwd, home):
     # that names one of its files or one of the places it sends to. Marked content is key
     # evidence and bears on the route; a plain mention is context.
     said_by = {
-        e.get("call_id"): (uses(e, there, home)["named"] | _said(e, there, home), _places(e))
-        for e in entries
-        if e["type"] == "action" and e.get("call_id")
+        e.get("call_id"): (theirs["named"] | _said(e, there, home), _places(e))
+        for e, theirs in acted
+        if e.get("call_id")
     }
     for content in _lower(entries):
         files = _said(content, there, home) & mine_uses["named"]
@@ -1173,10 +1242,12 @@ def _alike(prompt, there, named, cwd, home):
     return False
 
 
-def _under(other, prompt, taken):
+def _under(other, prompt, taken, key=False):
     """What that session did under a request: the first writes it proposed before the next
     request, each with the lower-trust content shown before it in that turn and what came
-    back. Context, in a group of its own, and tied to nothing: "recent" and "shown"."""
+    back. In a group of its own, and tied to nothing: "recent" and "shown". It is context,
+    except under a statement that bears on the call: how a limit was read at the time, and
+    what that session was told below the user while it stood, is then key evidence."""
     entries = other["summary"]["entries"]
     later = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] > prompt["seq"]]
     end = min(later, default=float("inf"))
@@ -1202,7 +1273,7 @@ def _under(other, prompt, taken):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
                 items.append(_item(other, entry, "shown", groups=[group]))
-    found = [{"id": group, "kind": "recent", "key": False, "bears": False}] if items else []
+    found = [{"id": group, "kind": "recent", "key": bool(key), "bears": False}] if items else []
     return {"items": items, "groups": found}
 
 

@@ -26,6 +26,7 @@ from .embedder import unit as normalize
 from .events import (
     ACTION_CHARS,
     CHUNK_CHARS,
+    ENTRY_IOCS,
     MAX_CHUNKS,
     Unit,
     agent_home,
@@ -711,7 +712,7 @@ class Session:
             self._observe(kind, value, seq, "agent")
         message = {"seq": seq, "ts": ts, "text": text, "indicators": indicators}
         if named:
-            message["iocs"] = [f"{kind}:{value}" for kind, value in named][:8]
+            message["iocs"] = [f"{kind}:{value}" for kind, value in named][:ENTRY_IOCS]
         if len(text) > MESSAGE_SHOWN and found:
             # A packet shows the start of a message. What raised an indicator further in is
             # kept beside it: first one place for each kind of wording, then the rest in order,
@@ -1084,7 +1085,8 @@ class Session:
         if unit.notes:
             entry["notes"] = unit.notes
         if unit.iocs:
-            entry["iocs"] = [f"{kind}:{value}" for kind, value in dict.fromkeys(unit.iocs)][:8]
+            named = [f"{kind}:{value}" for kind, value in dict.fromkeys(unit.iocs)]
+            entry["iocs"] = named[:ENTRY_IOCS]
         return entry
 
     @staticmethod
@@ -1107,7 +1109,7 @@ class Session:
             if prompt["noted"]:  # where in a long request the limiting or permitting words are
                 entry["noted"] = prompt["noted"]
             if prompt["iocs"]:
-                entry["iocs"] = [f"{kind}:{value}" for kind, value in prompt["iocs"]][:8]
+                entry["iocs"] = [f"{kind}:{value}" for kind, value in prompt["iocs"]][:ENTRY_IOCS]
             entries.append(entry)
         return entries
 
