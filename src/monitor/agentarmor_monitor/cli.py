@@ -368,7 +368,6 @@ def gates_summary(records):
     are reported as run after a "deny". Counts only: no text of any session."""
     answers = [r for r in records if r.get("stage") == "answered"]
     issued = [r for r in records if r.get("gate") and r.get("stage") == "issued"]
-    observed = [r for r in records if r.get("stage") == "observed"]
     took = sorted(r["elapsed_ms"] for r in answers if isinstance(r.get("elapsed_ms"), int))
 
     def at(share):
@@ -392,22 +391,25 @@ def gates_summary(records):
     told["no_receipt"] = sum(1 for r in answers if not r.get("receipt"))
     told["elapsed_ms"] = {"measured": len(took), "median": at(0.5), "p95": at(0.95)}
     told["elapsed_ms"]["max"] = took[-1] if took else None
-    # A report by the order it came in beside the gate's answer. One recorded with no answer
-    # is counted as that only while no answer has been tied to it since.
-    after = [r for r in observed if r.get("order", "after_answer") == "after_answer"]
-    before = [r for r in observed if r.get("order") == "before_answer"]
-    tied = {(r.get("session"), r.get("call_id"), r.get("reported")) for r in before}
-    alone = [
-        r
-        for r in observed
-        if r.get("order") == "no_answer"
-        and (r.get("session"), r.get("call_id"), r.get("reported")) not in tied
-    ]
-    told["reported_after_an_answer"] = len(after)
-    told["reported_before_the_answer"] = len(before)
-    told["reported_with_no_answer"] = len(alone)
-    told["ran_after_deny"] = sum(1 for r in observed if r.get("ran_after_deny"))
-    told["ran_before_answer"] = sum(1 for r in observed if r.get("ran_before_answer"))
+    # Each report beside the gate's answer for its call, worked out here from the answers
+    # and reports on record (gate.joined) and not from what a record says of itself: two
+    # hook processes can each have read before the other wrote.
+    from .gate import joined
+
+    reports = joined(records)
+
+    def count(order):
+        return sum(1 for report in reports if report["order"] == order)
+
+    ran = [report for report in reports if report["reported"] == "PostToolUse"]
+    told["reported_after_an_answer"] = count("after_answer")
+    told["reported_before_the_answer"] = count("before_answer")
+    told["reported_with_no_answer"] = count("no_answer")
+    told["reported_in_an_order_not_known"] = count("unknown")
+    told["ran_after_deny"] = sum(
+        1 for r in ran if r["order"] == "after_answer" and r["answered"] == "deny"
+    )
+    told["ran_before_answer"] = sum(1 for r in ran if r["order"] == "before_answer")
     return told | {"advisory": True, "policy_ready": False}
 
 

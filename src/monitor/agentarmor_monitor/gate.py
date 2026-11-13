@@ -39,6 +39,8 @@ The decision model's serving path is unqualified (policy_ready false): this gate
 unqualified model's decisions and is not a claim of attack prevention.
 """
 
+import contextlib
+import fcntl
 import json
 import os
 import sys
@@ -141,6 +143,41 @@ def outcome(agent, session, call_id, why, summary=None):
     return record | provenance(summary)
 
 
+@contextlib.contextmanager
+def one_at_a_time(agent, session, wait=1.0):
+    """Hold a session's audit for one read-and-append. Never raises, and never waits long.
+
+    A report and an answer for one call are written by two hook processes. Each reads what
+    is on record and then appends, and the append being atomic does not make the reading
+    before it so: between the two, the other process can write. A lock on a file beside
+    the detections makes the pair one step. A gate must not hang on it, so it is asked for
+    without blocking for a moment and then gone without: what is on record is then still
+    put in order when it is read (joined), by what was appended and when.
+    """
+    held = None
+    try:
+        directory = session_dir(agent, session)
+        private_dir(directory)
+        held = os.open(os.path.join(directory, "detections.lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+    except Exception as error:
+        note(agent, error, "locking")
+    try:
+        yield
+    finally:
+        if held is not None:
+            with contextlib.suppress(OSError):
+                os.close(held)  # closing gives the lock up
+
+
 def keep(agent, session, record):
     """Append a record to a session's detections. Best effort, and never raises."""
     if not isinstance(session, str) or not session:
@@ -206,9 +243,10 @@ def answered(
     record |= {"policy_sha256": (bound.get("policy") or {}).get("sha256")}
     record |= {"evidence": bound.get("evidence"), "request_sha256": bound.get("request_sha256")}
     record |= {"advisory": True, "policy_ready": False}
-    keep(agent, session, record)
-    if isinstance(call_id, str) and call_id:
-        reconcile(agent, session, call_id, record)
+    with one_at_a_time(agent, session):  # the answer and the reports it is tied to, as one
+        keep(agent, session, record)
+        if isinstance(call_id, str) and call_id:
+            reconcile(agent, session, call_id, record)
 
 
 def _observed(agent, session, call_id, event, answer, order):
@@ -244,17 +282,59 @@ def observe(agent, payload, event):
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
     if not isinstance(session, str) or not session or not isinstance(call_id, str) or not call_id:
         return
+    began = round(time.time(), 3)  # when the report came, before anything on record is read
     try:
-        last = None
-        for record in read(session_dir(agent, session)):
-            if record.get("stage") == "answered" and record.get("call_id") == call_id:
-                last = record
-        order = "after_answer" if last is not None else "no_answer"
-        record = _observed(agent, session, call_id, event, last, order)
-        record["key"] = f"observed:{call_id}:{event}"
-        keep(agent, session, record)
+        with one_at_a_time(agent, session):  # what is on record, and this report, as one
+            last = None
+            for record in read(session_dir(agent, session)):
+                if record.get("stage") == "answered" and record.get("call_id") == call_id:
+                    last = record
+            order = "after_answer" if last is not None else "no_answer"
+            record = _observed(agent, session, call_id, event, last, order)
+            record |= {"key": f"observed:{call_id}:{event}", "ts": began}
+            keep(agent, session, record)
     except Exception as error:
         note(agent, error, "observing")
+
+
+def joined(records):
+    """Each report of a call with the gate's answer it belongs to, worked out from what is
+    on record and not from what a record says of itself:
+
+        [{"session", "call_id", "reported", "order", "answered", "attempt", "ts"}, ...]
+
+    order is "after_answer" when an answer for that call was appended before the report and
+    is not dated after it; "before_answer" when the first answer for the call was appended
+    after the report and is not dated before it; "no_answer" when none is on record; and
+    "unknown" when the place of an answer in the file and its time disagree, as they can
+    when two hook processes wrote at once without the lock. Nothing is made of a report
+    whose order is unknown: it neither ran after a deny nor before the answer.
+    """
+    answers, reports = {}, []
+    for place, record in enumerate(records):
+        at = (record.get("session"), record.get("call_id"))
+        if record.get("stage") == "answered":
+            answers.setdefault(at, []).append((place, record))
+        elif record.get("stage") == "observed" and record.get("order") != "before_answer":
+            reports.append((place, record))  # a report itself, not a copy that ties one
+    found = []
+    for place, report in reports:
+        mine = answers.get((report.get("session"), report.get("call_id")), [])
+        when = report.get("ts") or 0
+        earlier = [a for at, a in mine if at < place and (a.get("ts") or 0) <= when]
+        later = [a for at, a in mine if at > place and (a.get("ts") or 0) >= when]
+        if earlier:
+            order, answer = "after_answer", earlier[-1]
+        elif later and len(later) == len(mine):
+            order, answer = "before_answer", later[0]
+        elif mine:
+            order, answer = "unknown", None
+        else:
+            order, answer = "no_answer", None
+        told = {name: report.get(name) for name in ("session", "call_id", "reported", "ts")}
+        told |= {"order": order, "answered": (answer or {}).get("answered")}
+        found.append(told | {"attempt": (answer or {}).get("attempt")})
+    return found
 
 
 def reconcile(agent, session, call_id, answer):
@@ -395,4 +475,4 @@ def main(args, prepare):
 
 
 __all__ = ["answered", "check", "denial", "keep", "main", "note", "observe", "outcome", "read"]
-__all__ += ["reconcile", "run"]
+__all__ += ["joined", "one_at_a_time", "reconcile", "run"]

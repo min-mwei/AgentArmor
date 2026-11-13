@@ -4489,3 +4489,98 @@ def test_a_shadow_server_puts_every_marked_call_to_kai_unless_told_another_level
     assert level(shadow=True, gate_level="high") == "high" and level(gate_level="low") == "low"
     assert cli.mode_of(argparse.Namespace(shadow=True)) == "shadow"
     assert cli.mode_of(argparse.Namespace()) == "enforce"
+
+
+def audit_of(session):
+    return escalate.read(session_dir("claude_code", session))
+
+
+def test_a_report_and_an_answer_written_at_once_are_still_joined(spool, monkeypatch):
+    # MR122. A report reads what is on record and then appends; so does an answer. Between
+    # one process's reading and its append the other could write: the report said "no
+    # answer", the answer found no report to tie, and the two stayed apart for good.
+    import contextlib
+    import threading
+
+    payload = event("s-race", hook_event_name="PostToolUse") | call(3, "Bash", {"command": "ls"})
+    asked = {"attempt": "a1"}
+
+    def answer(session):
+        told = payload | {"session_id": session}
+        gate.answered("claude_code", told, asked, "deny", None, True, "deny", None)
+
+    # With the lock the two cannot interleave: the answer waits for the report to be
+    # written, and then ties itself to it.
+    reading, go = threading.Event(), threading.Event()
+    real = gate.read
+
+    def slow(directory):
+        found = real(directory)
+        reading.set()
+        assert go.wait(5)
+        return found
+
+    monkeypatch.setattr(gate, "read", slow)
+    first = threading.Thread(target=gate.observe, args=("claude_code", payload, "PostToolUse"))
+    first.start()
+    assert reading.wait(5)
+    monkeypatch.setattr(gate, "read", real)  # only the report's own reading is slow
+    second = threading.Thread(target=answer, args=("s-race",))
+    second.start()
+    second.join(0.2)
+    assert second.is_alive() and audit_of("s-race") == []  # the answer waits its turn
+    go.set()
+    first.join(5)
+    second.join(5)
+    assert [r["stage"] for r in audit_of("s-race")] == ["observed", "answered", "observed"]
+    counted = cli.gates_summary(audit_of("s-race"))
+    assert (counted["reported_before_the_answer"], counted["ran_before_answer"]) == (1, 1)
+    assert (counted["reported_with_no_answer"], counted["reported_in_an_order_not_known"]) == (0, 0)
+
+    # Without the lock (it could not be taken) the interleaving happens: the report reads,
+    # the answer is appended and finds nothing to tie, the report is appended as "no
+    # answer". What is on record is still joined when it is read, and since the answer's
+    # place says one order and its time the other, the order is said not to be known.
+    monkeypatch.setattr(gate, "one_at_a_time", lambda *_: contextlib.nullcontext())
+    late = payload | {"session_id": "s-race-2"}
+
+    def interleaved(directory):
+        found = real(directory)
+        monkeypatch.setattr(gate, "read", real)
+        time.sleep(0.01)
+        answer("s-race-2")
+        return found
+
+    monkeypatch.setattr(gate, "read", interleaved)
+    gate.observe("claude_code", late, "PostToolUse")
+    stored = audit_of("s-race-2")
+    assert [(r["stage"], r.get("order")) for r in stored] == [
+        ("answered", None),
+        ("observed", "no_answer"),
+    ]
+    (report,) = gate.joined(stored)
+    assert (report["order"], report["call_id"], report["reported"]) == (
+        "unknown",
+        "call-3",
+        "PostToolUse",
+    )
+    counted = cli.gates_summary(stored)
+    assert counted["reported_in_an_order_not_known"] == 1 and counted["calls"] == 1
+    assert (counted["reported_with_no_answer"], counted["ran_after_deny"]) == (0, 0)
+    assert counted["ran_before_answer"] == 0  # nothing is made of an order that is not known
+    # The two plain orders, read off the record alone, whatever each record says of itself.
+    plain = [
+        {"stage": "answered", "session": "s", "call_id": "c", "ts": 5.0, "answered": "deny"},
+        {"stage": "observed", "session": "s", "call_id": "c", "ts": 6.0, "reported": "PostToolUse"},
+        {"stage": "observed", "session": "s", "call_id": "d", "ts": 7.0, "reported": "PostToolUse"},
+        {"stage": "answered", "session": "s", "call_id": "d", "ts": 8.0, "answered": "deny"},
+        {"stage": "observed", "session": "s", "call_id": "e", "ts": 9.0, "reported": "PostToolUse"},
+    ]
+    assert [r["order"] for r in gate.joined(plain)] == [
+        "after_answer",
+        "before_answer",
+        "no_answer",
+    ]
+    counted = cli.gates_summary(plain)
+    assert (counted["ran_after_deny"], counted["ran_before_answer"]) == (1, 1)
+    assert counted["reported_with_no_answer"] == 1

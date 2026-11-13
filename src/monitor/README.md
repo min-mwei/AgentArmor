@@ -280,6 +280,13 @@ it is tied to, and `order`:
   first. A result among them is `ran_before_answer`: the client did not wait, and
   whatever the gate then answered came too late for that call.
 
+A report and an answer for one call are written by two hook processes. Each takes a lock
+beside the session's detections for its read-and-append, so the two cannot interleave; a
+gate does not wait for that lock for more than a second. `gates` does not rely on what a
+record says of itself either: it puts each report beside the answers on record by where
+each was appended and when, and where the two disagree it says the order is not known
+(`reported_in_an_order_not_known`) and makes nothing of that report.
+
 A failure or a refusal after a deny is left as reported: either can be how an agent
 reports the denial. A reported result is not proof of any effect. A gate that could not
 run at all (a missing executable, a client's deadline) leaves no record, so the gate's
