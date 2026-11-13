@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "summarizer"
+version = "0.1.0"
+description = "On-the-fly session summaries for Claude Code and Codex, built with EmbeddingGemma 2 for agent guard models"
+readme = "README.md"
+requires-python = ">=3.11"
+# The hook, the spool reader and the renderer use the standard library only.
+dependencies = []
+
+[project.optional-dependencies]
+# EmbeddingGemma 2 loads its image and video processors even for text-only use.
+runtime = [
+    "numpy>=2",
+    "torch>=2.8",
+    "transformers>=5.21,<6",
+    "sentence-transformers>=6.2,<7",
+    "pillow>=11",
+    "torchvision>=0.24",
+]
+train = [
+    "summarizer[runtime]",
+    "datasets>=4",
+    "accelerate>=1.10",
+]
+dev = [
+    "numpy>=2",
+    "pytest>=8",
+    "ruff>=0.11",
+]
+
+[project.scripts]
+summarizer = "summarizer.cli:main"
+summarizer-hook = "summarizer.hook:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["summarizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "train"]
+addopts = "-q"
+markers = ["model: needs the cached EmbeddingGemma 2 weights (set SUMMARIZER_TEST_MODEL=1)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures quote payloads and attack text verbatim; wrapping them hides what is being tested.
+"tests/*" = ["E501"]
+"train/data/*" = ["E501"]

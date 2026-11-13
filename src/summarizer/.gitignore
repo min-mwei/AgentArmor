@@ -1,0 +1,39 @@
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+.DS_Store
+*.log
+
+# Secrets and local agent state. Agent role definitions are shared; the rest stays local.
+.env
+.env.*
+hf_tok.txt
+.claude/*
+!.claude/agents/
+.codex/
+
+# Session spools are chat logs; model weights and training runs stay local. Of the training
+# data, the hand-written starter set and accepted synthetic batches are tracked. Seeds are
+# excerpts of real sessions and built pairs are derived: both stay out.
+.summarizer/
+/train/runs/
+/train/data/*
+!/train/data/starter/
+!/train/data/synthetic/
+!/train/data/eval/
+models/
+checkpoints/
+*.safetensors
+*.pt
+*.bin
+*.npy
+*.npz
+
+# Returned by the Model Reviewer; kept locally for reference, never used or tracked.
+/train/data/synthetic/batch-001.jsonl

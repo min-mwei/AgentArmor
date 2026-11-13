@@ -33,8 +33,16 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
   2026-11-10: Summarizer runs as a local model that reads every agent interaction, summarizes
   the session as context and filters out suspicious activity; Kai receives each suspicious
   entry with that context and makes the final decision, allow or deny.
-  - Summarizer (`github.com/min-mwei/Summarizer`) is a dependency. Its hook stays an observer;
-    do not copy its code here or change its summary format from this repository.
+  - Summarizer is a core part of this repository: `src/summarizer` (package `summarizer`),
+    with its own [AGENTS.md](src/summarizer/AGENTS.md). The user decided this on 2026-11-13:
+    "Let's refactor AgentArmor and merge Summarizer as a core feature in AgentArmor", and
+    "Treat the current Summarizer repo as a POC. The real work is in AgentArmor repo."
+    It replaces the 2026-11-10 rule that Summarizer was a dependency whose code was not to
+    be copied here. Its hook stays an observer. [docs/architecture.md](docs/architecture.md)
+    is the design: one store, one code path for each thing, and nothing copied between
+    components. Until the monitor is moved onto this tree it still installs the reviewed
+    Summarizer commit named in `src/monitor/pyproject.toml`; that move is told to Kai's
+    board first, because it changes what identifies Kai's input.
   - Ask Kai only its registered questions, word for word (`agentarmor_monitor/kai.py`); rules,
     context and the call go in the state, in Kai's decision layout.
   - The gate may return Kai's "deny" for a call Summarizer marked. A call it cannot decide is

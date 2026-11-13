@@ -1,0 +1,71 @@
+# Merge into ~/.codex/config.toml, or use hooks.json.example instead; install one, not both.
+# Replace /ABSOLUTE/PATH/summarizer-hook with the installed executable.
+
+[[hooks.SessionStart]]
+
+[[hooks.SessionStart.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.PreToolUse]]
+
+[[hooks.PreToolUse.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.PermissionRequest]]
+
+[[hooks.PermissionRequest.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.PostToolUse]]
+
+[[hooks.PostToolUse.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.SubagentStart]]
+
+[[hooks.SubagentStart.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.SubagentStop]]
+
+[[hooks.SubagentStop.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.PostCompact]]
+
+[[hooks.PostCompact.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
+timeout = 10
+
+[[hooks.SessionEnd]]
+
+[[hooks.SessionEnd.hooks]]
+type = 'command'
+command = '"/ABSOLUTE/PATH/summarizer-hook" --agent codex_code'
