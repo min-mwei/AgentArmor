@@ -171,10 +171,10 @@ def judge(
     a call is routed on marks. With made_with given, such a summary is no basis for a
     decision and the verdict is "undecided", why "summary_made_otherwise".
 
-    earlier, when given, is the shadow measurement of what other sessions hold
-    (earlier.Shadow). The call is handed to it without waiting, and it keeps its own
-    record: no verdict, request, reason or field of the record here reads it, and it
-    holds no decision slot.
+    earlier, when given, is this attempt's ticket to the shadow measurement of what other
+    sessions hold (earlier.Ticket). The summary read here is offered to it without
+    waiting, and it keeps its own record: no verdict, request, reason or field of the
+    record here reads it, and it holds no decision slot. Whoever gave the ticket closes it.
 
     A record says how far the session's log had been read when its evidence was taken
     ("evidence"), how the call was routed ("routing": asked or not, and the level and
@@ -187,15 +187,11 @@ def judge(
     settle = SETTLE if settle is None else settle
     summary = load_summary(agent, directory.name, wait, call_id, identity, made_with=made_with)
     if summary is None or not summary.get("fresh") or summary.get("call") != "verified":
-        if earlier is not None:
-            earlier.unmeasured("no_summary")
         return "undecided", None, "no_summary"  # nothing about this exact call to decide on
     if made_with is not None and summary.get("compatible") is not True:
-        if earlier is not None:
-            earlier.unmeasured("summary_made_otherwise")
         return "undecided", None, "summary_made_otherwise"  # marked by another model or rules
     if earlier is not None:
-        earlier.offer(agent, directory.name, call_id, summary, identity)
+        earlier.offer(directory.name, summary)
     entry = next(
         e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
     )
@@ -328,6 +324,9 @@ class Decider:
         """
         if malformed(asked):  # nothing is kept of what is not a question
             return self.receipt(asked if isinstance(asked, dict) else {}, "undecided", "request")
+        # Every validated question is counted once by the shadow measurement, with its
+        # attempt: offered from inside judge(), or closed below with why it was not.
+        ticket = self.earlier.ticket(asked) if self.earlier is not None else None
         if not self.room.acquire(blocking=False):
             # Told at once, and put on record like any check that was not completed.
             verdict, record, why = "undecided", None, "busy"
@@ -344,13 +343,15 @@ class Decider:
                     self.wait,
                     self.rules,
                     made_with=self.made_with,
-                    earlier=self.earlier,
+                    earlier=ticket,
                 )
             except Exception as error:
                 note(asked["agent"], error, "failed")
                 verdict, record, why = "undecided", None, "failed"
             finally:
                 self.room.release()
+        if ticket is not None:
+            ticket.close(why)
         if record is None:  # no summary of the call was read: the outcome alone
             record = outcome(asked["agent"], asked["session_id"], asked["tool_use_id"], why)
         record |= {"gate": True, "stage": "issued", "attempt": asked["attempt"], "mode": self.mode}

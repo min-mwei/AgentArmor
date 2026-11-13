@@ -68,8 +68,16 @@ def records(name="s-late"):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
-def judged(identity, shadow=None):
-    return decide.judge("claude_code", "s-late", "call-1", identity, None, "low", earlier=shadow)
+def judged(identity, shadow=None, attempt="a-1"):
+    ticket = None
+    if shadow is not None:
+        ticket = shadow.ticket(
+            question("claude_code", "s-late", "call-1", identity, "deny") | {"attempt": attempt}
+        )
+    found = decide.judge("claude_code", "s-late", "call-1", identity, None, "low", earlier=ticket)
+    if ticket is not None:
+        ticket.close(found[2])
+    return found
 
 
 def test_what_earlier_sessions_hold_is_counted_apart_and_nothing_of_them_is_recorded(spool):
@@ -86,6 +94,7 @@ def test_what_earlier_sessions_hold_is_counted_apart_and_nothing_of_them_is_reco
     (seen,) = records()
     assert seen["schema"] == earlier.SCHEMA and seen["key"] == "gate:call-1"
     assert seen["call_sha256"] == identity and "error" not in seen
+    assert (seen["attempt"], seen["disposition"]) == ("a-1", "measured")
     assert seen["bridges"] == 1 and seen["lines"] >= 2 and seen["coverage_known"] is True
     assert seen["sessions"] == {
         "listed": 1,
@@ -98,7 +107,13 @@ def test_what_earlier_sessions_hold_is_counted_apart_and_nothing_of_them_is_reco
     assert seen["limits"] == earlier.LIMITS and isinstance(seen["ms"], int)
     # Counts only: nothing a session said, wrote or named.
     assert "intake-fern" not in json.dumps(seen) and "submit.sh" not in json.dumps(seen)
-    assert shadow.about()["measured"] == 1 and shadow.about()["offered"] == 1
+    told = shadow.about()
+    assert (told["attempts"], told["offered"], told["measured"], told["not_measured"]) == (
+        1,
+        1,
+        1,
+        {},
+    )
     shadow.close()
 
 
@@ -160,25 +175,45 @@ def test_a_measurement_that_hangs_holds_no_decision_and_a_full_queue_is_counted(
     # Every decision came back, none of them "busy", while the worker was held.
     assert all(answer["why"] != "busy" for answer in answers), [a["why"] for a in answers]
     told = shadow.about()
-    assert told["offered"] == 6 and told["dropped_queue_full"] >= 3 and told["measured"] == 0
+    assert told["attempts"] == 6 and told["offered"] == 6 and told["dropped_queue_full"] >= 3
+    assert told["measured"] == 0
     held.set()
     assert shadow.drain()
     shadow.close()
 
 
-def test_a_proposal_with_no_summary_is_counted_as_not_measured(spool):
+def test_every_attempt_is_counted_once_with_its_attempt_and_the_counts_reconcile(
+    spool, monkeypatch
+):
+    # MR160-1. Busy and failed attempts never reached the measurement and were missing from
+    # its counts, and records carried no attempt: retries could not be told apart.
+    identity = two_sessions()
     log("s-none", {"hook_event_name": "SessionStart", "source": "startup"}, *tool(1, "Bash", RUN))
     shadow = earlier.Shadow(5000)
-    verdict, record, why = decide.judge(
-        "claude_code",
-        "s-none",
-        "call-1",
-        call_sha256("Bash", RUN),
-        None,
-        "low",
-        wait=0.0,
-        earlier=shadow,
-    )
-    assert (verdict, why) == ("undecided", "no_summary")
-    assert shadow.about()["not_measured"] == {"no_summary": 1} and shadow.about()["offered"] == 0
+    decider = Decider(None, level="low", wait=0.0, slots=1, mode="shadow", earlier=shadow)
+
+    def asked(session, attempt):
+        return question("claude_code", session, "call-1", identity, "deny") | {"attempt": attempt}
+
+    decider.decide(asked("s-late", "first"))  # measured
+    decider.decide(asked("s-late", "retry"))  # the same call again: another attempt
+    decider.decide(asked("s-none", "no-summary"))  # its session has no summary
+    decider.room.acquire()  # every decision slot taken
+    decider.decide(asked("s-late", "while-busy"))
+    decider.room.release()
+    monkeypatch.setattr(decide, "load_summary", lambda *a, **k: 1 / 0)
+    decider.decide(asked("s-late", "it-failed"))
+    assert shadow.drain()
+    told = shadow.about()
+    assert told["attempts"] == 5 and told["offered"] == 2 and told["measured"] == 2
+    assert told["not_measured"] == {"no_summary": 1, "busy": 1, "failed": 1}
+    assert told["attempts"] == told["offered"] + sum(told["not_measured"].values())
+    kept = {r["attempt"]: r["disposition"] for r in records("s-late") + records("s-none")}
+    assert kept == {
+        "first": "measured",
+        "retry": "measured",
+        "no-summary": "not_measured",
+        "while-busy": "not_measured",
+        "it-failed": "not_measured",
+    }
     shadow.close()

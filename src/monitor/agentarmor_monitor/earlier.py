@@ -14,6 +14,13 @@ from a queue of fixed length, and writes a record of its own beside the session'
 detections. A queue that is full drops the offer and counts it. Its work holds no
 decision slot and reaches no verdict, request or receipt.
 
+Every validated question a gate asks is counted once, at the decider's door, with the
+attempt it carries (MR160-1): it is offered to the worker, or dropped because the queue is
+full, or not measured, with why (busy, failed, no summary, a summary made otherwise). Each
+disposition is a record of its own keyed by the attempt, so that a retry is never taken
+for another call and the counts reconcile: attempts = offered + not measured, offered =
+queued + dropped, queued = measured + failed + in flight.
+
 What the counts cover is said with them (MR159-2). Every other session listed is in
 exactly one of: read, no summary or an unreadable one, a summary behind its log, nothing
 logged before the call, or beyond the cap. "complete" is the lookup's own account of the
@@ -112,14 +119,45 @@ def observed(agent, name, call_id, summary, max_chars, identity=None, newest=NEW
     return told | {"limits": LIMITS, "ms": round((time.monotonic() - began) * 1000)}
 
 
+def _write(agent, name, record):
+    """Append one record beside a session's detections. Best effort, and never raises."""
+    try:
+        directory = session_dir(agent, name)
+        private_dir(directory)
+        with open(directory / RECORDS, "a", encoding="utf-8") as out:
+            out.write(json.dumps(record, separators=(",", ":")) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+class Ticket:
+    """One attempt's way to the measurement: offered once, or closed with why it was not."""
+
+    def __init__(self, shadow, asked):
+        self.shadow, self.asked, self.done = shadow, asked, False
+
+    def offer(self, name, summary):
+        if not self.done:
+            self.done = True
+            self.shadow._offer(self.asked, name, summary)
+
+    def close(self, why):
+        """At the end of a decision, whatever became of it: counted unless already offered."""
+        if not self.done:
+            self.done = True
+            self.shadow._unmeasured(self.asked, why or "unknown")
+
+
 class Shadow:
     """The worker that counts, and the queue a decision hands its call to without waiting."""
 
     def __init__(self, max_chars, waiting=WAITING, newest=NEWEST):
         self.max_chars, self.newest = max_chars, newest
         self.offers = queue.Queue(maxsize=waiting)
-        self.counts = {"offered": 0, "dropped_queue_full": 0, "measured": 0, "failed": 0}
-        self.counts["not_measured"] = {}  # why a proposal never reached the lookup
+        self.counts = {"attempts": 0, "offered": 0, "dropped_queue_full": 0}
+        self.counts |= {"measured": 0, "failed": 0, "records_not_written": 0}
+        self.counts["not_measured"] = {}  # why an attempt never reached the lookup
         self.lock = threading.Lock()
         self.worker = threading.Thread(target=self._work, name="earlier-sessions", daemon=True)
         self.worker.start()
@@ -131,43 +169,62 @@ class Shadow:
             else:
                 self.counts[name][why] = self.counts[name].get(why, 0) + 1
 
-    def offer(self, agent, name, call_id, summary, identity):
+    def ticket(self, asked):
+        """A ticket for one validated question; every one ends offered or not measured."""
+        self._count("attempts")
+        return Ticket(self, asked)
+
+    def _base(self, asked, disposition):
+        record = {"schema": SCHEMA, "ts": round(time.time(), 3), "agent": asked["agent"]}
+        record |= {"session": asked["session_id"], "key": f"gate:{asked['tool_use_id']}"}
+        record |= {"call_sha256": asked["call_sha256"], "attempt": asked["attempt"]}
+        return record | {"disposition": disposition}
+
+    def _offer(self, asked, name, summary):
         """Hand a call over. Never waits: a full queue drops the offer and counts it."""
         self._count("offered")
         try:
-            self.offers.put_nowait((agent, name, call_id, summary, identity))
+            self.offers.put_nowait((asked, name, summary))
         except queue.Full:
             self._count("dropped_queue_full")
+            if not _write(asked["agent"], name, self._base(asked, "dropped_queue_full")):
+                self._count("records_not_written")
 
-    def unmeasured(self, why):
-        """A proposal that had no summary to start from: counted, so that it is not
-        taken for one about which nothing was found."""
+    def _unmeasured(self, asked, why):
+        """An attempt that never reached the lookup: counted, and kept with its reason, so
+        that it is not taken for one about which nothing was found."""
         self._count("not_measured", why)
+        record = self._base(asked, "not_measured") | {"why": why}
+        if not _write(asked["agent"], asked["session_id"], record):
+            self._count("records_not_written")
 
     def _work(self):
         while True:
             offered = self.offers.get()
             if offered is None:
                 return
-            agent, name, call_id, summary, identity = offered
-            told = observed(agent, name, call_id, summary, self.max_chars, identity, self.newest)
-            self._count("failed" if "error" in told else "measured")
-            record = {"schema": SCHEMA, "ts": round(time.time(), 3), "agent": agent}
-            record |= {"session": name, "key": f"gate:{call_id}", "call_sha256": identity}
+            asked, name, summary = offered
             try:
-                directory = session_dir(agent, name)
-                private_dir(directory)
-                with open(directory / RECORDS, "a", encoding="utf-8") as out:
-                    out.write(json.dumps(record | told, separators=(",", ":")) + "\n")
-            except Exception:
-                self._count("failed")
+                told = observed(
+                    asked["agent"],
+                    name,
+                    asked["tool_use_id"],
+                    summary,
+                    self.max_chars,
+                    asked["call_sha256"],
+                    self.newest,
+                )
+                self._count("failed" if "error" in told else "measured")
+                done = "failed" if "error" in told else "measured"
+                if not _write(asked["agent"], name, self._base(asked, done) | told):
+                    self._count("records_not_written")
             finally:
                 self.offers.task_done()
 
     def about(self):
         with self.lock:
             told = json.loads(json.dumps(self.counts))
-        return told | {"waiting": self.offers.qsize(), "queue": self.offers.maxsize}
+        return told | {"in_flight": self.offers.unfinished_tasks, "queue": self.offers.maxsize}
 
     def drain(self, timeout=10.0):
         """Wait until what was offered has been counted. For tests and for an orderly stop."""
