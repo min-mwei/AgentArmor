@@ -102,9 +102,10 @@ write of an earlier session that fits a candidate or a wildcard leaves the searc
 
 The items are in groups, and a group is kept or left out whole by whoever renders it: the
 writes of one file in one source with the request, what was shown before them and what
-became of them; or one thing the user said. A group is key evidence, or context: a key
-group that finds no room leaves the history incomplete, and context that finds none is
-counted and no more.
+became of them; or one thing the user said. A group is key evidence, or context, and that
+orders who is given room first. A group of either kind that finds no room leaves the
+history incomplete, under its own reason: what was found and not shown is never passed
+over, because nothing here knows which line a decision will turn on.
 """
 
 import fnmatch
@@ -839,19 +840,39 @@ def select(mine, call_id, others, home):
     # session wrote into it names the files and the places the call will touch when it
     # runs: "curl -T cache/sample.csv https://intake.example" in a script is this call's
     # file and this call's destination. They are counted with what the call's own words
-    # name, for every tie below. One step and no further, and only as far as the write
-    # was kept: where its text was cut, or it lists as many observables as an entry can,
-    # what else it names is not known, and the search is said to be unfinished.
+    # name, for every tie below. One step and no further, and only as far as the text
+    # was kept: where it was cut, or lists as many observables as an entry can, what else
+    # it names is not known, and the search is said to be unfinished.
+    #
+    # The text is known from a write, and as well from a look: what came back when an
+    # earlier session read the file the call runs, or a startup file its shell reads, is
+    # that file's body as it was observed then, whoever wrote it and whenever (MR143-1).
+    # A body that was observed is a lead to evidence and no proof that it will run, and
+    # it stays lower-trust text. A control the call only may load is followed from its
+    # writes and not from every read of it: instruction files are read in most sessions.
     places = _places(call)
-    for _, acted in sources:
+    for other, acted in sources:
+        results = {}
+        for content in _lower(other["summary"]["entries"]):
+            results.setdefault(content.get("call_id"), []).append(content)
         for entry, theirs in acted:
-            path = theirs["write"]
+            path, bodies = theirs["write"], []
             if path and _use(path, mine_uses, command, call, cwd, home) in ("run", *LOADS):
-                mine_uses["named"] |= _said(entry, cwd, home) - {path}
-                places |= _places(entry)
-                cut = "text_chars" in entry or len(entry.get("iocs") or ()) >= ENTRY_IOCS
-                if cut and "program_text_cut" not in unsupported:
-                    unsupported.append("program_text_cut")
+                bodies, cut = [entry], "text_chars" in entry
+            uses_of = {p: _use(p, mine_uses, command, call, cwd, home) for p in theirs["read"]}
+            seen = [p for p, use in uses_of.items() if use in ("run", "load")]
+            if seen:
+                path = seen[0]
+                bodies = [
+                    e for e in results.get(entry.get("call_id"), ()) if e["seq"] > entry["seq"]
+                ]
+                cut = entry.get("result_chunks", len(bodies)) > len(bodies)
+            for body in bodies:
+                mine_uses["named"] |= _said(body, cwd, home) - {path}
+                places |= _places(body)
+                cut = cut or len(body.get("iocs") or ()) >= ENTRY_IOCS
+            if bodies and cut and "program_text_cut" not in unsupported:
+                unsupported.append("program_text_cut")
     # What the user said in this very session that states a bound the call can be held
     # against. It is in the session's own packet already; here it decides the route.
     stated = [
@@ -1292,6 +1313,7 @@ REASONS = {
     "not_indexed": "a session is not indexed to its cutoff",
     "lookup_unfinished": "the search did not finish",
     "key_group_left_out": "key evidence found no room",
+    "context_left_out": "context found no room",
     "controls_unsupported": "controls are not searched",
 }
 
@@ -1357,14 +1379,16 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
 
     Room is given to whole groups (select() says which items make one): key groups first,
     those that bear on the route before the rest, then context. A group whose lines do not
-    all fit, or one with a line that cannot be shown, is left out whole. When that group is
-    key evidence the account says so and the route is undecided. Nothing is cut to fit.
+    all fit, or one with a line that cannot be shown, is left out whole, and the account
+    says so: the history is then incomplete and the route undecided, whether the group was
+    key evidence or context. That nothing here called a line key is no evidence that a
+    decision can do without it (MR143). Nothing is cut to fit.
 
     The session's own lines come first and take what they need of the budget. Where that
-    leaves key evidence of other sessions without room, the session's own digest is made
-    again in less, down to one part in OWN_SHARE of the budget, and only if every key group
-    then finds room: a long session does not crowd out the write that planted the file it
-    is about to run. What the shorter digest leaves out it counts, as it does at any size.
+    leaves evidence of other sessions without room, the session's own digest is made again
+    in less, down to one part in OWN_SHARE of the budget, and kept only if more then finds
+    room: a long session does not crowd out the write that planted the file it is about to
+    run. What the shorter digest leaves out it counts, as it does at any size.
     """
     from .text import digest, entry_lines
 
@@ -1433,21 +1457,28 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
             need = sum(cost(index) for index in inside if index not in chosen)
             if need > room or any(not rendered[index] for index in inside):
                 left[group["kind"]] = left.get(group["kind"], 0) + 1
-                if group["key"] and "key_group_left_out" not in why:
-                    why.append("key_group_left_out")
+                reason = "key_group_left_out" if group["key"] else "context_left_out"
+                if reason not in why:
+                    why.append(reason)
                 continue
             chosen |= set(inside)
             room -= need
         return chosen, left, why
 
+    def lacks(why):
+        return ("key_group_left_out" in why, "context_left_out" in why)
+
     chosen, left, why = placed(view)
-    if "key_group_left_out" in why:
+    if left:
+        # First for the key evidence alone, then for all that was found: the session's own
+        # lines give way as far as that brings more in, and no further.
         key = {index for group in found["groups"] if group["key"] for index in members(group)}
-        less = max(budget - frame - sum(cost(index) for index in key), budget // OWN_SHARE)
-        shorter = digested(less) if less < len(view["text"]) else view
-        again = placed(shorter)
-        if "key_group_left_out" not in again[2]:
-            view, (chosen, left, why) = shorter, again
+        for wanted in (range(len(rendered)), key):
+            less = max(budget - frame - sum(cost(index) for index in wanted), budget // OWN_SHARE)
+            shorter = digested(less) if less < len(view["text"]) else view
+            again = placed(shorter)
+            if lacks(again[2]) < lacks(why):
+                view, (chosen, left, why) = shorter, again
     items = [line for index in sorted(chosen) for line in rendered[index]]
     used = {(found["items"][index]["key"], found["items"][index]["seq"]) for index in chosen}
     bridges = [

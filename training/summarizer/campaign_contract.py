@@ -141,6 +141,7 @@ REASONS = {
     "not_indexed": "a session is not indexed to its cutoff",
     "lookup_unfinished": "the search did not finish",
     "key_group_left_out": "key evidence found no room",
+    "context_left_out": "context found no room",
     "controls_unsupported": "controls are not searched",
 }
 # How a line of another session is tied to the call: a fixed list. The words a packet shows

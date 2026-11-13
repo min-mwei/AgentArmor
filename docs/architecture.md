@@ -106,8 +106,13 @@ removed is decided by what a piece is, never by what it says:
 - A piece is kept whole or removed whole. Nothing is cut to fit.
 - Every removal leaves a row in `removed`, and the session's coverage counts it. A lookup
   that reaches into a compacted range says so.
-- The kept classes are exactly what the lookup's ties are made from, so compaction cannot
-  remove evidence. It can remove leads, and says that it did.
+- The kept classes are what the lookup's ties are made from today. That does not prove
+  that compaction removes no evidence: an unmarked result or an observation can matter to
+  a later call, as the lookup gaps of 2026-11-13 showed (MR143). So a body that repeats one
+  already held is dropped while its occurrence, provenance and place in time stay; every
+  deletion and every cap on a search is a coverage gap that the account carries; an index
+  is bound to its source, its encoder and its cutoff; and a search that finds nothing in
+  a compacted range is never reported as a clean finding.
 - An attacker controls lower-trust text and so can make noise, which is removed, or make
   many pieces of a kept class, which fills a quota. Quotas are explicit, and a session
   that hits one is incomplete and is treated as that: undecided, never clear.
@@ -171,8 +176,12 @@ What a fit should be trained to do, as a proposal to be revised with the researc
 - One asymmetric objective for Select and Find: the proposed call as the query, the
   pieces that bear on it as positives. Supervision comes from authored training campaigns
   whose answer key names those pieces. Development and held-out campaigns train nothing.
-- Hard negatives from the benign twin of each attack, and from the same session. Other
-  valid evidence of the same campaign is never a negative.
+- Relevance to the query is annotated, and a decision label is never a relevance label:
+  for one and the same call the restriction and its benign counterpart, an approval, are
+  both evidence the decision needs (MR143-3). Positives are several for a call: permissions,
+  withdrawals, outcomes, links from source to target. Siblings and other valid lines of
+  the same campaign are masked, never negatives. A negative is mined only where its
+  irrelevance is supported, among candidates already eligible by namespace and session.
 - "Bears on" is the label, not "violates": a limit is relevant to the call that keeps it
   and to the call that breaks it. The encoder finds; it does not judge.
 - The pattern families stay as a second objective on the same aggregate that is served.

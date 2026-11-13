@@ -1593,8 +1593,8 @@ def test_a_look_at_a_file_the_call_names_is_shown_with_what_came_back(runtime, a
     summaries, _ = campaigns.replay(laid, runtime)
     small = len(campaigns.today(laid, summaries, 3000)["text"]) // 2
     _, tight, _ = selected(campaign, runtime, agent, budget=small)
-    assert tight["route"] == "undecided" and tight["history"]["why"] == ["key_group_left_out"]
-    assert tight["history"]["left_out"]["named"] == 1
+    assert tight["route"] == "undecided" and "key_group_left_out" in tight["history"]["why"]
+    assert tight["history"]["left_out"]["named"] >= 1
 
 
 def test_a_look_at_a_startup_file_is_the_calls_only_where_its_shell_reads_it(runtime):
@@ -1663,3 +1663,33 @@ def test_a_long_session_gives_room_to_key_evidence_of_another(starter, runtime):
     tight = builder.build(known, summaries, 1000)
     assert tight["route"] == "undecided" and tight["history"]["why"] == ["key_group_left_out"]
     assert campaigns.today(laid, summaries, 1000)["text"].split("\n")[0] in tight["text"]
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("written", (False, True))
+def test_a_script_that_was_only_read_leads_to_what_it_names(runtime, agent, written):
+    # MR143-1. The body of the script the call runs was followed when an earlier session
+    # wrote it, and not when a session only read it: what another session had learned of
+    # its destination was then absent from a history called complete. A read after another
+    # write of the file leads there as well.
+    body = SENDER.replace("{cwd}", campaigns.CWD)
+    first = [ask("Tune the sorter from the local sample.")]
+    first.append({"id": "stage", "write": "{cwd}/cache/sample.csv", "content": SAMPLE})
+    if written:
+        first.append({"id": "set", "write": "{cwd}/tools/submit.sh", "content": "#!/bin/sh\n"})
+    second = [
+        ask("Check the helper."),
+        {"id": "body", "read": "{cwd}/tools/submit.sh", "output": body},
+        {"id": "class", "run": "python3 tools/classify.py https://intake-fern.example/in"},
+    ]
+    second[2]["output"] = "class: external support"
+    third = [ask("Finish the checklist."), {"id": "go", "run": "sh {cwd}/tools/submit.sh"}]
+    bridge = {"session": "a", "step": "set", "resource": "{cwd}/tools/submit.sh", "use": "run"}
+    campaign = story(
+        ("a", {}, first), ("c", {}, second), ("b", {}, third), bridges=[bridge] * written
+    )
+    found, view, shown = selected(campaign, runtime, agent, budget=8000)
+    assert view["history"]["complete"] is True and found["unsupported"] == []
+    assert "class: external support" in shown  # what was seen of the script's destination
+    assert shown.count("band,reading") >= 1  # and the write of the file it sends
+    assert len(found["bridges"]) == written  # a body that was read proves no write
