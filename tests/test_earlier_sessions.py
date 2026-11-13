@@ -217,3 +217,56 @@ def test_every_attempt_is_counted_once_with_its_attempt_and_the_counts_reconcile
         "it-failed": "not_measured",
     }
     shadow.close()
+
+
+def reconciles(told):
+    """The three equations of earlier.Shadow, on one snapshot."""
+    unmeasured = sum(told["not_measured"].values())
+    measuring = ("dropped_queue_full", "queued", "running", "measured", "failed")
+    kept = ("records_queued", "records_written", "records_lost", "records_failed")
+    return (
+        told["attempts"] == told["deciding"] + told["offered"] + unmeasured
+        and told["offered"] == sum(told[name] for name in measuring)
+        and told["records"] == sum(told[name] for name in kept)
+    )
+
+
+def test_a_stalled_record_writer_holds_no_decision_and_the_counts_reconcile_live(
+    spool, monkeypatch
+):
+    # MR162-1. A queue-full disposition and a not-measured one were written to disk inside
+    # the decision: a slow write held the slot, and the next call came back busy. MR162-2:
+    # a measurement waiting on its write was counted both as done and as in flight.
+    import time
+
+    identity = two_sessions()
+    stalled, entered = threading.Event(), threading.Event()
+    real = earlier._write
+
+    def slow(*args):
+        entered.set()
+        stalled.wait(10)
+        return real(*args)
+
+    monkeypatch.setattr(earlier, "_write", slow)
+    shadow = earlier.Shadow(5000, records=2)
+    decider = Decider(None, level="low", wait=0.0, slots=1, mode="shadow", earlier=shadow)
+    took, answers = [], []
+    for number in range(6):
+        asked = question("claude_code", "s-late", "call-1", identity, "deny")
+        began = time.monotonic()
+        answers.append(decider.decide(asked | {"attempt": f"a{number}"}))
+        took.append(time.monotonic() - began)
+        assert reconciles(shadow.about())
+    assert entered.wait(5)  # the writer is stuck on its first record
+    assert all(answer["why"] != "busy" for answer in answers) and max(took) < 1.0
+    for _ in range(50):  # every snapshot while the writer is stuck reconciles
+        assert reconciles(shadow.about())
+        time.sleep(0.005)
+    stalled.set()
+    assert shadow.drain()
+    told = shadow.about()
+    assert reconciles(told) and told["attempts"] == 6 and told["measured"] == 6
+    assert told["records"] == 6 and told["records_lost"] >= 3
+    assert told["records_written"] + told["records_lost"] == 6
+    shadow.close()

@@ -18,8 +18,9 @@ Every validated question a gate asks is counted once, at the decider's door, wit
 attempt it carries (MR160-1): it is offered to the worker, or dropped because the queue is
 full, or not measured, with why (busy, failed, no summary, a summary made otherwise). Each
 disposition is a record of its own keyed by the attempt, so that a retry is never taken
-for another call and the counts reconcile: attempts = offered + not measured, offered =
-queued + dropped, queued = measured + failed + in flight.
+for another call. A decision does no file work at all (MR162-1): records go to a writer of
+their own through a bounded queue, and one that finds it full is counted as lost. The
+counts reconcile at every moment, phase by phase (Shadow, MR162-2).
 
 What the counts cover is said with them (MR159-2). Every other session listed is in
 exactly one of: read, no summary or an unreadable one, a summary behind its log, nothing
@@ -48,6 +49,7 @@ SCHEMA = "agentarmor-earlier-sessions/v1"
 RECORDS = "earlier-sessions.jsonl"  # beside a session's detections; counts only
 NEWEST = 40  # other sessions looked at, the most recently written first
 WAITING = 32  # offers that can wait for the worker; one more is dropped and counted
+RECORDS_WAITING = 256  # records that can wait for the writer; one more is lost and counted
 LIMITS = {
     "other_sessions": "latest_summary_cut_at_the_calls_time",  # not a replay to the call
     "namespaces": "unknown",
@@ -150,28 +152,39 @@ class Ticket:
 
 
 class Shadow:
-    """The worker that counts, and the queue a decision hands its call to without waiting."""
+    """The worker that counts, the writer that keeps its records, and the two queues a
+    decision hands work to without waiting.
 
-    def __init__(self, max_chars, waiting=WAITING, newest=NEWEST):
+    A decision touches memory only (MR162-1): it counts, and puts a measurement or a
+    record on a bounded queue with put_nowait. The worker measures; the writer appends the
+    records. Either queue full drops what it was offered, and that is counted, never waited
+    for. Every count moves between phases under one lock, so a snapshot at any moment
+    reconciles (MR162-2):
+
+        attempts = deciding + offered + not_measured
+        offered  = dropped + queued + running + measured + failed
+        records  = records_queued + records_written + records_lost + records_failed
+    """
+
+    def __init__(self, max_chars, waiting=WAITING, newest=NEWEST, records=RECORDS_WAITING):
         self.max_chars, self.newest = max_chars, newest
         self.offers = queue.Queue(maxsize=waiting)
-        self.counts = {"attempts": 0, "offered": 0, "dropped_queue_full": 0}
-        self.counts |= {"measured": 0, "failed": 0, "records_not_written": 0}
-        self.counts["not_measured"] = {}  # why an attempt never reached the lookup
+        self.records = queue.Queue(maxsize=records)
+        self.counts = {"attempts": 0, "deciding": 0, "offered": 0, "dropped_queue_full": 0}
+        self.counts |= {"queued": 0, "running": 0, "measured": 0, "failed": 0, "not_measured": {}}
+        self.counts |= {"records": 0, "records_queued": 0, "records_written": 0}
+        self.counts |= {"records_lost": 0, "records_failed": 0}
         self.lock = threading.Lock()
         self.worker = threading.Thread(target=self._work, name="earlier-sessions", daemon=True)
+        self.writer = threading.Thread(target=self._keep, name="earlier-records", daemon=True)
         self.worker.start()
-
-    def _count(self, name, why=None):
-        with self.lock:
-            if why is None:
-                self.counts[name] += 1
-            else:
-                self.counts[name][why] = self.counts[name].get(why, 0) + 1
+        self.writer.start()
 
     def ticket(self, asked):
         """A ticket for one validated question; every one ends offered or not measured."""
-        self._count("attempts")
+        with self.lock:
+            self.counts["attempts"] += 1
+            self.counts["deciding"] += 1
         return Ticket(self, asked)
 
     def _base(self, asked, disposition):
@@ -180,23 +193,36 @@ class Shadow:
         record |= {"call_sha256": asked["call_sha256"], "attempt": asked["attempt"]}
         return record | {"disposition": disposition}
 
+    def _record(self, agent, name, record):
+        """Hand a record to the writer. Never waits: called with the lock held."""
+        self.counts["records"] += 1
+        try:
+            self.records.put_nowait((agent, name, record))
+            self.counts["records_queued"] += 1
+        except queue.Full:
+            self.counts["records_lost"] += 1
+
     def _offer(self, asked, name, summary):
         """Hand a call over. Never waits: a full queue drops the offer and counts it."""
-        self._count("offered")
-        try:
-            self.offers.put_nowait((asked, name, summary))
-        except queue.Full:
-            self._count("dropped_queue_full")
-            if not _write(asked["agent"], name, self._base(asked, "dropped_queue_full")):
-                self._count("records_not_written")
+        with self.lock:
+            self.counts["deciding"] -= 1
+            self.counts["offered"] += 1
+            try:
+                self.offers.put_nowait((asked, name, summary))
+                self.counts["queued"] += 1
+            except queue.Full:
+                self.counts["dropped_queue_full"] += 1
+                self._record(asked["agent"], name, self._base(asked, "dropped_queue_full"))
 
     def _unmeasured(self, asked, why):
         """An attempt that never reached the lookup: counted, and kept with its reason, so
         that it is not taken for one about which nothing was found."""
-        self._count("not_measured", why)
-        record = self._base(asked, "not_measured") | {"why": why}
-        if not _write(asked["agent"], asked["session_id"], record):
-            self._count("records_not_written")
+        with self.lock:
+            self.counts["deciding"] -= 1
+            missed = self.counts["not_measured"]
+            missed[why] = missed.get(why, 0) + 1
+            record = self._base(asked, "not_measured") | {"why": why}
+            self._record(asked["agent"], asked["session_id"], record)
 
     def _work(self):
         while True:
@@ -204,34 +230,51 @@ class Shadow:
             if offered is None:
                 return
             asked, name, summary = offered
-            try:
-                told = observed(
-                    asked["agent"],
-                    name,
-                    asked["tool_use_id"],
-                    summary,
-                    self.max_chars,
-                    asked["call_sha256"],
-                    self.newest,
-                )
-                self._count("failed" if "error" in told else "measured")
-                done = "failed" if "error" in told else "measured"
-                if not _write(asked["agent"], name, self._base(asked, done) | told):
-                    self._count("records_not_written")
-            finally:
-                self.offers.task_done()
+            with self.lock:
+                self.counts["queued"] -= 1
+                self.counts["running"] += 1
+            told = observed(
+                asked["agent"],
+                name,
+                asked["tool_use_id"],
+                summary,
+                self.max_chars,
+                asked["call_sha256"],
+                self.newest,
+            )
+            done = "failed" if "error" in told else "measured"
+            with self.lock:
+                self.counts["running"] -= 1
+                self.counts[done] += 1
+                self._record(asked["agent"], name, self._base(asked, done) | told)
+
+    def _keep(self):
+        while True:
+            held = self.records.get()
+            if held is None:
+                return
+            written = _write(*held)
+            with self.lock:
+                self.counts["records_queued"] -= 1
+                self.counts["records_written" if written else "records_failed"] += 1
 
     def about(self):
+        """One snapshot of every count, taken under the lock: it reconciles as it stands."""
         with self.lock:
             told = json.loads(json.dumps(self.counts))
-        return told | {"in_flight": self.offers.unfinished_tasks, "queue": self.offers.maxsize}
+        return told | {"queue": self.offers.maxsize, "records_queue": self.records.maxsize}
 
     def drain(self, timeout=10.0):
-        """Wait until what was offered has been counted. For tests and for an orderly stop."""
+        """Wait until nothing is deciding, queued, running or unwritten. For tests and stops."""
         deadline = time.monotonic() + timeout
-        while self.offers.unfinished_tasks and time.monotonic() < deadline:
+        busy = ("deciding", "queued", "running", "records_queued")
+        while time.monotonic() < deadline:
+            with self.lock:
+                if not any(self.counts[name] for name in busy):
+                    return True
             time.sleep(0.01)
-        return not self.offers.unfinished_tasks
+        return False
 
     def close(self):
         self.offers.put(None)
+        self.records.put(None)
