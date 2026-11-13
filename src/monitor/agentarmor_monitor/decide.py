@@ -28,6 +28,7 @@ import time
 
 from summarizer.store import AGENTS, EVENTS, load_summary, read_events, session_dir
 
+from .earlier import observed
 from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
@@ -152,6 +153,7 @@ def judge(
     explain=False,
     settle=None,
     made_with=None,
+    earlier=False,
 ):
     """(verdict, record, why) for one proposed call, named as a hook event names it.
 
@@ -169,6 +171,10 @@ def judge(
     other rules made is fresh and is not this server's: its marks are another model's, and
     a call is routed on marks. With made_with given, such a summary is no basis for a
     decision and the verdict is "undecided", why "summary_made_otherwise".
+
+    earlier, when set, has what other sessions hold for the call counted beside the
+    decision (earlier.observed) and put in the record as "earlier_sessions". It is a
+    measurement in shadow: no verdict, request or reason here reads it.
 
     A record says how far the session's log had been read when its evidence was taken
     ("evidence"), how the call was routed ("routing": asked or not, and the level and
@@ -205,11 +211,15 @@ def judge(
     stale, checked = since_proposal(directory, entry, call_id, read_to["log_bytes"], settle)
     settle = max(0.0, settle - (time.monotonic() - began))
     applicable = {"before_routing": stale is None, "why": stale} | checked
+    seen = {}
+    if earlier:
+        counted = observed(agent, directory.name, call_id, summary, max_chars, identity)
+        seen = {"earlier_sessions": counted}
 
     def unasked(verdict, why, reason):  # read off the summary, with nobody asked
         found = outcome(agent, session, call_id, why or "unmarked", summary)
         found |= {"evidence": read_to, "routing": routing | {"reason": reason}}
-        return verdict, found | {"applicable": applicable}, why
+        return verdict, found | {"applicable": applicable} | seen, why
 
     if stale:  # overtaken, or not known: the log could not be read to its end
         unknown = stale == "log_unread"
@@ -225,7 +235,7 @@ def judge(
     counts = record.get("requests") or {}
     sent = counts.get("transport_attempts", 0)
     reason = "marked" if sent else "marked_and_not_sent"  # too large to put to the model
-    record |= {"evidence": read_to, "applicable": applicable}
+    record |= {"evidence": read_to, "applicable": applicable} | seen
     record["routing"] = routing | {"requests_sent": sent, "requests": counts, "reason": reason}
     if record["status"] != "scored":
         return "undecided", record, record["status"]
@@ -277,6 +287,7 @@ class Decider:
         slots=SLOTS,
         mode="enforce",
         made_with=None,
+        earlier=False,
     ):
         if mode not in MODES:
             raise ValueError(f"a server's mode is one of {MODES}")
@@ -284,6 +295,8 @@ class Decider:
         # What this server's own Summarizer says makes a summary. A summary made otherwise
         # is not decided on. None when the server does not know (then nothing is checked).
         self.made_with = made_with
+        # Whether what other sessions hold for a call is counted beside each decision.
+        self.earlier = bool(earlier)
         self.client = client
         self.rules = load_rules() if rules is None else rules
         self.level, self.max_chars, self.wait = level, max_chars, wait
@@ -301,6 +314,7 @@ class Decider:
             "layout": LAYOUT,
             "at_once": self.slots,
             "summary_identity_checked": self.made_with is not None,
+            "earlier_sessions": "shadow" if self.earlier else "off",
         }
 
     def decide(self, asked):
@@ -328,6 +342,7 @@ class Decider:
                     self.wait,
                     self.rules,
                     made_with=self.made_with,
+                    earlier=self.earlier,
                 )
             except Exception as error:
                 note(asked["agent"], error, "failed")

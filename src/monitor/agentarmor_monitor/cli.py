@@ -218,6 +218,7 @@ def _serve(args):
         args.at_once,
         mode=mode_of(args),
         made_with=runtime.identity(),
+        earlier=args.earlier_sessions == "shadow",
     )
     try:
         api, _ = listen(front, decider, args.port, monitor, args.model_api)
@@ -659,6 +660,13 @@ def main(argv=None):
         action="store_true",
         help="issue every decision as a shadow one: gates record what they would have "
         "answered and stop nothing, and every marked call is put to Kai",
+    )
+    serve.add_argument(
+        "--earlier-sessions",
+        choices=("off", "shadow"),
+        default="off",
+        help="shadow: beside every decision, count what other sessions hold for the call "
+        "(route, completeness, lines, time). Counts only; no decision reads it",
     )
     serve.add_argument(
         "--wait", type=float, default=3.0, help="seconds a decision waits for the summary"
