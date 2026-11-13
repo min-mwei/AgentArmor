@@ -14,6 +14,11 @@ a call it holds (escalate.proposed), and the registered decision question with i
 option text (kai.QUESTIONS). Only "packet" differs between the arms of one run, so only the
 packet is compared.
 
+An arm's name becomes a file's name, so it is held to a plain word: a lowercase letter, then
+lowercase letters, digits, "-" or "_", forty characters at most. Anything else is refused
+before a single file is written: a name out of an input file never chooses where this
+writes.
+
 One file per arm is written to --out, which must be a new or an empty folder: <arm>.jsonl,
 a row for each run in the order given,
 
@@ -29,6 +34,7 @@ own tokenizer, and a state it does not admit is counted as that by whoever score
 """
 
 import json
+import re
 from pathlib import Path
 
 from .escalate import proposed, request_sha256
@@ -36,6 +42,7 @@ from .kai import DECISION, QUESTIONS
 from .policy import LAYOUT, load_rules, state
 
 NEEDED = ("run", "arm", "packet", "tool", "input")
+ARM = re.compile(r"[a-z][a-z0-9_-]{0,39}\Z")  # what an arm may be called: it names a file
 
 
 def read_packets(path):
@@ -51,6 +58,10 @@ def read_packets(path):
                 raise ValueError(f"{path}:{number}: a packet record needs {', '.join(NEEDED)}")
             if not isinstance(row["packet"], str) or not isinstance(row["arm"], str):
                 raise ValueError(f"{path}:{number}: packet and arm are text")
+            if not ARM.match(row["arm"]):
+                raise ValueError(
+                    f"{path}:{number}: an arm is a plain lowercase word, and this one is not"
+                )
             rows.append(row)
     if not rows:
         raise ValueError(f"{path}: no packet record")
@@ -87,13 +98,20 @@ def write(path, out, rules=None):
     out = Path(out)
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise ValueError(f"{out} is not a new or an empty folder")
-    out.mkdir(parents=True, exist_ok=True)
     arms, told = {}, {"layout": LAYOUT, "question": DECISION, "rules": [r["id"] for r in rules]}
     for row in rows:
         arms.setdefault(row["arm"], []).append(request_of(row, rules))
+    # Every row is made and every destination checked before anything is written: either
+    # all the files are written, inside out, or none is.
+    out.mkdir(parents=True, exist_ok=True)
+    inside = out.resolve()
+    places = {arm: out / f"{arm}.jsonl" for arm in arms}
+    for arm, place in places.items():
+        if not ARM.match(arm) or place.resolve().parent != inside:
+            raise ValueError(f"the arm {arm!r} names no file of {out}")
     told["arms"] = {}
     for arm, made in arms.items():
-        with open(out / f"{arm}.jsonl", "w", encoding="utf-8") as handle:
+        with open(places[arm], "x", encoding="utf-8") as handle:
             for request in made:
                 handle.write(json.dumps(request, ensure_ascii=False) + "\n")
         sizes = sorted(request["_meta"]["state_chars"] for request in made)

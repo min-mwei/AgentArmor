@@ -4932,3 +4932,41 @@ def test_a_summary_made_by_another_model_is_no_basis_for_a_decision(spool):
     question |= {"call_sha256": asked["call_sha256"], "attempt": "a1", "on_error": "deny"}
     receipt = checking.decide(question)
     assert (receipt["verdict"], receipt.get("why")) == ("undecided", "summary_made_otherwise")
+
+
+def test_an_arms_name_never_chooses_where_a_panel_is_written(tmp_path):
+    # MR131-1. An arm became a file name as it stood. "../existing" wrote over a file
+    # beside the output folder, and an absolute path wrote wherever it said.
+    from agentarmor_monitor import panels
+
+    def packet(arm, run="c1/claude_code"):
+        row = {"run": run, "arm": arm, "packet": "SESSION SUMMARY", "tool": "Bash"}
+        return row | {"input": {"command": "ls"}}
+
+    kept = tmp_path / "existing.jsonl"
+    kept.write_text("mine\n")
+    source, out = tmp_path / "packets.jsonl", tmp_path / "panels"
+    outside = str(tmp_path / "elsewhere")
+    for arm in ("../existing", outside, "a/b", "..", ".hidden", "History", "", "x" * 41, "a b"):
+        # A good record first: nothing of it may be written when a later one is refused.
+        rows = [packet("history"), packet(arm, "c2/claude_code")]
+        source.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        with pytest.raises(ValueError, match="an arm is a plain lowercase word"):
+            panels.write(source, out)
+        assert kept.read_text() == "mine\n" and not Path(outside + ".jsonl").exists()
+        assert not out.exists() or not any(out.iterdir())  # no partial write
+    with pytest.raises(SystemExit, match="an arm is a plain lowercase word"):
+        cli.main(["panels", str(source), "--out", str(out)])
+    # The arms a measurement has, and a name with a digit, a dash and an underscore.
+    rows = [packet(arm) for arm in ("none", "newest", "history", "reference", "arm-2_b")]
+    source.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    told = panels.write(source, out)
+    assert sorted(path.name for path in out.iterdir()) == [
+        "arm-2_b.jsonl",
+        "history.jsonl",
+        "newest.jsonl",
+        "none.jsonl",
+        "reference.jsonl",
+    ]
+    assert set(told["arms"]) == {"none", "newest", "history", "reference", "arm-2_b"}
+    assert kept.read_text() == "mine\n"
