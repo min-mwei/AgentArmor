@@ -16,7 +16,7 @@ its own yet (`policy_ready` is false), so shadow is the mode to install.
    agentarmor-monitor hooks-config --agent claude_code --gate "$(command -v agentarmor-monitor)" --shadow
    ```
 
-3. Merge the printed `hooks` entries into `~/.claude/settings.json`, keeping what is already there.
+3. Merge the printed `hooks` entries into `~/.claude/settings.json`, keeping what is already there. If hooks of Summarizer or AgentArmor (an observer or a gate) are already registered for these events, replace them: do not add a second recorder beside them. Leave unrelated settings and hooks as they are. Do not pair the gate with a hook that rewrites tool input: the call that runs must be the call that was asked about.
 4. Restart Claude Code and review the registered commands with `/hooks`.
 
 **What is installed.** One handler for each event that carries session evidence (14 kinds:

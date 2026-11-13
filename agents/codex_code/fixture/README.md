@@ -24,17 +24,10 @@ These templates are for integration development and will block normal tool use.
 `agentarmor doctor` reports `policy_ready: false`. They must not be presented as
 a working policy-based allow/deny installation.
 
-1. Find the installed executable's absolute path with `command -v agentarmor`.
-   Replace `/ABSOLUTE/PATH/agentarmor` in the chosen template with that trusted
-   path. Keep its quotes so paths containing spaces work.
-2. Merge [config.toml.example](config.toml.example) into a trusted
-   `.codex/config.toml` or `~/.codex/config.toml`, or install
-   [hooks.json.example](hooks.json.example) as `.codex/hooks.json` or
-   `~/.codex/hooks.json`. Install one representation so hooks run once.
-3. Restart Codex and use `/hooks` to review and trust the exact commands.
-   Prefer user-level or managed configuration outside an untrusted repository.
-
-Check the command directly before enabling the template:
+Do not merge these templates into the settings you work with: they would deny every
+tool call. Use them only in a throwaway configuration made for an integration test, or
+run the fixture's command directly, with the absolute path that `command -v agentarmor`
+prints:
 
 ```sh
 printf '%s\n' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pwd"}}' \

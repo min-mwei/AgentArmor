@@ -23,16 +23,10 @@ The CLI does not call the diagnostic model service.
 These templates are for integration development and will block normal tool use.
 `agentarmor doctor` reports `policy_ready: false`.
 
-1. Find the installed executable's absolute path with `command -v agentarmor`.
-   Replace `/ABSOLUTE/PATH/agentarmor` in the template with that trusted path.
-   Keep its quotes so paths containing spaces work.
-2. Merge the `hooks` entries into your user settings at
-   `~/.claude/settings.json` or a reviewed `.claude/settings.json`. Preserve
-   existing settings and avoid duplicate entries. Prefer user-level or managed
-   settings outside an untrusted repository.
-3. Restart Claude Code and inspect the configured commands with `/hooks`.
-
-Check the command directly before enabling the template:
+Do not merge these templates into the settings you work with: they would deny every
+tool call. Use them only in a throwaway configuration made for an integration test, or
+run the fixture's command directly, with the absolute path that `command -v agentarmor`
+prints:
 
 ```sh
 printf '%s\n' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pwd"}}' \

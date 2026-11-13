@@ -10,8 +10,11 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
   from `main` to `dev`; it replaces the 2026-11-09 arrangement in which `main` was
   the only branch. GitHub Actions is disabled; run checks locally.
 - Keep agent-specific templates and guides in `agents/codex_code` and
-  `agents/claude_code`. Templates invoke an absolute `agentarmor` path directly.
-  The CLI requires Python, but must not import vLLM, Torch, or a GPU runtime.
+  `agents/claude_code`. The installable examples there invoke an absolute
+  `agentarmor-monitor` path directly (the monitor's gate, in shadow) and are what
+  `agentarmor-monitor hooks-config` prints. The older `agentarmor hook` command is the
+  deny-all fixture in `agents/*/fixture`, for tests only. A hook process stays light: it
+  requires Python and must not import vLLM, Torch, a GPU runtime or any model.
 - Kai-4B is the only serving model. Requests cannot switch models or trigger
   downloads. Preserve attribution and source provenance in `src/ORIGIN.md` and
   `src/NOTICE`.

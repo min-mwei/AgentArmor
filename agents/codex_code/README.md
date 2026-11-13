@@ -16,7 +16,7 @@ its own yet (`policy_ready` is false), so shadow is the mode to install.
    agentarmor-monitor hooks-config --agent codex_code --toml --gate "$(command -v agentarmor-monitor)" --shadow
    ```
 
-3. Merge the printed tables into `~/.codex/config.toml`, or drop `--toml` and save the JSON as `~/.codex/hooks.json`. Install one of the two, so that each hook runs once.
+3. Merge the printed tables into `~/.codex/config.toml`, or drop `--toml` and save the JSON as `~/.codex/hooks.json`. Install one of the two, so that each hook runs once. If hooks of Summarizer or AgentArmor (an observer or a gate) are already registered for these events, replace them: do not add a second recorder beside them. Leave unrelated settings and hooks as they are. Do not pair the gate with a hook that rewrites tool input: the call that runs must be the call that was asked about.
 4. Restart Codex and review the registered commands with `/hooks`.
 
 **What is installed.** One handler for each event that carries session evidence (10 kinds:
