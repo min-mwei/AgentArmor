@@ -132,6 +132,11 @@ class Front:
         self.summarizer = None
         if runtime is not None:  # what marks sessions on this server, by its own report
             self.summarizer = {"loaded": True, "embedding": dict(runtime.embedder.info)}
+            # Whether its probes are calibrated for that encoder: when they are not, the
+            # three probe labels are never given, and a session it marks less is not a
+            # session with less to mark.
+            self.summarizer["embedding"]["probes"] = runtime.probe_version
+            self.summarizer["embedding"]["calibrated"] = runtime.calibrated
             self.summarizer["detector"] = runtime.detector
 
     def decision_model(self):

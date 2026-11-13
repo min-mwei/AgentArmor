@@ -4164,3 +4164,126 @@ def test_what_an_earlier_request_met_is_not_said_of_the_retry(spool, agent):
     )
     down = deciding(kai.KaiClient(url, timeout=0.5, expected=EXPECTED)).decide(asked)
     assert down["bound"]["request_sha256"] is not None and down["bound"]["complete"] is None
+
+
+# --- MR117 and MR113-1: what holds when a gate cannot run, and which probes a server loads
+
+
+def hook_handlers(capsys):
+    hooks = json.loads(capsys.readouterr().out)["hooks"]
+    return {event: groups[0]["hooks"][0] for event, groups in hooks.items()}
+
+
+def test_the_claude_gate_stops_a_call_when_the_hook_itself_fails(capsys, monkeypatch):
+    # MR117. The gate denies on every error it can see. It cannot see its own executable
+    # missing or the client ending it at the deadline: both clients then ran the call. Claude
+    # Code can be told to stop the call in that case, and the generated settings left it out.
+    monkeypatch.setattr(cli, "client_version", lambda agent: (2, 1, 323))
+    gate_ = ["hooks-config", "--agent", "claude_code", "--gate", "/opt/x/agentarmor-monitor"]
+    assert main(gate_) == 0
+    handlers = hook_handlers(capsys)
+    assert handlers["PreToolUse"]["onFailure"] == "block"
+    # Only the handler that decides. A recording that fails must not stop the agent.
+    assert all("onFailure" not in h for event, h in handlers.items() if event != "PreToolUse")
+    # The plain observer never blocks, and Codex has no such setting to give.
+    assert main(["hooks-config", "--agent", "claude_code", "--hook", "/opt/x/summarizer-hook"]) == 0
+    assert all("onFailure" not in handler_ for handler_ in hook_handlers(capsys).values())
+    assert main(["hooks-config", "--agent", "codex_code", "--gate", "/opt/x/m"]) == 0
+    captured = capsys.readouterr()
+    codex = {e: g[0]["hooks"][0] for e, g in json.loads(captured.out)["hooks"].items()}
+    assert all("onFailure" not in handler_ for handler_ in codex.values())
+    assert "Codex has no setting" in captured.err and "write_stdin" in captured.err
+
+
+def test_a_client_too_old_to_block_on_failure_is_not_given_a_gate_in_silence(capsys, monkeypatch):
+    gate_ = ["hooks-config", "--agent", "claude_code", "--gate", "/opt/x/agentarmor-monitor"]
+    monkeypatch.setattr(cli, "client_version", lambda agent: (2, 1, 294))
+    with pytest.raises(SystemExit, match="needs Claude Code 2.1.295 or later"):
+        main(gate_)
+    capsys.readouterr()
+    assert main([*gate_, "--no-failure-block"]) == 0  # asked for by name, and said
+    captured = capsys.readouterr()
+    assert "onFailure" not in captured.out and "does not stop the call" in captured.err
+    monkeypatch.setattr(cli, "client_version", lambda agent: None)  # no client to ask
+    assert main(gate_) == 0
+    captured = capsys.readouterr()
+    assert '"onFailure": "block"' in captured.out and "could not be told" in captured.err
+
+
+def test_a_clients_version_is_read_from_what_it_prints(monkeypatch):
+    class Told:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/opt/bin/{name}")
+    assert cli.client_version("claude_code", lambda *a, **k: Told("2.1.323 (Claude Code)")) == (
+        2,
+        1,
+        323,
+    )
+    assert cli.client_version("codex_code", lambda *a, **k: Told("codex-cli 0.168.0")) == (
+        0,
+        168,
+        0,
+    )
+    assert cli.client_version("claude_code", lambda *a, **k: Told("unknown")) is None
+
+    def gone(*arguments, **options):
+        raise OSError("no such program")
+
+    assert cli.client_version("claude_code", gone) is None
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    assert cli.client_version("claude_code") is None
+
+
+def model_args(model, **more):
+    import argparse
+
+    given = {"embedder": "embeddinggemma", "model": str(model), "device": "cpu"}
+    given |= {"local_files_only": True, "probes": None, "uncalibrated": False}
+    return argparse.Namespace(**(given | more))
+
+
+def test_a_fine_tuned_model_is_loaded_with_its_own_probes_or_not_at_all(tmp_path, monkeypatch):
+    # MR113-1. Summarizer's own command loads <model>/probes.jsonl. This server did not,
+    # Summarizer then drops the base calibration for any other encoder, and the three probe
+    # labels were never given: a server that marked less, looking like one with less to mark.
+    import summarizer.embedder
+
+    def stand_in(model=None, **options):
+        encoder = HashEmbedder()
+        encoder.info = dict(encoder.info) | {"model": model, "revision": "local"}
+        return encoder
+
+    monkeypatch.setattr(summarizer.embedder, "create", stand_in)
+    probe = {"id": "agent_directive", "label": "agent_directive", "weight": 0.9}
+    probe |= {"queries": ["an instruction addressed to an AI agent"]}
+    fitted = probe | {"scale": 6.5, "bias": -1.4, "threshold": 0.04}
+    tuned = tmp_path / "tuned"
+    tuned.mkdir()
+    (tuned / "probes.jsonl").write_text(json.dumps(fitted) + "\n")
+    runtime = cli._runtime(model_args(tuned))
+    assert runtime.calibrated and runtime.probe_version.startswith("sha256:")
+    assert [found[0] for found in runtime.matches([1.0])] == ["agent_directive"]
+    # What the server says of itself carries it, so a reader of /health can tell.
+    front = serving.Front(serving.Absent(), "none", runtime)
+    assert front.summarizer["embedding"]["calibrated"] is True
+    assert front.summarizer["embedding"]["probes"] == runtime.probe_version
+    # A model directory with no probes is refused, not run as if it marked the same.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    with pytest.raises(SystemExit, match="has no probes.jsonl"):
+        cli._runtime(model_args(bare))
+    # Asked for by name it runs, gives no probe label, and says so.
+    runtime = cli._runtime(model_args(bare, uncalibrated=True))
+    assert runtime.calibrated is False and list(runtime.matches([1.0, 1.0, 1.0])) == []
+    front = serving.Front(serving.Absent(), "none", runtime)
+    assert front.summarizer["embedding"]["calibrated"] is False
+    # Probes named apart are used; ones that were never calibrated are no calibration.
+    runtime = cli._runtime(model_args(bare, probes=str(tuned)))
+    assert runtime.calibrated
+    (tmp_path / "raw.jsonl").write_text(json.dumps(probe) + "\n")
+    with pytest.raises(SystemExit, match="none of those probes is calibrated"):
+        cli._runtime(model_args(bare, probes=str(tmp_path / "raw.jsonl")))
+    with pytest.raises(SystemExit, match="the probes cannot be used"):
+        cli._runtime(model_args(bare, probes=str(tmp_path / "missing.jsonl")))

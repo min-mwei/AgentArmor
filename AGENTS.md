@@ -66,6 +66,15 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
     logged or reported. Do not log packet text.
   - Kai on Summarizer packets is unmeasured and serving is unqualified: keep
     `policy_ready: false` in every record and do not describe the monitor as attack prevention.
+  - A gate denies on the errors it can see. Whether a call is stopped when the gate cannot
+    run at all is the client's: the Claude Code `PreToolUse` handler carries
+    `"onFailure": "block"` (2.1.295 or later) and no other handler does; Codex has no such
+    setting, and does not put `write_stdin` to a hook. Do not describe a Codex gate as
+    failing closed, and do not run a gate beside a hook that rewrites tool input.
+  - The server loads an encoder with the probes calibrated for it (`--probes`, or the model
+    directory's own `probes.jsonl`) and refuses a model directory without them unless
+    `--uncalibrated` is given. `/health` says which probes are loaded and whether they are
+    calibrated.
 - Run `ruff check .`, `ruff format --check .`, and `pytest` with the project
   environment. Distinguish CPU adapter contracts from GPU/model validation.
   CMake, CTest, and native sanitizer builds are no longer part of this repository.

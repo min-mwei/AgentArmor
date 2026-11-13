@@ -52,7 +52,12 @@ python3 -m venv .venv
 ```
 
 `[model]` brings Summarizer's embedding runtime (Torch). Without it the server can run with
-`--embedder hash`, a stand-in for tests that does not recognize paraphrase. To load Kai in
+`--embedder hash`, a stand-in for tests that does not recognize paraphrase. A fine-tuned
+EmbeddingGemma 2 directory (`--model DIR`) is loaded with the probes that were calibrated
+for it: its own `probes.jsonl`, or the file given with `--probes`. The built-in probe
+numbers fit the pinned base model only, so a model directory without probes is refused
+unless `--uncalibrated` is given; it then ranks and links and gives none of the three
+probe labels, and `/health` says `calibrated: false`. To load Kai in
 the server, install `./src/vllm` with its `serve` extra as well, on a host its engine
 supports ([serving guide](../vllm/README.md): a Linux GPU host today). A server that reaches
 Kai at another address, or runs Summarizer alone, needs nothing of `src/vllm`.
@@ -154,6 +159,26 @@ for a tool call about to run it asks the local server to decide.
 .venv/bin/agentarmor-monitor hooks-config --agent claude_code \
     --gate "$(pwd)/.venv/bin/agentarmor-monitor"
 ```
+
+**What holds when the gate itself cannot run.** The gate denies on every error it can see.
+It cannot see its own executable missing, a start that fails before it runs, or the client
+ending it at the client's deadline. What happens then is the client's to say:
+
+- **Claude Code** stops the call when the handler says so: the `PreToolUse` handler that
+  `hooks-config --gate` prints carries `"onFailure": "block"`. It needs Claude Code 2.1.295
+  or later. `hooks-config` reads the version of the `claude` on this machine and refuses
+  to print a gate for an older one, unless `--no-failure-block` is given: the gate then
+  stops only the calls it is run for and answers in time. Only that one handler has it.
+  Every other event is recorded and never blocks.
+- **Codex** has no such setting. A gate that cannot start, or that Codex ends at its own
+  deadline, does not stop the call, and input sent to a process that is already running
+  (`write_stdin`) is not put to a hook at all. A Codex gate is a check on the calls it
+  sees, not a boundary. Keep Codex's own approvals and sandbox on.
+
+In both clients another hook, or the permission step, can change a call's arguments after
+the gate has answered for the call it was shown. Do not run the gate beside a hook that
+rewrites tool input. Measured on Claude Code 2.1.323 and Codex CLI 0.168.0 with harmless
+writes; see Summarizer's `docs/agentarmor-cli-protection-review.md` (MR117).
 
 The gate's own options are `--server` (the local server's address, which must be on this
 machine), `--timeout` and `--on-error`. The level a call must be marked at, the rules, the

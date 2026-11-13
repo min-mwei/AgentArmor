@@ -22,7 +22,11 @@ the local server and to nothing else. Kai's serving path is unqualified (policy_
 
 import argparse
 import json
+import os
+import re
+import shutil
 import signal
+import subprocess
 import sys
 import threading
 
@@ -87,16 +91,40 @@ def _gate(args):
 
 
 def _runtime(args):
+    """Summarizer's runtime: the encoder, with the probes that were calibrated for it.
+
+    The built-in probe numbers fit the pinned base model and no other, and Summarizer drops
+    them for any other encoder: its three probe labels are then never given. A fine-tuned
+    model directory carries its own (probes.jsonl), and they are loaded with it. A directory
+    without them is refused unless the operator asks for it by name (--uncalibrated): a
+    server that quietly marks less must not look like one that found nothing to mark.
+    """
     from summarizer.embedder import MODEL, create
     from summarizer.summarize import Runtime
 
     if args.embedder == "hash":
         return Runtime(create("hash"))
-    return Runtime(
-        create(
-            model=args.model or MODEL, device=args.device, local_files_only=args.local_files_only
+    model, probes = args.model or MODEL, getattr(args, "probes", None)
+    uncalibrated = getattr(args, "uncalibrated", False)
+    if probes is None and os.path.isfile(os.path.join(model, "probes.jsonl")):
+        probes = model  # a fine-tuned model directory carries its calibrated probes
+    if probes is None and os.path.isdir(model) and not uncalibrated:
+        raise SystemExit(
+            "summarizer: that model directory has no probes.jsonl, and the built-in probes are "
+            "calibrated for the pinned base model only. Give its probes with --probes, or "
+            "--uncalibrated to run it knowing that it gives no probe label"
         )
-    )
+    encoder = create(model=model, device=args.device, local_files_only=args.local_files_only)
+    try:
+        runtime = Runtime(encoder, probes)
+    except (OSError, ValueError, KeyError) as error:
+        raise SystemExit(f"summarizer: the probes cannot be used: {error}") from None
+    if not runtime.calibrated and not uncalibrated:
+        raise SystemExit(
+            "summarizer: none of those probes is calibrated, so no probe label would be given. "
+            "Calibrate them for this model, or say --uncalibrated"
+        )
+    return runtime
 
 
 def _judge(args):
@@ -296,13 +324,34 @@ def _detections(args):
     return 0
 
 
+# What a client does when a gate's hook does not run at all: its executable is missing, it
+# cannot start, or the client's own deadline ends it. The gate's own guard never sees those.
+FAILURE_BLOCK = (2, 1, 295)  # the first Claude Code that can block a call when a hook fails
+CLIENTS = {"claude_code": "claude", "codex_code": "codex"}
+_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def client_version(agent, run=subprocess.run):
+    """(major, minor, patch) of the agent's client on this machine, or None if it cannot be
+    told: no such program on PATH, or an answer with no version in it."""
+    program = shutil.which(CLIENTS[agent])
+    if program is None:
+        return None
+    try:
+        told = run([program, "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = _VERSION.search(told.stdout or "")
+    return tuple(int(part) for part in found.groups()) if found else None
+
+
 def _hooks(args):
     from summarizer.cli import hook_path, hooks_config, hooks_toml
 
     config = hooks_config(args.agent, args.hook or hook_path())
     if args.gate:  # the gate records every event itself, so it replaces the observer hook
         config = hooks_config(args.agent, args.gate)
-        for groups in config["hooks"].values():
+        for event, groups in config["hooks"].items():
             for handler in groups[0]["hooks"]:
                 if "args" in handler:
                     handler["args"] = ["gate", *handler["args"]]
@@ -313,8 +362,50 @@ def _hooks(args):
                 handler["timeout"] = (
                     max(handler.get("timeout", 0), 60) if "timeout" in handler else 60
                 )
+                # The one handler that decides. Every other event is only recorded, and a
+                # recording that fails must not stop the agent.
+                if event == "PreToolUse" and args.agent == "claude_code" and args.failure_block:
+                    handler["onFailure"] = "block"
+        _say_what_a_failed_hook_does(args)
     print(hooks_toml(config) if args.toml else json.dumps(config, indent=2))
     return 0
+
+
+def _say_what_a_failed_hook_does(args):
+    """On standard error, beside the configuration: what holds when the gate cannot run."""
+    told = sys.stderr
+    if args.agent == "codex_code":
+        print(
+            "agentarmor-monitor: Codex has no setting that stops a call when a hook cannot "
+            "start or is ended by Codex's own deadline: the call then runs. The gate stops "
+            "only the calls it is run for and answers in time. Keep Codex's approvals and "
+            "sandbox on, and note that input sent to a running process (write_stdin) is not "
+            "put to a hook at all.",
+            file=told,
+        )
+        return
+    needed = ".".join(str(part) for part in FAILURE_BLOCK)
+    if not args.failure_block:
+        print(
+            "agentarmor-monitor: without onFailure, a gate that cannot start or is ended by "
+            "Claude Code's deadline does not stop the call.",
+            file=told,
+        )
+        return
+    have = client_version("claude_code")
+    if have is None:
+        print(
+            f"agentarmor-monitor: the PreToolUse hook is set to stop the call when the hook "
+            f'itself fails (onFailure: "block"). That needs Claude Code {needed} or later; '
+            f"the version on this machine could not be told.",
+            file=told,
+        )
+    elif have < FAILURE_BLOCK:
+        raise SystemExit(
+            f'hooks-config: onFailure: "block" needs Claude Code {needed} or later, and this '
+            f"machine has {'.'.join(str(part) for part in have)}. Update it, or pass "
+            f"--no-failure-block and accept that a gate that cannot run does not stop the call"
+        )
 
 
 def _doctor(args):
@@ -400,6 +491,17 @@ def main(argv=None):
         )
         command.add_argument("--device", help="cuda, mps or cpu; detected if omitted")
         command.add_argument("--local-files-only", action="store_true")
+        command.add_argument(
+            "--probes",
+            help="probes.jsonl calibrated for --model, or a directory holding it; a model "
+            "directory's own probes.jsonl is used when this is omitted",
+        )
+        command.add_argument(
+            "--uncalibrated",
+            action="store_true",
+            help="run a model that has no calibrated probes: it ranks and links, and gives "
+            "none of the three probe labels",
+        )
 
     serve = commands.add_parser(
         "serve",
@@ -538,6 +640,13 @@ def main(argv=None):
     hooks.add_argument(
         "--gate",
         help="absolute path of agentarmor-monitor: use the deciding gate, not the plain observer",
+    )
+    hooks.add_argument(
+        "--no-failure-block",
+        dest="failure_block",
+        action="store_false",
+        help="with --gate for Claude Code: leave out onFailure, for a client older than "
+        + ".".join(str(part) for part in FAILURE_BLOCK),
     )
     hooks.set_defaults(run=_hooks)
 

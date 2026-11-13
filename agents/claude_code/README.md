@@ -1,5 +1,10 @@
 # Claude Code integration
 
+> **These templates are a development fixture.** They call `agentarmor hook`, which
+> denies every tool call and asks no model. To have Summarizer watch a session and Kai
+> decide, use the [local monitor](../../src/monitor/README.md) and the hooks it prints
+> (`agentarmor-monitor hooks-config`), described at the end of this page.
+
 [settings.json.example](settings.json.example) invokes the installed Python CLI:
 
 ```sh
