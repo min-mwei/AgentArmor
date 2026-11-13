@@ -7,7 +7,7 @@ evaluation set is commissioned now. The Model Reviewer asked for such a set in M
 
 **Frozen for this request:** the campaign format and validator at commit `f05a16b`, scorer
 `campaign-contract/9`; the `story` field and the content rules of
-[data-request-005.md](data-request-005.md); and `train/check_campaigns.py` as it is at the
+[data-request-005.md](data-request-005.md); and `training/summarizer/check_campaigns.py` as it is at the
 commit that adds this document. Read requests [004](data-request-004.md) and 005 first.
 Everything they say holds here unless this document says otherwise.
 
@@ -25,13 +25,13 @@ data from then on, and a new one is needed.
 
 ## 2. Who reads what
 
-- The file is `train/data/blind/campaigns-test-001.jsonl`. That folder is not tracked.
+- The file is `training/summarizer/data/blind/campaigns-test-001.jsonl`. That folder is not tracked.
   **Only the Data Engineer and the Model Reviewer read it.**
 - The Model Trainer builds the thing being measured and so never reads the file, your
   proof table or any comment on single campaigns. The Trainer gets the checker's last line
   and the manifest (section 6) and nothing else.
 - **You do not read:** anything request 004, section 2, lists; `src/summarizer/history.py`;
-  `train/history_builder.py`; anything under `train/runs/`; `docs/eg2-integration-review.md`
+  `training/summarizer/history_builder.py`; anything under `training/summarizer/runs/`; `docs/eg2-integration-review.md`
   and `docs/probe-expansion-review.md`; and, on the board, anything but the entry that
   sends you here. Those hold what the builder and the model get right and wrong, and a
   campaign must not be shaped by that. Do not run a model.
@@ -131,12 +131,12 @@ first twenty lines the accepted stage 1 campaigns byte for byte.
 Stage 1:
 
 ```sh
-SUMMARIZER_HOME=<a scratch directory> .venv/bin/python train/check_campaigns.py \
-    train/data/blind/campaigns-test-001.jsonl --attack-pairs \
-    --existing train/data/starter/campaigns-v1.jsonl \
-    --existing train/data/synthetic/campaigns-dev-001-r1.jsonl \
-    --existing train/data/synthetic/campaigns-dev-002-full.jsonl \
-    --manifest train/data/eval/campaigns-test-001.manifest.jsonl
+SUMMARIZER_HOME=<a scratch directory> .venv/bin/python training/summarizer/check_campaigns.py \
+    training/summarizer/data/blind/campaigns-test-001.jsonl --attack-pairs \
+    --existing training/summarizer/data/starter/campaigns-v1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl \
+    --manifest training/summarizer/data/eval/campaigns-test-001.manifest.jsonl
 ```
 
 Stage 2 adds
@@ -154,7 +154,7 @@ It must exit 0 with `"complete": true`. It checks form only.
 - **The manifest** is written by the checker: one record for each campaign (id, pair,
   group, family, numbers of sessions and steps, the hash of its content) and one of
   counts. No text and no label. It is tracked, and the Trainer commits it.
-- **The proof table** goes in `train/data/blind/campaigns-test-001.proof.md`, beside the
+- **The proof table** goes in `training/summarizer/data/blind/campaigns-test-001.proof.md`, beside the
   file and as unread by the Trainer: for each pair the columns of request 005, section 6,
   with its family and area, and the counts of section 4 that the checker cannot make.
 - **The receipt on the board, to the Model Reviewer:** the writer (model, effort); the
@@ -166,6 +166,6 @@ Change only those three files and your own board entry.
 ## 7. For the Model Reviewer
 
 Please keep what you say of single campaigns in
-`train/data/blind/campaigns-test-001.review.md`, which the Trainer does not read, and
+`training/summarizer/data/blind/campaigns-test-001.review.md`, which the Trainer does not read, and
 give the board a disposition and counts. If something in this request has to change,
 that can be said on the board in general terms.

@@ -1,7 +1,7 @@
 """Measure how well a model's probes, and the summarizer's wording rules, pick out steering text.
 
-    python train/evaluate.py --model google/embeddinggemma-2 --data train/data/built
-    python train/evaluate.py --model train/runs/NAME/model --benchset ~/repos/AgentArmor/benchset
+    python training/summarizer/evaluate.py --model google/embeddinggemma-2 --data training/summarizer/data/built
+    python training/summarizer/evaluate.py --model training/summarizer/runs/NAME/model --benchset benchset
 
 --data scores the probes on each facets.<split>.jsonl: AUC, and recall and false-positive rate at
 the probe's calibrated threshold. Compare train with dev and heldout: a model that learned the
@@ -21,8 +21,8 @@ import json
 from pathlib import Path
 
 import numpy as np
-from common import auc, load_model, load_probes, probe_scores, read_jsonl
 
+from common import auc, load_model, load_probes, probe_scores, read_jsonl
 from summarizer.events import chunk_spans
 from summarizer.facts import hidden_text, path_mentions, text_flags
 from summarizer.probes import calibrated

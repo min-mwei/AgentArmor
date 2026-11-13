@@ -22,11 +22,6 @@ hf_tok.txt
 # data, the hand-written starter set and accepted synthetic batches are tracked. Seeds are
 # excerpts of real sessions and built pairs are derived: both stay out.
 .summarizer/
-/train/runs/
-/train/data/*
-!/train/data/starter/
-!/train/data/synthetic/
-!/train/data/eval/
 models/
 checkpoints/
 *.safetensors
@@ -34,6 +29,3 @@ checkpoints/
 *.bin
 *.npy
 *.npz
-
-# Returned by the Model Reviewer; kept locally for reference, never used or tracked.
-/train/data/synthetic/batch-001.jsonl

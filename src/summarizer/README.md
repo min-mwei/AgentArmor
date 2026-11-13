@@ -12,7 +12,7 @@ attack, so tagging favors recall over precision.
 
 **Status:** development. The runtime works end to end with both agents and with the unmodified
 EmbeddingGemma 2 base model. No fine-tuned model is in use: a first fine-tune on the one accepted synthetic
-batch did worse than the base model on independent text (see [train/](train/README.md)). Indicator confidences are priors, not measured precision, and how well a
+batch did worse than the base model on independent text (see [train/](training/summarizer/README.md)). Indicator confidences are priors, not measured precision, and how well a
 detector decides from these summaries has not been measured.
 
 ## How it works
@@ -395,7 +395,7 @@ So a replay answers for the machine itself. `hook.build_record(agent, payload, m
 `hook.handle(agent, raw, machine)` take a `hook.Scripted(files, links, codex_home)`: files as
 `{path: text}`, links as `{path: where it really leads}`. Every other path leads to itself and
 holds nothing. Give the events a `transcript_path` under a `.claude` or `.codex` folder, as the
-agents do (`events.agent_home()` says what home it names). The evaluation tools in `train/`
+agents do (`events.agent_home()` says what home it names). The evaluation tools in `training/summarizer/`
 replay this way, so their results do not depend on where they are run.
 
 ## Model and devices
@@ -421,7 +421,7 @@ gets letters. The list is the tokenizer's own (24 strings at the pinned revision
 model is loaded each is checked against the tokenizer; a tokenizer that would still read one
 as a control token is refused then. Text without such a string is handed over exactly as it
 is. The summary keeps the session's text unchanged; only what the model is given differs. The
-tools in `train/` embed and train through the same step (`common.plain`).
+tools in `training/summarizer/` embed and train through the same step (`common.plain`).
 
 The same step handles half of a surrogate pair. It is not a character, the tokenizer refuses
 any text that holds one, and JSON can carry one as an escape (`"\ud83d"`): a tool that cuts
@@ -435,7 +435,7 @@ SHA-256, the probe set, what the loaded model must turn out to be (dimensions, p
 window) and the numbers it is served under. When all of that holds, the summary names the model
 `bundle:<hash of the manifest>`. When it does not, or there is no manifest, the model is served as
 `local`, its probe numbers are dropped, no probe label is given, and the runtime says why: nothing
-then binds those numbers to those weights. [train/](train/README.md) covers building data,
+then binds those numbers to those weights. [train/](training/summarizer/README.md) covers building data,
 fine-tuning, calibration and evaluation.
 
 ## How well does it tag?
@@ -466,7 +466,7 @@ Read these with care:
   detector performs with these summaries as input, which has not been measured.
 
 Whether a summary holds the evidence a decision about one call needs is measured separately, on
-scripted session cases: see [Session cases](train/README.md#session-cases). On the 25 starter
+scripted session cases: see [Session cases](training/summarizer/README.md#session-cases). On the 25 starter
 cases the digest centered on the call holds every required fact and annotation at 3,000
 characters; those cases were written alongside the view, so that is a regression check, not a
 held-out result.

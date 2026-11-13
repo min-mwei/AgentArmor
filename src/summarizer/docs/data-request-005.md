@@ -7,7 +7,7 @@ lies across sessions, half of them attacks and half their benign twins.
 
 **Frozen for this request:** the campaign format and validator at commit `f05a16b`, scorer
 `campaign-contract/9`, as in [data-request-004.md](data-request-004.md); and the checker
-`train/check_campaigns.py`, which is new and is what a file must pass before it is handed in.
+`training/summarizer/check_campaigns.py`, which is new and is what a file must pass before it is handed in.
 Sections 2 (what to read and not to read), 5 (route labels) and the rules for invented,
 inert content of request 004 hold here unchanged. Read request 004 first.
 
@@ -23,7 +23,7 @@ These campaigns are for measurement and development. Nothing is trained on them.
 
 ## 2. The file
 
-`train/data/synthetic/campaigns-dev-002.jsonl`: **60 campaigns in 30 pairs**, in the format
+`training/summarizer/data/synthetic/campaigns-dev-002.jsonl`: **60 campaigns in 30 pairs**, in the format
 of request 004, with one more field on every campaign:
 
 ```json
@@ -102,10 +102,10 @@ Across the file, as well:
 ## 5. Check, and receipt
 
 ```sh
-SUMMARIZER_HOME=<a scratch directory> .venv/bin/python train/check_campaigns.py \
-    train/data/synthetic/campaigns-dev-002.jsonl --attack-pairs \
-    --existing train/data/starter/campaigns-v1.jsonl \
-    --existing train/data/synthetic/campaigns-dev-001.jsonl
+SUMMARIZER_HOME=<a scratch directory> .venv/bin/python training/summarizer/check_campaigns.py \
+    training/summarizer/data/synthetic/campaigns-dev-002.jsonl --attack-pairs \
+    --existing training/summarizer/data/starter/campaigns-v1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-001.jsonl
 ```
 
 It must exit 0, and its last line goes in the receipt. It checks form only: that a twin
@@ -137,7 +137,7 @@ entry MR94 says why, pair by pair; read it before anything else. In short:
   the later request must be particular to each pair's situation.
 
 **Stage 1, for review before anything is expanded:** write
-`train/data/synthetic/campaigns-dev-002-rep.jsonl`: **ten pairs, one for each family**,
+`training/summarizer/data/synthetic/campaigns-dev-002-rep.jsonl`: **ten pairs, one for each family**,
 repaired or rewritten to the points above. With them, in the receipt, a proof table with
 one row per pair: the `decide` step; the user's intent or boundary and where it is; the
 lower-trust event; what was attempted and what was reported of it; the resource and
@@ -147,10 +147,10 @@ difference changes the answer for this call. Leave `campaigns-dev-002.jsonl` unt
 Check with
 
 ```sh
-SUMMARIZER_HOME=<a scratch directory> .venv/bin/python train/check_campaigns.py \
-    train/data/synthetic/campaigns-dev-002-rep.jsonl --attack-pairs \
-    --existing train/data/starter/campaigns-v1.jsonl \
-    --existing train/data/synthetic/campaigns-dev-001.jsonl
+SUMMARIZER_HOME=<a scratch directory> .venv/bin/python training/summarizer/check_campaigns.py \
+    training/summarizer/data/synthetic/campaigns-dev-002-rep.jsonl --attack-pairs \
+    --existing training/summarizer/data/starter/campaigns-v1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-001.jsonl
 ```
 
 and put its last line in the receipt. Look at `at_cutoff` (what is exercised before the
@@ -163,7 +163,7 @@ with `--require gap_reached=6 --require gap_reached_in_another_namespace=2` as w
 ## 7. Stage 2 (2026-11-11, after MR98): the full thirty pairs
 
 The ten representative pairs are accepted. Write the full batch as a new file,
-`train/data/synthetic/campaigns-dev-002-full.jsonl`, and leave both
+`training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl`, and leave both
 `campaigns-dev-002.jsonl` and `campaigns-dev-002-rep.jsonl` untouched.
 
 - **Its first twenty lines are the twenty accepted representative campaigns, byte for
@@ -195,10 +195,10 @@ The ten representative pairs are accepted. Write the full batch as a new file,
 Check with
 
 ```sh
-SUMMARIZER_HOME=<a scratch directory> .venv/bin/python train/check_campaigns.py \
-    train/data/synthetic/campaigns-dev-002-full.jsonl --attack-pairs \
-    --existing train/data/starter/campaigns-v1.jsonl \
-    --existing train/data/synthetic/campaigns-dev-001.jsonl \
+SUMMARIZER_HOME=<a scratch directory> .venv/bin/python training/summarizer/check_campaigns.py \
+    training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl --attack-pairs \
+    --existing training/summarizer/data/starter/campaigns-v1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-001.jsonl \
     --require gap_reached=6 --require gap_reached_in_another_namespace=2 \
     --require returns_to_a_session=16 --require steps_20_or_more=20
 ```

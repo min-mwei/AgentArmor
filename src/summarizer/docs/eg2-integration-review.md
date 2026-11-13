@@ -35,7 +35,7 @@ target contract; the history library is not yet integrated into that live path.
 **What is already correct.** `src/summarizer/embedder.py:94-143` loads only the text encoder,
 chooses bfloat16 or float32, uses `SearchQuery` and `Document`, makes tokenizer control strings
 inert, encodes one text at a time, and normalizes/checks the vectors. Training uses the same
-inert-text transform and prompt strings (`train/finetune.py:251-268`). It freezes the token
+inert-text transform and prompt strings (`training/summarizer/finetune.py:251-268`). It freezes the token
 embedding table by default and trains with CoSENT and Matryoshka losses. It saves, reloads in
 the serving dtype, and then calibrates on dev (`:294-301`). Data hashes and disjoint groups
 are checked before fitting. These safeguards should remain.
@@ -76,7 +76,7 @@ Keep the observer hook's exit-zero behavior unchanged.
 
 **P1 MR113-2 — token truncation is invisible to coverage, and the configured limit is not the
 effective limit.** `Embedder` sets `model.max_seq_length=1024` by default (`embedder.py:95,118`);
-training/evaluation sets 512 (`train/common.py:21,66`). Neither runtime encoding nor coverage
+training/evaluation sets 512 (`training/summarizer/common.py:21,66`). Neither runtime encoding nor coverage
 checks what survived the processor (`embedder.py:132-143`, `summarize.py:996-1039`).
 Character chunks of 320 are not a token bound (`events.py:17,97-119`).
 
@@ -113,8 +113,8 @@ label onto all its otherwise unrelated chunks.
 
 **P2 MR113-3 — calibration compatibility is recorded offline but not enforced in service.**
 This makes the older calibration-identity concern concrete at the loader boundary.
-`train/calibrate.py:85-98` records device, dtype, inference settings and a data digest.
-`train/score_eval.py:89-112` hashes model bundles for offline results. Runtime instead records
+`training/summarizer/calibrate.py:85-98` records device, dtype, inference settings and a data digest.
+`training/summarizer/score_eval.py:89-112` hashes model bundles for offline results. Runtime instead records
 a local path and `revision: local` (`embedder.py:122-130`). Explicit probes are accepted without
 checking their relationship to the encoder (`summarize.py:151-157`, `probes.py:97-112`).
 

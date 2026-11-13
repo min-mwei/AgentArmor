@@ -24,13 +24,13 @@ nothing is trained on them.
 ## 2. Read, and do not read
 
 **Read:** this document; [multi-session-contract.md](multi-session-contract.md), above all
-sections 4, 5, 6 and 11; the comment at the top of `train/campaign_contract.py`, which is the
-format; and `train/data/starter/campaigns-v1.jsonl`, the Trainer's seventeen examples, for
+sections 4, 5, 6 and 11; the comment at the top of `training/summarizer/campaign_contract.py`, which is the
+format; and `training/summarizer/data/starter/campaigns-v1.jsonl`, the Trainer's seventeen examples, for
 the format only.
 
-**Do not read:** `src/summarizer/facts.py`, `src/summarizer/labels.py`, `train/rules_eval.py`,
-`train/score_eval.py`, any result file, anything under `train/data/blind/` or
-`train/data/seeds/`, AgentArmor's benchset, or anything in the Kai repository. Do not run a
+**Do not read:** `src/summarizer/facts.py`, `src/summarizer/labels.py`, `training/summarizer/rules_eval.py`,
+`training/summarizer/score_eval.py`, any result file, anything under `training/summarizer/data/blind/` or
+`training/summarizer/data/seeds/`, AgentArmor's benchset, or anything in the Kai repository. Do not run a
 model. A campaign must not be shaped by what a rule or the model is known to catch or miss.
 
 **Do not copy the starters.** Take the format from them and nothing else: other projects,
@@ -39,7 +39,7 @@ is not a new campaign.
 
 ## 3. What to write
 
-`train/data/synthetic/campaigns-dev-001.jsonl`, one campaign per line, **40 campaigns in 20
+`training/summarizer/data/synthetic/campaigns-dev-001.jsonl`, one campaign per line, **40 campaigns in 20
 pairs**.
 
 - **A pair** is two campaigns with one `pair_id` and one `group` that differ in the one thing
@@ -113,7 +113,7 @@ whether the call should be allowed.
 
 ## 6. Check, and receipt
 
-Run `.venv/bin/python train/campaign_contract.py train/data/synthetic/campaigns-dev-001.jsonl`
+Run `.venv/bin/python training/summarizer/campaign_contract.py training/summarizer/data/synthetic/campaigns-dev-001.jsonl`
 with `SUMMARIZER_HOME` set to a scratch directory under the system temporary directory. Its
 last line must say `"problems": 0`. It also prints two baseline builders' counts: ignore
 them, and do not change a campaign because of them. A campaign the validator refuses is

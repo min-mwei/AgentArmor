@@ -296,8 +296,8 @@ level, and in the watcher's packet as well:
 
 ## 9. The replay harness
 
-`train/campaign_contract.py`, scorer `campaign-contract/2`, with starter campaigns in
-`train/data/starter/campaigns-v1.jsonl`. Its docstring is the specification. In short:
+`training/summarizer/campaign_contract.py`, scorer `campaign-contract/2`, with starter campaigns in
+`training/summarizer/data/starter/campaigns-v1.jsonl`. Its docstring is the specification. In short:
 
 - A campaign is several scripted sessions, an optional schedule in which they take turns,
   and one call under decision. Facts are bound to a session, step, event and field. Bridges
@@ -330,7 +330,7 @@ level, and in the watcher's packet as well:
 ## 11. Routing on what the user said (proposal, version 1; nothing is built)
 
 *Since 2026-11-13 the lookup's part of this is built in `summarizer.history` and measured by
-`train/history_builder.py` on the development campaigns: a statement that states a bound
+`training/summarizer/history_builder.py` on the development campaigns: a statement that states a bound
 and is tied to the call by a file, by a word of its command or by the kind of action it is,
 in this session or in an earlier one of the project, sets the route to `asked`. The gate's
 part is not built: no monitor uses it, and no link is recorded in a receipt yet.*

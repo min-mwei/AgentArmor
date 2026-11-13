@@ -1,7 +1,7 @@
 """Run a battery of security scenarios through the summarizer and report what it tagged.
 
-    python train/security_battery.py                       # wording and behaviour rules only
-    python train/security_battery.py --embedder embeddinggemma
+    python training/summarizer/security_battery.py                       # wording and behaviour rules only
+    python training/summarizer/security_battery.py --embedder embeddinggemma
 
 The battery (data/starter/security-battery.jsonl) is a coverage review, not a measurement: a few
 dozen hand-written scenarios, one per technique, that say where the detectors look and where
@@ -23,7 +23,6 @@ from pathlib import Path
 
 from common import read_jsonl
 from context_eval import CWD, HOME
-
 from summarizer.embedder import Embedder, HashEmbedder
 from summarizer.hook import Scripted, build_record
 from summarizer.store import view

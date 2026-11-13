@@ -1,13 +1,13 @@
 """Run agent sessions over public repositories to grow the pool of real seed sources.
 
-    python train/source_sessions.py --plan train/data/starter/source-plan.jsonl \\
-        --out train/data/seeds --workers 4
+    python training/summarizer/source_sessions.py --plan training/summarizer/data/starter/source-plan.jsonl \\
+        --out training/summarizer/data/seeds --workers 4
 
 Seeds must come from many independent sources, and the saved transcripts of two projects are
 few. This runs one read-only Codex session per line of a plan, each in a shallow clone of a
 public repository, with this project's hook logging the session into a private spool. What the
 agent reads there (build files, logs, documentation, test output) is real text from a source of
-its own. train/export_seeds.py then turns the spool into seeds like any other.
+its own. training/summarizer/export_seeds.py then turns the spool into seeds like any other.
 
 A plan line is {"source", "repo", "task"}: a short name for the source, the repository to clone,
 and what to ask the agent to do there. Sessions are read-only and nothing is installed into
@@ -18,7 +18,7 @@ and what to ask the agent to do there. Sessions are read-only and nothing is ins
     sources.jsonl            one line per session: {"block", "source", "repo", "commit", "task",
                              "events", "model"}, the private ledger of which block came from where
 
-All of it is private working data: keep --out under train/data/seeds/, which Git ignores. Two
+All of it is private working data: keep --out under training/summarizer/data/seeds/, which Git ignores. Two
 sessions over the same repository are two blocks from one source, and the ledger says so.
 """
 
@@ -31,7 +31,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from common import read_jsonl
-
 from summarizer.cli import hook_path, hooks_config
 from summarizer.store import EVENTS
 

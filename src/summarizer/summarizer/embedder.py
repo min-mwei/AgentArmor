@@ -42,7 +42,7 @@ WINDOW_TOKENS = 1024  # what the processor is asked to pass; what it does pass i
 
 # All of the above is one policy with a name: how a text becomes vectors (one at a time, in
 # windows, their mean) and how it is scored against a direction (its best window). The
-# runtime serves under it, train/ measures and calibrates through the same two functions
+# runtime serves under it, the training tools measure and calibrate through the same two functions
 # (Embedder._encode and best_window), and a summary, a measurement and a calibration each
 # say which policy made them. Numbers made under one say nothing sure under another, so a
 # change to any of it is a new name.
@@ -144,7 +144,7 @@ class Embedder:
 
     model is a Hugging Face id (loaded at the pinned revision) or a local directory holding a
     fine-tuned copy. Queries and documents use the model's asymmetric retrieval prompts; training
-    in train/ uses the same two prompts.
+    in training/summarizer/ uses the same two prompts.
     """
 
     def __init__(
@@ -190,7 +190,7 @@ class Embedder:
 
     @classmethod
     def around(cls, loaded, model="loaded", revision="local"):
-        """The embedder for a model that is already loaded, as train/ loads one.
+        """The embedder for a model that is already loaded, as training/summarizer/ loads one.
 
         Nothing of the model is changed. A measurement or a calibration made through this
         encodes and scores as the runtime does, because it is the runtime's code that does

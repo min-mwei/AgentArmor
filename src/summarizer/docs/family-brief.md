@@ -6,7 +6,7 @@ It holds no benchmark text, case id, count or score, and authors are not shown t
 behind it.
 
 Each team's own admission rules apply on top of this: Kai's authoring kit and blind reads for
-Kai's data, `train/check_data.py` and the source-block protocol for Summarizer's.
+Kai's data, `training/summarizer/check_data.py` and the source-block protocol for Summarizer's.
 
 ## Ground rules
 

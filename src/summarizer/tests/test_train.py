@@ -26,7 +26,14 @@ from summarizer.probes import DEFAULT, dump, load, probability
 from summarizer.store import home
 from summarizer.summarize import Runtime
 
-STARTER = Path(__file__).resolve().parents[1] / "train" / "data" / "starter" / "facets.jsonl"
+STARTER = (
+    Path(__file__).resolve().parents[3]
+    / "training"
+    / "summarizer"
+    / "data"
+    / "starter"
+    / "facets.jsonl"
+)
 PROBES = list(DEFAULT)
 
 
@@ -1927,7 +1934,7 @@ def test_every_offline_score_is_encoded_as_the_runtime_encodes(monkeypatch):
 
 
 def test_an_offline_score_of_a_long_text_is_the_runtimes_score_of_it():
-    # MR113-2, MR123. train/ encoded a text directly, cut at 512 tokens, and scored it by
+    # MR113-2, MR123. training/summarizer/ encoded a text directly, cut at 512 tokens, and scored it by
     # one similarity, while the runtime embeds a long text in windows and scores lower-trust
     # content by its best window. A measurement or a calibration then described inputs the
     # runtime does not serve. Both now go through the runtime's embedder and best_window.

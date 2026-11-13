@@ -1,9 +1,9 @@
 """Fit and write one variant of the probes for the facet evaluation, on development data only.
 
-    python train/fit_variant.py --name windows --dev train/data/eval/pilot-001.jsonl \\
-        train/data/eval/dev-002.jsonl --seeds train/data/seeds/all.jsonl \\
-        --blocks train/data/eval/blocks.jsonl --window 480 160 \\
-        --out train/data/eval/variants/windows.json
+    python training/summarizer/fit_variant.py --name windows --dev training/summarizer/data/eval/pilot-001.jsonl \\
+        training/summarizer/data/eval/dev-002.jsonl --seeds training/summarizer/data/seeds/all.jsonl \\
+        --blocks training/summarizer/data/eval/blocks.jsonl --window 480 160 \\
+        --out training/summarizer/data/eval/variants/windows.json
 
 A variant is what score_eval.py --variant runs: the probes with their queries, optional
 negative queries scored by contrast, an optional window (size, stride) and a threshold per

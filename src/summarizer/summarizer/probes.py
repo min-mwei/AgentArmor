@@ -8,11 +8,12 @@ not to draw fine distinctions. Finer labels come from wording and behavior (fact
 A probe tags content once it is calibrated: a threshold on similarity chosen for recall, and scale
 and bias so that sigmoid(scale * similarity + bias) is the probability its label applies. The
 tag's confidence is that probability times the probe's weight. An uncalibrated probe still orders
-content but tags nothing. train/calibrate.py fits these numbers for a model.
+content but tags nothing. training/summarizer/calibrate.py fits these numbers for a model.
 
-The built-in numbers were fitted for the pinned base model on the starter examples in train/, at 90%
-recall, and they apply to that model only: they are loose, so most tags they produce are weak, and
-a different or fine-tuned encoder needs its own calibration (train/README.md has the measurements).
+The built-in numbers were fitted for the pinned base model on the training tools' starter
+examples, at 90% recall, and they apply to that model only: they are loose, so most tags they
+produce are weak, and a different or fine-tuned encoder needs its own calibration (the
+training tools' README has the measurements).
 
 On disk a probe set is JSON Lines, one probe per line; a fine-tuned model directory carries its
 own probes.jsonl.

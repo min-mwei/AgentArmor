@@ -197,7 +197,7 @@ approved shadow first and held training until fixed-Kai packet evaluation. Keep 
 
 Kai's typed `decision` and `is_xpia_attempt` outputs are the trained contracts. Its
 `facts_sufficient` router and evidence-span head are not trained
-(`~/repos/Kai/docs/architecture.md:16-35`). AgentArmor must establish evidence completeness;
+(`KAI/docs/architecture.md:16-35`). AgentArmor must establish evidence completeness;
 it must not manufacture certainty from those untrained heads.
 
 ### 6. P2: a gate's recorded denial does not prove host enforcement
@@ -260,7 +260,7 @@ shells, built-in file tools, browser actions or cloud connectors.
 AgentArmor command, using the existing Summarizer environment:
 
 ```sh
-~/repos/Summarizer/.venv/bin/python -B -m pytest \
+.venv/bin/python -B -m pytest \
   -o addopts='' -q tests/test_hook_templates.py tests/test_monitor.py
 ```
 

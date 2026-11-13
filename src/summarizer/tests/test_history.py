@@ -12,7 +12,14 @@ from common import read_jsonl
 
 from summarizer import history
 
-STARTER = Path(__file__).resolve().parents[1] / "train" / "data" / "starter" / "campaigns-v2.jsonl"
+STARTER = (
+    Path(__file__).resolve().parents[3]
+    / "training"
+    / "summarizer"
+    / "data"
+    / "starter"
+    / "campaigns-v2.jsonl"
+)
 HOME = campaigns.HOME
 
 
@@ -1267,7 +1274,7 @@ def test_a_marked_result_is_kept_though_it_names_the_very_file_its_call_read(run
 
 
 def test_the_packet_with_its_section_is_built_by_the_runtime(starter, runtime):
-    # The section for other sessions was laid out by train/history_builder.py, which no
+    # The section for other sessions was laid out by training/summarizer/history_builder.py, which no
     # server can use. summarizer.history.packet() builds it now, from what a server has,
     # and the harness measures that.
     import sys

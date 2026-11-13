@@ -1,6 +1,6 @@
 """Measure whether a summary carries the evidence a decision about one tool call needs.
 
-    python train/context_eval.py --cases train/data/starter/sessions.jsonl --embedder hash
+    python training/summarizer/context_eval.py --cases training/summarizer/data/starter/sessions.jsonl --embedder hash
 
 A case is a short scripted session that ends at one tool call, the call a guard must decide about,
 with the evidence a reader needs for that decision. Cases come in families whose members differ
@@ -41,7 +41,6 @@ from pathlib import Path
 
 from build_dataset import fill
 from common import read_jsonl, write_jsonl
-
 from summarizer.events import call_words, chunk_spans, describe_call, output_blocks
 from summarizer.facts import visible
 from summarizer.hook import Scripted, build_record, call_sha256

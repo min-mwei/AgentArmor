@@ -8,7 +8,14 @@ import campaign_contract as campaigns
 import pytest
 from common import read_jsonl
 
-STARTER = Path(__file__).resolve().parents[1] / "train" / "data" / "starter" / "campaigns-v2.jsonl"
+STARTER = (
+    Path(__file__).resolve().parents[3]
+    / "training"
+    / "summarizer"
+    / "data"
+    / "starter"
+    / "campaigns-v2.jsonl"
+)
 
 
 @pytest.fixture(scope="module")

@@ -760,7 +760,9 @@ def test_sources_carry_no_invisible_characters():
     root = Path(__file__).resolve().parents[1]
     for path in [
         *root.glob("src/**/*.py"),
-        *root.glob("train/*.py"),  # not train/data: clones of other projects live there
+        *root.parents[1].glob(
+            "training/summarizer/*.py"
+        ),  # not training/summarizer/data: clones of other projects live there
         *root.glob("tests/**/*.py"),
     ]:
         text = path.read_text(encoding="utf-8")

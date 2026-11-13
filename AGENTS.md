@@ -33,7 +33,8 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
   2026-11-10: Summarizer runs as a local model that reads every agent interaction, summarizes
   the session as context and filters out suspicious activity; Kai receives each suspicious
   entry with that context and makes the final decision, allow or deny.
-  - Summarizer is a core part of this repository: `src/summarizer` (package `summarizer`),
+  - Summarizer is a library of this repository: `src/summarizer` (package `summarizer`).
+    The tools that measure and train its encoder are in `training/summarizer`. It comes
     with its own [AGENTS.md](src/summarizer/AGENTS.md). The user decided this on 2026-11-13:
     "Let's refactor AgentArmor and merge Summarizer as a core feature in AgentArmor", and
     "Treat the current Summarizer repo as a POC. The real work is in AgentArmor repo."

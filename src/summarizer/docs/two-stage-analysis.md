@@ -21,9 +21,9 @@ calibrated operating point or a measurement of the monitor's real path.
 | Other trained copies | Per-case rows Kai's trainer saved for nine models (folders in Kai's `train/runs`, local and not committed there), read only |
 
 Stage 1 is not backend-independent. The reviewer's CPU/float32 run of the same script moved a
-few cases near a threshold (section 2). `train/two_stage.py` prints a run record first; quote a
+few cases near a threshold (section 2). `training/summarizer/two_stage.py` prints a run record first; quote a
 figure with it. The MPS/bfloat16 figures here are the run kept in
-`train/data/eval/two-stage-benchset-mps-bfloat16.jsonl`, made from clean code at `fac6a29`: its
+`training/summarizer/data/eval/two-stage-benchset-mps-bfloat16.jsonl`, made from clean code at `fac6a29`: its
 first line names the code, the model revision, device and precision, the probes in effect
 (`default-v3`, three calibrated) and the SHA-256 of every input as read. An earlier run with the
 same counts was made from uncommitted code and is not that record. A later run from clean code
@@ -33,7 +33,7 @@ record and adds the second figure of section 2.
 Two readings of stage 1 are used, and they are different populations:
 
 - **Any-indicator slice.** A case is passed on when any chunk of its text earns an indicator, as
-  `train/evaluate.py` counts it. This is the funnel the user first saw: 960 attacks passed, 160
+  `training/summarizer/evaluate.py` counts it. This is the funnel the user first saw: 960 attacks passed, 160
   missed by Kai.
 - **Low-trigger slice.** A case is passed on when the session pipeline marks it low or higher,
   with the case text arriving as a file the agent read after a fixed request. This is what a
@@ -217,7 +217,7 @@ result, and not evidence about a new family.
 ## 5. Kai's training set, audited
 
 The committed corpus
-(`train/data/corpus/qwen-rc2-recovery99-source-v1-20261107/train.jsonl` at Kai `4e636353`,
+(`training/summarizer/data/corpus/qwen-rc2-recovery99-source-v1-20261107/train.jsonl` at Kai `4e636353`,
 SHA-256 `9fe98d9d…`) holds 556 records: 220 tool-call and 336 injection records. The injection
 records are 188 scenarios in three families, 170 positive and 166 benign.
 
@@ -279,15 +279,15 @@ cases. Removing the quotes does not undo that. Consequences:
 
 ```sh
 # Funnel and trigger levels. First stdout line is the run record; the text table is on stderr.
-.venv/bin/python train/two_stage.py --benchset ~/repos/AgentArmor/benchset
+.venv/bin/python training/summarizer/two_stage.py --benchset benchset
 
 # By panel, instruction id and genre, for each saved system
-.venv/bin/python train/kai_misses.py --benchset ~/repos/AgentArmor/benchset
-.venv/bin/python train/kai_misses.py --benchset ~/repos/AgentArmor/benchset --system openai-decisions
+.venv/bin/python training/summarizer/kai_misses.py --benchset benchset
+.venv/bin/python training/summarizer/kai_misses.py --benchset benchset --system openai-decisions
 
 # The trained copies, the short-text tags, and the mean of the copies' log-odds
-R=~/repos/Kai/train/runs
-.venv/bin/python train/kai_misses.py --benchset ~/repos/AgentArmor/benchset --reads \
+R=KAI/train/runs
+.venv/bin/python training/summarizer/kai_misses.py --benchset benchset --reads \
     $R/qwen-rc2-recovery99-run1-s{0,1,2}-dev-20261108 \
     $R/qwen-rc2-recovery99-cross-init{0-order1,1-order0}-dev-20261108 \
     $R/qwen-rc2-stratified-init{0,1}-order{0,1}-20261108-dev

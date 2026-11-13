@@ -185,7 +185,7 @@ Correlations that exist today:
 
 ## 6. Security coverage: what the review found
 
-Method: `train/security_battery.py` runs 63 single-call action scenarios and 21 content texts
+Method: `training/summarizer/security_battery.py` runs 63 single-call action scenarios and 21 content texts
 (18 attacks, 3 benign), one per technique, through the real code path. It is a diagnostic
 inventory written by the trainer with the detectors' code open. It is not a measurement of
 detection quality and must never be used as a held-out set.
@@ -204,8 +204,8 @@ What "tagged" means here, and what it does not:
   twin. They are single calls; nothing here tests context, order, outcomes or user scope.
 
 ```sh
-.venv/bin/python train/security_battery.py                         # rules only
-.venv/bin/python train/security_battery.py --embedder embeddinggemma
+.venv/bin/python training/summarizer/security_battery.py                         # rules only
+.venv/bin/python training/summarizer/security_battery.py --embedder embeddinggemma
 ```
 
 ### 6.1 Actions
@@ -334,7 +334,7 @@ The first independent run (blind test 001, 400 authored examples from 28 unseen 
 run once on a frozen commit by the Model Reviewer): the runtime's recall is 0.89 / 0.99 / 0.98
 and its false-positive rate 0.68 / 0.62 / 0.74, AUC 0.76 / 0.93 / 0.81. Light contrast
 (weight 0.25) raised AUC by 0.01 to 0.03; half-overlapping windows improved where the tag
-lands and lowered ranking. No variant is adopted. `train/README.md`, "The first independent
+lands and lowered ranking. No variant is adopted. `training/summarizer/README.md`, "The first independent
 run", has the table and its limits.
 
 ### 7.3 Review findings on the modeling
@@ -545,7 +545,7 @@ of entries shown with their references.
 A packet is **ready** only when the call's identity is verified, everything fits or what was
 dropped is not key evidence, no condition is unresolved, every captured event was scanned, and
 nothing happened after the call that the packet does not include. Otherwise the guard is told
-what is missing. This is the property the session-case contract tests (`train/case_contract.py`).
+what is missing. This is the property the session-case contract tests (`training/summarizer/case_contract.py`).
 
 Measured on the 40 held-out session cases at 3,000 characters: first run, 90 of 144 runs
 complete and 38 ready while incomplete; after the fixes that run prompted, 144 complete, 0 ready
@@ -561,7 +561,7 @@ source caps that never drop key evidence silently.
 
 | Question | Instrument | State |
 |---|---|---|
-| Where do the detectors not look at all? | `train/security_battery.py` (diagnostic inventory) | 47 of 63 actions with no more than a generic indicator; 12 of 18 texts untagged by rules |
+| Where do the detectors not look at all? | `training/summarizer/security_battery.py` (diagnostic inventory) | 47 of 63 actions with no more than a generic indicator; 12 of 18 texts untagged by rules |
 | Do the probes find text in which a facet is present, on unseen sources? | Blind facet test 001, `score_eval.py` | Run once: 400 examples, 200 groups, 28 blocks. Runtime recall 0.89 / 0.99 / 0.98, FPR 0.68 / 0.62 / 0.74 |
 | Does the packet keep what a decision needs? | Session cases, `case_contract.py` | 40 diagnostic cases; fresh holdout needed |
 | Does the guard decide better with the packet? | Kai with packet, with raw tail, with nothing | Not started |

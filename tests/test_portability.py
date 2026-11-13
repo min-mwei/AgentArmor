@@ -4,8 +4,10 @@ import re
 
 
 def test_sources_do_not_embed_machine_paths_or_credentials(repo_root):
+    # Invented homes in fixtures (what a hook event of a made-up user looks like) are not
+    # anyone's machine: the names below are the only ones a fixture may use.
     patterns = (
-        re.compile(r"/(?:Users|home)/[A-Za-z0-9_.-]+/"),
+        re.compile(r"/(?:Users|home)/(?!(?:dev|alice|bob|\.aws)/)[A-Za-z0-9_.-]+/"),
         re.compile(r"~/(?:repos|projects)/"),
         re.compile(r"/(?:opt/homebrew|usr/local/Cellar)/"),
         re.compile(r"\b(?:hf_|sk-(?:proj-|svcacct-)?)[A-Za-z0-9]{24,}\b"),
@@ -30,7 +32,7 @@ def test_sources_do_not_embed_machine_paths_or_credentials(repo_root):
     files = [
         path for path in repo_root.iterdir() if path.is_file() and not path.name.startswith(".")
     ]
-    for name in ("agents", "src", "scripts", "tests", "docs"):
+    for name in ("agents", "src", "scripts", "tests", "docs", "training"):
         files.extend(path for path in (repo_root / name).rglob("*") if path.is_file())
     for path in files:
         if path.suffix not in suffixes:

@@ -7,7 +7,14 @@ import context_eval
 import pytest
 from common import read_jsonl
 
-CASES = Path(__file__).resolve().parents[1] / "train" / "data" / "starter" / "sessions.jsonl"
+CASES = (
+    Path(__file__).resolve().parents[3]
+    / "training"
+    / "summarizer"
+    / "data"
+    / "starter"
+    / "sessions.jsonl"
+)
 
 
 @pytest.fixture(scope="module")

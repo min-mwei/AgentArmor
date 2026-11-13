@@ -208,7 +208,7 @@ record. An incomplete history never inherits readiness from the current session.
 | `summarizer doctor` and `agentarmor-monitor doctor` | The monitor's report calls the core's; each fact is read in one place |
 | Two test suites with helper modules of the same names | One runner; the helpers are named for their component |
 | Two definitions of a completed Kai read (Kai's retention tool and the campaign tool) | One verifier, imported by both |
-| A proof-of-concept tool set under `src/summarizer/train` | The contracts and counters that tests and measurements use; the encoder's tools rebuilt to section 5; the rest removed, each removal listed |
+| A proof-of-concept tool set under `training/summarizer` | The contracts and counters that tests and measurements use; the encoder's tools rebuilt to section 5; the rest removed, each removal listed |
 
 ## 8. Order of work
 

@@ -152,7 +152,7 @@ Not in this version. What a later version must state before the fit, from MR114:
   positives, reported apart from facet metrics, with other valid evidence of the same
   campaign masked out of in-batch negatives;
 - whole source, group, writer and campaign splits, randomized entities, held-out families,
-  and every batch through `train/check_data.py`; the campaign files, the panels and the
+  and every batch through `training/summarizer/check_data.py`; the campaign files, the panels and the
   held-out sets stay out of training and calibration;
 - the result is a bundle with a manifest (`summarizer.bundle`), calibrated per profile under
   `windows/1`, and compared with the frozen design chosen here on the same cases.

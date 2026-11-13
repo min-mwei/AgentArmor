@@ -1,0 +1,9 @@
+extend = "../../ruff.toml"
+
+[lint.isort]
+known-first-party = ["summarizer"]
+
+[lint.per-file-ignores]
+# Usage lines name whole paths from the repository root, and fixtures quote text verbatim.
+"*.py" = ["E501"]
+"data/*" = ["E501"]

@@ -1,6 +1,6 @@
 """Build training data for the probes from labelled examples.
 
-    python train/build_dataset.py --facets train/data/starter/facets.jsonl --out train/data/built
+    python training/summarizer/build_dataset.py --facets training/summarizer/data/starter/facets.jsonl --out training/summarizer/data/built
 
 The encoder is small, so the data is built to teach patterns rather than strings:
 

@@ -43,5 +43,7 @@ def word_embedder(window=10_000):
     embedder.info = {"backend": "words", "model": "words", "revision": "1", "dim": 4}
     embedder.info |= {"policy": POLICY, "batch": ENCODE_BATCH}
     embedder.info |= {"window_tokens": window, "max_windows": MAX_WINDOWS}
-    embedder.model.summarizer_embedder = embedder  # what train/common.served() looks for
+    embedder.model.summarizer_embedder = (
+        embedder  # what the training tools' common.served() looks for
+    )
     return embedder

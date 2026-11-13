@@ -1,6 +1,6 @@
 """Measure the wording rules on evaluation files, along the path the summarizer serves.
 
-    python train/rules_eval.py train/data/eval/pilot-001.jsonl train/data/eval/dev-002.jsonl \\
+    python training/summarizer/rules_eval.py training/summarizer/data/eval/pilot-001.jsonl training/summarizer/data/eval/dev-002.jsonl \\
         --use development --fills 3
 
 The wording rules (facts.text_spans) need no model. Each example's template is filled, redacted
@@ -58,7 +58,6 @@ from collections import Counter
 from check_data import EFFECTS
 from check_eval import FIELDS, FORMS, any_present, seeds_of, span_problem, wording_problems
 from score_eval import VOCABULARY, carry, read_once, rows_of, serve, source_identity
-
 from summarizer import facts
 from summarizer.labels import CONTENT, combine, content_indicators
 from summarizer.summarize import detector
@@ -434,7 +433,7 @@ def main(argv=None):
         data, sha = read_once(name)
         found = rows_of(data)
         if not all(checked(row) for row in found):
-            raise SystemExit(f"{name}: run train/check_eval.py on this file first")
+            raise SystemExit(f"{name}: run training/summarizer/check_eval.py on this file first")
         rows += found
         files.append({"file": name, "sha256": sha, "examples": len(found)})
     records, coverage = observe(rows, args.fills, args.seed, VOCABULARY[args.use])

@@ -1,8 +1,8 @@
 """Check a file of authored campaigns before it goes to review.
 
-    python train/check_campaigns.py train/data/synthetic/campaigns-dev-002.jsonl \\
-        --existing train/data/starter/campaigns-v1.jsonl \\
-        --existing train/data/synthetic/campaigns-dev-001.jsonl
+    python training/summarizer/check_campaigns.py training/summarizer/data/synthetic/campaigns-dev-002.jsonl \\
+        --existing training/summarizer/data/starter/campaigns-v1.jsonl \\
+        --existing training/summarizer/data/synthetic/campaigns-dev-001.jsonl
 
 `campaign_contract.py` says whether one campaign can be scored. This says whether a file of
 them is fit to hand in: every campaign valid and replayable, its own evidence showable, the

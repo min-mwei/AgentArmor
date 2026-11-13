@@ -1,9 +1,9 @@
 """Check an evaluation file for the probes, and write the manifest the trainer may read.
 
-    python train/check_eval.py train/data/eval/pilot-001.jsonl --use development \\
-        --seeds train/data/seeds/all.jsonl --blocks train/data/eval/blocks.jsonl
+    python training/summarizer/check_eval.py training/summarizer/data/eval/pilot-001.jsonl --use development \\
+        --seeds training/summarizer/data/seeds/all.jsonl --blocks training/summarizer/data/eval/blocks.jsonl
 
-An evaluation example carries its annotations beside the text (train/README.md, "An independent
+An evaluation example carries its annotations beside the text (training/summarizer/README.md, "An independent
 test for the probes"). This checks what can be checked without reading meaning into the text:
 
 - the documented fields and types, and unique ids;
@@ -47,7 +47,6 @@ from check_data import (
     runs,
 )
 from common import load_probes, read_jsonl, write_jsonl
-
 from summarizer.events import chunk_spans
 from summarizer.facts import hidden_text, observables, visible
 from summarizer.redact import redact

@@ -1,6 +1,6 @@
 """Calibrate a model's probes on labelled pairs, favoring recall.
 
-    python train/calibrate.py --model train/runs/NAME/model --data train/data/built/facets.dev.jsonl
+    python training/summarizer/calibrate.py --model training/summarizer/runs/NAME/model --data training/summarizer/data/built/facets.dev.jsonl
 
 For each probe this fits scale and bias so that sigmoid(scale * similarity + bias) is the chance
 the probe's label applies, and picks the similarity threshold that still tags the target share of
@@ -14,6 +14,7 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+
 from common import (
     PartialInput,
     auc,
@@ -25,7 +26,6 @@ from common import (
     read_jsonl,
     spans,
 )
-
 from summarizer.probes import dump
 
 

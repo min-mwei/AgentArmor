@@ -52,14 +52,14 @@ ROCm), Apple silicon and CPU; `--device` overrides detection.
 .venv/bin/pip install -e '.[train]'
 
 # 1. Build pairs from labelled examples, holding two carrier families out.
-.venv/bin/python train/build_dataset.py --facets train/data/starter/facets.jsonl \
-    --holdout-family tool_metadata --holdout-family code_comment --out train/data/built
+.venv/bin/python training/summarizer/build_dataset.py --facets training/summarizer/data/starter/facets.jsonl \
+    --holdout-family tool_metadata --holdout-family code_comment --out training/summarizer/data/built
 
 # 2. Fine-tune, then calibrate on dev and measure against the base model.
-.venv/bin/python train/finetune.py --data train/data/built --out train/runs/first
+.venv/bin/python training/summarizer/finetune.py --data training/summarizer/data/built --out training/summarizer/runs/first
 
 # 3. Use the result.
-.venv/bin/summarizer serve --model train/runs/first/model
+.venv/bin/summarizer serve --model training/summarizer/runs/first/model
 ```
 
 `finetune.py` writes the model and its calibrated `probes.jsonl` to `out/model` and one line per
@@ -104,12 +104,12 @@ Two more tools work on any model, tuned or not:
 
 ```sh
 # Recalibrate probes for a model, at a chosen recall.
-.venv/bin/python train/calibrate.py --model train/runs/first/model \
-    --data train/data/built/facets.dev.jsonl --recall 0.9
+.venv/bin/python training/summarizer/calibrate.py --model training/summarizer/runs/first/model \
+    --data training/summarizer/data/built/facets.dev.jsonl --recall 0.9
 
 # Measure probes on the built splits, and tagging on AgentArmor's public panels.
-.venv/bin/python train/evaluate.py --model train/runs/first/model --data train/data/built \
-    --benchset ~/repos/AgentArmor/benchset
+.venv/bin/python training/summarizer/evaluate.py --model training/summarizer/runs/first/model --data training/summarizer/data/built \
+    --benchset benchset
 ```
 
 ## Data
@@ -117,15 +117,15 @@ Two more tools work on any model, tuned or not:
 Training data is synthetic, written from real seeds.
 
 ```text
-real sessions ──export_seeds.py──> train/data/seeds/      private, never trained on
-seeds ──written in their image──> train/data/synthetic/   new templates, in batches
+real sessions ──export_seeds.py──> training/summarizer/data/seeds/      private, never trained on
+seeds ──written in their image──> training/summarizer/data/synthetic/   new templates, in batches
 batch ──check_data.py──> accepted                          then used by build_dataset.py
 ```
 
 - **Seeds are real.** A seed is a short excerpt of what an agent was actually shown in one of
   your own logged sessions, with the labels the summarizer gave it. Seeds show what real
   carriers, phrasing and benign look-alikes are like. They are never training examples and
-  never leave `train/data/seeds/`, which Git ignores.
+  never leave `training/summarizer/data/seeds/`, which Git ignores.
 - **Examples are synthetic.** The Data Engineer writes new templates in the image of the seeds:
   new text, entities as slots, attacks paired with benign look-alikes.
 - **The starter set is hand-written.** `data/starter/` holds the examples and session cases this
@@ -139,8 +139,8 @@ on the same cases.
 ### Seeds
 
 ```sh
-.venv/bin/python train/export_seeds.py --sessions ~/.summarizer/sessions \
-    --out train/data/seeds/sessions.jsonl
+.venv/bin/python training/summarizer/export_seeds.py --sessions ~/.summarizer/sessions \
+    --out training/summarizer/data/seeds/sessions.jsonl
 ```
 
 Sessions from before the hooks were installed can seed data too. `import_transcripts.py` replays
@@ -150,10 +150,10 @@ leave out any excerpt that repeats a benchset case or an existing example (agent
 too), and `--drop` leaves out excerpts matching a pattern, such as your name:
 
 ```sh
-.venv/bin/python train/import_transcripts.py --project ~/repos/Summarizer --out train/data/seeds/spool
-.venv/bin/python train/export_seeds.py --sessions train/data/seeds/spool/sessions \
-    --out train/data/seeds/all.jsonl --benchset ~/repos/AgentArmor/benchset \
-    --exclude train/data/starter/facets.jsonl --drop 'your-name'
+.venv/bin/python training/summarizer/import_transcripts.py --project PROJECT --out training/summarizer/data/seeds/spool
+.venv/bin/python training/summarizer/export_seeds.py --sessions training/summarizer/data/seeds/spool/sessions \
+    --out training/summarizer/data/seeds/all.jsonl --benchset benchset \
+    --exclude training/summarizer/data/starter/facets.jsonl --drop 'your-name'
 ```
 
 Two projects' transcripts are few sources. `source_sessions.py` adds more: it runs one read-only
@@ -164,8 +164,8 @@ records which block came from which repository, commit and task, so that two ses
 repository are known to be one source.
 
 ```sh
-.venv/bin/python train/source_sessions.py --plan train/data/starter/source-plan.jsonl \\
-    --out train/data/seeds --workers 4
+.venv/bin/python training/summarizer/source_sessions.py --plan training/summarizer/data/starter/source-plan.jsonl \\
+    --out training/summarizer/data/seeds --workers 4
 ```
 
 Each line is `{"id", "carrier", "labels", "level", "text"}`. `carrier` is where the text came
@@ -207,9 +207,9 @@ One template per line:
 Check a batch before it is used. It must come back with no problems:
 
 ```sh
-.venv/bin/python train/check_data.py train/data/synthetic/batch-001.jsonl \
-    --existing train/data/starter/facets.jsonl \
-    --seeds train/data/seeds/sessions.jsonl --benchset ~/repos/AgentArmor/benchset
+.venv/bin/python training/summarizer/check_data.py training/summarizer/data/synthetic/batch-001.jsonl \
+    --existing training/summarizer/data/starter/facets.jsonl \
+    --seeds training/summarizer/data/seeds/sessions.jsonl --benchset benchset
 ```
 
 It checks the format, slots and groups, refuses credential formats, invisible characters and
@@ -257,7 +257,7 @@ them, and what the packet must not say:
   summarizer adds: labels, who named what, coverage. `absent` strings must not appear.
 
 ```sh
-.venv/bin/python train/context_eval.py --cases train/data/starter/sessions.jsonl
+.venv/bin/python training/summarizer/context_eval.py --cases training/summarizer/data/starter/sessions.jsonl
 ```
 
 It summarizes each session as it stood when the call was proposed and scores three packets at
@@ -333,7 +333,7 @@ String lists are a smoke test. Held-out cases are written against a stricter con
   `render` (left out of the packet).
 
 ```sh
-.venv/bin/python train/case_contract.py train/data/starter/sessions-v2.jsonl
+.venv/bin/python training/summarizer/case_contract.py training/summarizer/data/starter/sessions-v2.jsonl
 ```
 
 `data/starter/sessions-v2.jsonl` holds 21 example cases written with the contract: Yes/No
@@ -428,7 +428,7 @@ a proposal: nothing it describes is built. The packet of today is one of the bui
 the gap is a count now and the same campaigns measure what is built later.
 
 ```sh
-.venv/bin/python train/campaign_contract.py train/data/starter/campaigns-v1.jsonl
+.venv/bin/python training/summarizer/campaign_contract.py training/summarizer/data/starter/campaigns-v1.jsonl
 ```
 
 - Every event goes through the real hook into a scratch spool, and one daemon keeps an
@@ -569,8 +569,8 @@ An example is `{"id", "block", "seed", "group", "carrier", "writer", "text", "fa
 - Only `text` is ever given to a model.
 
 ```sh
-.venv/bin/python train/check_eval.py train/data/eval/pilot-001.jsonl --use development \\
-    --seeds train/data/seeds/all.jsonl --blocks train/data/eval/blocks.jsonl
+.venv/bin/python training/summarizer/check_eval.py training/summarizer/data/eval/pilot-001.jsonl --use development \\
+    --seeds training/summarizer/data/seeds/all.jsonl --blocks training/summarizer/data/eval/blocks.jsonl
 ```
 
 `check_eval.py` checks the fields, that each seed belongs to the example's block and the block
@@ -589,7 +589,7 @@ a name to those that stand (a tool's envelope, conventional syntax, a common phr
 review. `fit_variant.py` goes through the same gate. Overlap with the benchset is never allowed.
 
 ```sh
-.venv/bin/python train/score_eval.py train/data/eval/pilot-001.jsonl --use development --fills 3
+.venv/bin/python training/summarizer/score_eval.py training/summarizer/data/eval/pilot-001.jsonl --use development --fills 3
 ```
 
 `score_eval.py` fills, redacts and chunks each example as the runtime does and prints the rows
@@ -696,7 +696,7 @@ The wording rules (`facts.text_spans`) need no model, and `rules_eval.py` measur
 their own, along the serving path:
 
 ```sh
-.venv/bin/python train/rules_eval.py train/data/eval/pilot-001.jsonl train/data/eval/dev-002.jsonl \\
+.venv/bin/python training/summarizer/rules_eval.py training/summarizer/data/eval/pilot-001.jsonl training/summarizer/data/eval/dev-002.jsonl \\
     --use development --fills 3
 ```
 
@@ -783,8 +783,8 @@ the same case (`benchset/predictions/kai-4b.jsonl`; no Kai model is run), and co
 flagged when Summarizer passes it on and Kai's score is above a cutoff.
 
 ```sh
-.venv/bin/python train/two_stage.py --benchset ~/repos/AgentArmor/benchset
-.venv/bin/python train/kai_misses.py --benchset ~/repos/AgentArmor/benchset
+.venv/bin/python training/summarizer/two_stage.py --benchset benchset
+.venv/bin/python training/summarizer/kai_misses.py --benchset benchset
 ```
 
 Only Kai's side comes from saved files. Summarizer's side is fresh model inference, so every
@@ -912,11 +912,11 @@ examples. Four of its families were held out whole (`shell_directory_listing`,
 `file_config_fixture`, `web_forum_thread`, `tool_result_envelope`).
 
 ```sh
-.venv/bin/python train/build_dataset.py --facets train/data/starter/facets.jsonl \
-    --facets train/data/synthetic/batch-002.jsonl --holdout-family shell_directory_listing \
+.venv/bin/python training/summarizer/build_dataset.py --facets training/summarizer/data/starter/facets.jsonl \
+    --facets training/summarizer/data/synthetic/batch-002.jsonl --holdout-family shell_directory_listing \
     --holdout-family file_config_fixture --holdout-family web_forum_thread \
-    --holdout-family tool_result_envelope --out train/data/built
-.venv/bin/python train/finetune.py --data train/data/built --out train/runs/batch002
+    --holdout-family tool_result_envelope --out training/summarizer/data/built
+.venv/bin/python training/summarizer/finetune.py --data training/summarizer/data/built --out training/summarizer/runs/batch002
 ```
 
 Two epochs (466 steps, about five minutes on an Apple M5 Max, 137M of 271M parameters trained)

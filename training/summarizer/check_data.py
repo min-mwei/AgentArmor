@@ -1,7 +1,7 @@
 """Check a batch of synthetic examples before it is used for training.
 
-    python train/check_data.py train/data/synthetic/batch-001.jsonl \\
-        --seeds train/data/seeds/sessions.jsonl --benchset ~/repos/AgentArmor/benchset
+    python training/summarizer/check_data.py training/summarizer/data/synthetic/batch-001.jsonl \\
+        --seeds training/summarizer/data/seeds/sessions.jsonl --benchset benchset
 
 Synthetic examples are written in the image of real seeds. A batch is checked for what would
 turn training into memorization, or bring in what must stay out:
@@ -30,7 +30,6 @@ from pathlib import Path
 
 from build_dataset import fill
 from common import load_probes, read_jsonl
-
 from summarizer.facts import hidden_text, observables, visible
 from summarizer.redact import redact
 

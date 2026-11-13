@@ -1,6 +1,6 @@
 """A packet builder that uses summarizer.history, measured like the two baselines.
 
-    python train/history_builder.py train/data/synthetic/campaigns-dev-002-full.jsonl
+    python training/summarizer/history_builder.py training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl
 
 campaign_contract.py has two builders that show the gap: today's packet, and the newest
 lines of every session. This is the third: today's packet with what summarizer.history
@@ -26,7 +26,6 @@ import json
 
 import campaign_contract as cc
 from common import read_jsonl
-
 from summarizer import history
 
 KEPT = ("id", "agent", "session_id", "cwd", "namespace", "alias", "later", "mine")

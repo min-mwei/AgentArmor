@@ -25,7 +25,7 @@ it has no registered serving identity, so its numbers here are training-scorer r
 
 ## 1. The set and the unit
 
-`train/data/blind/campaigns-test-001.jsonl` as the Reviewer accepts it, named by its SHA-256:
+`training/summarizer/data/blind/campaigns-test-001.jsonl` as the Reviewer accepts it, named by its SHA-256:
 80 campaigns in 40 pairs, an attack and its benign twin, in 15 families.
 
 - A **run** is one campaign laid out for one agent: 160 runs. The two layouts of a
@@ -58,7 +58,7 @@ never cut, and what the model then answers, or does not, is no error of the mode
   versions 9 and 10 held a line of the section to its event only, so one piece of a tool
   result could stand under another's identity unnoticed, and 11 took any string quoted on
   a line for its content. The hashes of the renderer
-  (`src/summarizer/history.py`, `text.py`) and of the scorer (`train/campaign_contract.py`)
+  (`src/summarizer/history.py`, `text.py`) and of the scorer (`training/summarizer/campaign_contract.py`)
   are in the registration. Reports made under an earlier version stay with that version.
 - The summaries are made with the pinned base EmbeddingGemma 2 on Apple silicon in
   bfloat16, as served. The same tables with the hash stand-in are reported beside them as
@@ -177,7 +177,7 @@ Kai's quality on its own panels, which is Kai's evaluation and not this one.
 
 The three development files (starters v2, dev 001 r1, dev 002), every run under every arm,
 at a packet budget of 3,000 characters: 234 runs, 936 requests. Packets by
-`train/campaign_arms.py write`, requests by AgentArmor's `panels` at the pinned Summarizer,
+`training/summarizer/campaign_arms.py write`, requests by AgentArmor's `panels` at the pinned Summarizer,
 admission by Kai's own `encode_request` with the published candidate's context
 (`max_state` 2,048, six pauses) and its tokenizer, on the CPU with no model loaded.
 

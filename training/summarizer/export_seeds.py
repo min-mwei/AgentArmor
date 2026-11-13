@@ -1,12 +1,12 @@
 """Turn logged sessions into seeds for synthetic training data.
 
-    python train/export_seeds.py --sessions ~/.summarizer/sessions \\
-        --out train/data/seeds/sessions.jsonl
+    python training/summarizer/export_seeds.py --sessions ~/.summarizer/sessions \\
+        --out training/summarizer/data/seeds/sessions.jsonl
 
 A seed is a short piece of text a real session's agent was shown, with what the summarizer tagged
 it as. Seeds show the Data Engineer what real carriers, phrasing and benign look-alikes are like;
 new templates are written in their image. Seeds are never trained on and stay in
-train/data/seeds/, which Git ignores.
+training/summarizer/data/seeds/, which Git ignores.
 
 Entities are masked on the way out: hosts, URLs, addresses and mailboxes become slots and home
 directories become ~. Secrets were already redacted when the session was logged. What is left is
@@ -27,7 +27,6 @@ from pathlib import Path
 
 from check_data import RUN, benchset_texts, runs
 from common import read_jsonl, write_jsonl
-
 from summarizer.facts import observables
 from summarizer.store import EVENTS, read_events
 

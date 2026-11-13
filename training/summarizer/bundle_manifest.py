@@ -1,6 +1,6 @@
 """Write the manifest of a fine-tuned model's directory from the receipt of its run.
 
-    python train/bundle_manifest.py train/runs/trial-003a
+    python training/summarizer/bundle_manifest.py training/summarizer/runs/trial-003a
 
 A run leaves receipt.json beside model/, with the hash of every file the model directory
 held when the run ended. This writes model/bundle.jsonl (summarizer.bundle), which the

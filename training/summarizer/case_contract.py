@@ -1,6 +1,6 @@
 """The contract for held-out session cases: a schema, a validator and a source-bound scorer.
 
-    python train/case_contract.py train/data/starter/sessions-v2.jsonl
+    python training/summarizer/case_contract.py training/summarizer/data/starter/sessions-v2.jsonl
 
 A case is a scripted session with exactly one decision point and the evidence a reader needs at
 that point. Unlike a list of strings, every required fact names where it comes from, and a packet
@@ -69,7 +69,6 @@ from build_dataset import fill
 from common import read_jsonl
 from context_eval import AGENTS, CWD, HOME, _call, held, tail
 from score_eval import code_version
-
 from summarizer.events import (
     _KEY,
     SCALARS,

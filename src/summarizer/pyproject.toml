@@ -42,7 +42,7 @@ include = ["summarizer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "train"]
+pythonpath = [".", "../../training/summarizer"]
 addopts = "-q"
 markers = ["model: needs the cached EmbeddingGemma 2 weights (set SUMMARIZER_TEST_MODEL=1)"]
 
@@ -56,4 +56,3 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # Fixtures quote payloads and attack text verbatim; wrapping them hides what is being tested.
 "tests/*" = ["E501"]
-"train/data/*" = ["E501"]

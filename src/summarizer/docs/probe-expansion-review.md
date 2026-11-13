@@ -149,11 +149,11 @@ More descriptions and more scanned windows create more chances to cross a thresh
 with max aggregation. Calibrate on the actual family aggregate and served span/window
 policy. Report long-interaction escalation frequency as well as individual span results.
 Do not use a benign prototype as a veto: common legitimate wording does not erase suspicious
-content beside it. Benign controls help train/rank and let Kai resolve context.
+content beside it. Benign controls help training/summarizer/rank and let Kai resolve context.
 
 **Training must match the representation being proposed.** The current builder cycles
 through a family's descriptions but assigns every pair the same family label
-(`train/build_dataset.py:155-177`). On existing starter `doc-5-0`, which concerns approval
+(`training/summarizer/build_dataset.py:155-177`). On existing starter `doc-5-0`, which concerns approval
 and sandbox bypass, eight variants produce positive labels for all three control queries
 in counts **3/3/2**, including the persistent-configuration and deletion descriptions.
 That is coherent for today's deliberately broad family prototypes. It would not supervise
@@ -237,7 +237,7 @@ do not train a fake confident summary or promote an untrained sufficiency output
    over time. Include quoted attacks and authorized sensitive actions as relevant indicators;
    attack/allow labels belong to Kai's separate task. Keep answer keys out of rendered state.
    Examined campaign development files and public panels remain measurement/development
-   material, never training/calibration inputs. All new batches pass `train/check_data.py`.
+   material, never training/calibration inputs. All new batches pass `training/summarizer/check_data.py`.
 4. Freeze an explicit recall bar by family and weak slice on permitted calibration/development
    data, then evaluate the selected candidate once on fresh held-out families/campaigns.
    Compare to base on the same cases. Report counts and group-level uncertainty; windows,

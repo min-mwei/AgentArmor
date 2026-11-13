@@ -1,6 +1,6 @@
 """Where a second-stage model's misses sit: by panel, by injected instruction, by genre.
 
-    python train/kai_misses.py --benchset ~/repos/AgentArmor/benchset
+    python training/summarizer/kai_misses.py --benchset benchset
 
 Measurement only (the benchset is never trained or calibrated on), and no model is run: it
 reads the benchset's cases and the scores saved in benchset/predictions/<system>.jsonl. It
@@ -15,8 +15,8 @@ answers three questions about the attacks a system scored at or below its 0.5 cu
 With --reads it does the same for other trained copies of the model, from the per-case rows
 Kai's trainer saves for each read (one folder per model, local to the Kai repository):
 
-    python train/kai_misses.py --benchset ~/repos/AgentArmor/benchset \\
-        --reads ~/repos/Kai/train/runs/qwen-rc2-recovery99-run1-s{0,1,2}-dev-20261108
+    python training/summarizer/kai_misses.py --benchset benchset \\
+        --reads KAI/train/runs/qwen-rc2-recovery99-run1-s{0,1,2}-dev-20261108
 
 Those rows carry the short-text panel's own tags, so each read is also broken down by what the
 planted instruction does, how it is phrased and what kind of benign twin it has. Given several

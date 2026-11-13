@@ -1,15 +1,15 @@
 """Replay saved agent transcripts as hook events, so sessions from before the hooks can seed data.
 
-    python train/import_transcripts.py --project ~/repos/Summarizer --project ~/repos/AgentArmor \\
-        --out train/data/seeds/spool
+    python training/summarizer/import_transcripts.py --project PROJECT_A --project PROJECT_B \\
+        --out training/summarizer/data/seeds/spool
 
 Claude Code keeps a transcript per session under ~/.claude/projects and Codex under
 ~/.codex/sessions. This reads the ones whose working directory is inside a named project and
 writes each as an event log in a spool of its own, through the hook's own redaction and clipping.
-train/export_seeds.py then reads that spool like any other.
+training/summarizer/export_seeds.py then reads that spool like any other.
 
 Only sessions of the projects you name are read. The spool holds real session text: keep it under
-train/data/seeds/, which Git ignores. A transcript is not a hook stream, so the result is good for
+training/summarizer/data/seeds/, which Git ignores. A transcript is not a hook stream, so the result is good for
 seeds and nothing else: approvals, denials and instruction files are not reconstructed.
 """
 

@@ -1,8 +1,8 @@
 """Compare candidate variants of the probes on development data, before any is frozen.
 
-    python train/study_variants.py --dev train/data/eval/pilot-001.jsonl \\
-        train/data/eval/dev-002.jsonl --seeds train/data/seeds/all.jsonl \\
-        --blocks train/data/eval/blocks.jsonl --allow train/data/eval/allow-dev-002.jsonl
+    python training/summarizer/study_variants.py --dev training/summarizer/data/eval/pilot-001.jsonl \\
+        training/summarizer/data/eval/dev-002.jsonl --seeds training/summarizer/data/seeds/all.jsonl \\
+        --blocks training/summarizer/data/eval/blocks.jsonl --allow training/summarizer/data/eval/allow-dev-002.jsonl
 
 Development files only: every row passes check_eval.eligible first, like fit_variant.py. For
 each variant (the runtime's consecutive chunks or overlapping windows of a size and stride;
@@ -24,6 +24,7 @@ import argparse
 import json
 
 import numpy as np
+
 from check_eval import eligible
 from common import QUERY_PROMPT, auc, encode, load_model, served
 from fit_variant import choose_threshold
@@ -37,7 +38,6 @@ from score_eval import (
     read_once,
     rows_of,
 )
-
 from summarizer.embedder import best_window, unit
 
 

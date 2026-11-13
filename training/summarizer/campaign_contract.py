@@ -1,6 +1,6 @@
 """Campaigns: several sessions, one call under decision, and where each needed fact comes from.
 
-    python train/campaign_contract.py train/data/starter/campaigns-v1.jsonl
+    python training/summarizer/campaign_contract.py training/summarizer/data/starter/campaigns-v1.jsonl
 
 A session case (case_contract.py) asks whether one session's packet shows what a decision
 needs. A campaign asks it of a call whose evidence lies in other sessions too: a file one
@@ -109,7 +109,6 @@ import case_contract as contract
 from common import read_jsonl
 from context_eval import AGENTS, CWD, HOME, held
 from score_eval import code_version
-
 from summarizer.daemon import Daemon
 from summarizer.hook import Scripted, handle
 from summarizer.store import EVENTS, load_summary, session_dir

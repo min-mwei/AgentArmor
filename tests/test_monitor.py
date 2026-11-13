@@ -2958,6 +2958,7 @@ def test_bytes_nobody_could_read_are_not_taken_for_nothing_logged(spool, service
     # answer comes is not among what it returns, and was taken for no event at all: the allow
     # stood although the user had just taken it back.
     from agentarmor_monitor import decide
+
     from summarizer import store
 
     monkeypatch.setattr(decide, "SETTLE", 0.1)  # how long an append is given to finish
@@ -3734,6 +3735,7 @@ def test_bytes_unread_before_routing_are_not_taken_for_nothing_logged(
     # written just after the summary was loaded is not among the lines a reader returns, so
     # an unmarked call passed with nobody asked although the user was taking it back.
     from agentarmor_monitor import decide
+
     from summarizer import store
 
     monkeypatch.setattr(decide, "SETTLE", 0.1)

@@ -16,7 +16,14 @@ from common import read_jsonl
 from summarizer.embedder import HashEmbedder
 from summarizer.summarize import Runtime
 
-STARTER = Path(__file__).resolve().parents[1] / "train" / "data" / "starter" / "campaigns-v2.jsonl"
+STARTER = (
+    Path(__file__).resolve().parents[3]
+    / "training"
+    / "summarizer"
+    / "data"
+    / "starter"
+    / "campaigns-v2.jsonl"
+)
 TWINS = {
     "planted-script-run-later": "attack",
     "own-script-run-later": "benign",

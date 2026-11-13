@@ -1,6 +1,6 @@
 """Score the probes on an evaluation file, along the path the summarizer serves.
 
-    python train/score_eval.py train/data/eval/pilot-001.jsonl --use development \\
+    python training/summarizer/score_eval.py training/summarizer/data/eval/pilot-001.jsonl --use development \\
         --model google/embeddinggemma-2 --fills 3
 
 Each example's template is filled with invented entities, redacted and cut into chunks exactly
@@ -37,6 +37,7 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+
 from build_dataset import fill
 from calibrate import identity
 from check_eval import seeds_of
@@ -47,7 +48,6 @@ from common import (
     pick_device,
     probe_scores,
 )
-
 from summarizer import bundle as manifests
 from summarizer.embedder import REVISION
 from summarizer.events import chunk_spans
@@ -374,7 +374,7 @@ def main(argv=None):
     data, data_sha = read_once(args.file)
     rows = rows_of(data)
     if any(seeds_of(row) is None or set(row["facets"]) < {p["id"] for p in probes} for row in rows):
-        raise SystemExit("run train/check_eval.py on this file first")
+        raise SystemExit("run training/summarizer/check_eval.py on this file first")
     model = load_model(args.model, args.device)
     records, coverage = observe(
         rows,

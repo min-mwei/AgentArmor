@@ -1,0 +1,13 @@
+# Training runs and model weights stay local. Of the data, only the hand-written starter
+# set is tracked here. Seeds are excerpts of real sessions and built pairs are derived:
+# both stay out, as do synthetic batches and evaluation files until they are released.
+/runs/
+/data/*
+!/data/starter/
+models/
+checkpoints/
+*.safetensors
+*.pt
+*.bin
+*.npy
+*.npz

@@ -11,7 +11,14 @@ from common import read_jsonl
 
 from summarizer.redact import MAX_STRING
 
-CASES = Path(__file__).resolve().parents[1] / "train" / "data" / "starter" / "sessions-v2.jsonl"
+CASES = (
+    Path(__file__).resolve().parents[3]
+    / "training"
+    / "summarizer"
+    / "data"
+    / "starter"
+    / "sessions-v2.jsonl"
+)
 
 
 @pytest.fixture(scope="module")

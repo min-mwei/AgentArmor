@@ -1,8 +1,8 @@
 """The packets of a campaign file under each arm of the measurement, and what a decision
 model made of them.
 
-    python train/campaign_arms.py write CAMPAIGNS --out DIR
-    python train/campaign_arms.py score DIR --answers ANSWERS.jsonl
+    python training/summarizer/campaign_arms.py write CAMPAIGNS --out DIR
+    python training/summarizer/campaign_arms.py score DIR --answers ANSWERS.jsonl
 
 docs/campaign-measurement-protocol.md is the protocol. A run is one campaign laid out for
 one agent. For every run this writes four packets that differ only in what they show of

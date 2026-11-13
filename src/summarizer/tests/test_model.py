@@ -63,7 +63,9 @@ def test_the_focus_view_carries_the_starter_cases_with_the_real_model(runtime):
     from common import read_jsonl
 
     root = Path(__file__).resolve().parents[1]
-    cases = read_jsonl(root / "train" / "data" / "starter" / "sessions.jsonl")
+    cases = read_jsonl(
+        root.parents[1] / "training" / "summarizer" / "data" / "starter" / "sessions.jsonl"
+    )
     rows = context_eval.run(cases, runtime, budgets=(3000,), seeds=1)
     focus = [row for row in rows if row["packet"] == "focus"]
     assert all(row["passes"] and len(row["told_apart"]) == row["siblings"] for row in focus)
@@ -165,7 +167,7 @@ def test_a_measurement_scores_the_vectors_the_runtime_serves(runtime):
 
     import common
 
-    root = Path(__file__).resolve().parents[1] / "train" / "data" / "eval"
+    root = Path(__file__).resolve().parents[3] / "training" / "summarizer" / "data" / "eval"
     texts = []
     for name in ("pilot-003.jsonl", "dev-003-t1.jsonl"):
         rows = [json.loads(line) for line in (root / name).read_text().splitlines()]
@@ -184,7 +186,7 @@ def test_a_measurement_scores_the_vectors_the_runtime_serves(runtime):
 
 def long_texts_score_alike(runtime):
     """The window, once the offline scorer and a session have given a text of several
-    windows the same probe scores. MR123: train/ cut a text at 512 tokens and scored it by
+    windows the same probe scores. MR123: training/summarizer/ cut a text at 512 tokens and scored it by
     one similarity, while the runtime scores lower-trust content by its best window."""
     import common
     from sessions import Script
@@ -315,7 +317,14 @@ def test_a_window_of_512_tokens_still_holds_all_of_a_sessions_longest_text():
     from summarizer.embedder import MAX_WINDOWS, QUERY_PROMPT, Embedder
     from summarizer.summarize import Runtime
 
-    trial = Path(__file__).resolve().parents[1] / "train" / "runs" / "trial-003a" / "model"
+    trial = (
+        Path(__file__).resolve().parents[3]
+        / "training"
+        / "summarizer"
+        / "runs"
+        / "trial-003a"
+        / "model"
+    )
     if not trial.is_dir():
         pytest.skip("the trial bundle is not on this machine")
     device = os.environ.get("SUMMARIZER_TEST_DEVICE")
@@ -330,7 +339,7 @@ def test_a_window_of_512_tokens_still_holds_all_of_a_sessions_longest_text():
     assert tokens > 4800 and not left_out and len(dense) <= MAX_WINDOWS
     tuned = Runtime(embedder, str(trial), strict=True)
     assert dense_action(tuned) == (1, 0, True)
-    # And what train/ measures of this bundle is what it would serve, at this window.
+    # And what training/summarizer/ measures of this bundle is what it would serve, at this window.
     assert long_texts_score_alike(tuned) == 512
 
 
@@ -346,7 +355,7 @@ def test_the_trial_bundle_is_admitted_as_its_manifest_lists_it_and_not_otherwise
     from summarizer.embedder import Embedder
     from summarizer.summarize import Runtime
 
-    trial = Path(__file__).resolve().parents[1] / "train" / "runs" / "trial-003a"
+    trial = Path(__file__).resolve().parents[3] / "training" / "summarizer" / "runs" / "trial-003a"
     if not (trial / "model").is_dir():
         pytest.skip("the trial bundle is not on this machine")
     run, device = tmp_path / "run", os.environ.get("SUMMARIZER_TEST_DEVICE")

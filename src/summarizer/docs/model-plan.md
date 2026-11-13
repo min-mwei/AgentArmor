@@ -239,7 +239,7 @@ diagnostic.
 - Fresh data should cross instruction family, position and length, which this benchset cannot.
 
 What Summarizer brings: DE writes synthetic sessions and passes them through
-`train/check_data.py`, and Summarizer turns a session script into the packet. Seeds stay where
+`training/summarizer/check_data.py`, and Summarizer turns a session script into the packet. Seeds stay where
 they are; whether Kai's authors may see them is the user's call and the default is no.
 
 ### 5.5 The handoff in the monitor (MT)
@@ -283,7 +283,7 @@ recall-first rule.
    the third person, a claimed approval joined to skipping a check, and an instruction tied to
    a later trigger. Low confidence, like every rule; written from the family.
    **Done on 2026-11-10, under review** (`da51ee3`, corrected in `e4d5c7e`), with a tool that
-   measures the rules on annotated text (`train/rules_eval.py`). On development data the
+   measures the rules on annotated text (`training/summarizer/rules_eval.py`). On development data the
    rules' own recall for `agent_directive` went from 0.25 to 0.97 at an unchanged
    false-positive rate, nearly all of it from one further change, an assistant called by name.
    On the benchset, executed afterwards as a regression check, 31 attacks never reach Kai
@@ -520,7 +520,7 @@ about earlier sessions (an index of what each call wrote, read, ran or named, re
 the log), three joins on the resource a call uses, a section of the packet for what they
 find with its own account, when such a packet is ready, and where the lookup sits in the
 server's decision: before the unmarked fast path. Nothing of it is built. What exists is the
-measurement, `train/campaign_contract.py`, which replays several independent sessions and
+measurement, `training/summarizer/campaign_contract.py`, which replays several independent sessions and
 decides at a pinned cutoff. The reviewer returned the first scorer (MR68): it credited lines
 with a false kind, outcome, path or source. Version 2 believes nothing a builder says and
 checks every line against its own replay, and sessions now take turns so that a session left
@@ -556,7 +556,7 @@ pair, was found afterwards and is above.
    planted text changes only how the reply is rendered (layout, encoding, language, case or
    tone), adds no content of the attacker's choosing, and asks for no file, link, secret or
    tool call. On the benchset those are three BIPIA instructions, named in
-   `train/two_stage.py`; that slice was defined after the misses were read, so it is a
+   `training/summarizer/two_stage.py`; that slice was defined after the misses were read, so it is a
    historical figure. On a fresh panel the author's tag decides, before any read.
 2. **How does the Kai work get done?** I may not change the Kai repository or run its model.
    Options: you relay this plan to Kai's swarm; or you allow me one append-only entry on Kai's

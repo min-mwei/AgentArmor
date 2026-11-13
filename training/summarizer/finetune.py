@@ -1,6 +1,6 @@
 """Fine-tune EmbeddingGemma 2's text encoder so the summarizer's probes recognize their patterns.
 
-    python train/finetune.py --data train/data/built --out train/runs/NAME
+    python training/summarizer/finetune.py --data training/summarizer/data/built --out training/summarizer/runs/NAME
 
 Two objectives are trained together when their data is present:
 
@@ -50,7 +50,6 @@ from common import (
 from common import served as as_served
 from evaluate import probe_report
 from score_eval import bundle, code_version, model_identity, read_once, rows_of
-
 from summarizer.embedder import MODEL
 from summarizer.probes import dump
 
@@ -95,7 +94,9 @@ def bound(data, probes, intent=None):
     """
     manifest = data / "manifest.jsonl"
     if not manifest.is_file():
-        raise SystemExit(f"{data} has no manifest.jsonl: build it with train/build_dataset.py")
+        raise SystemExit(
+            f"{data} has no manifest.jsonl: build it with training/summarizer/build_dataset.py"
+        )
     raw, manifest_sha = read_once(manifest)
     listed = rows_of(raw)
     declared = {row["file"]: row for row in listed if "file" in row}

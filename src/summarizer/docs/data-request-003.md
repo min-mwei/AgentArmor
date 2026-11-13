@@ -24,8 +24,8 @@ tool call: no example here is a session.
 | Label | What it says | Where it lives |
 |---|---|---|
 | Pattern presence | The text holds the pattern. Being quoted, being authorized and being harmless do not remove it. Who the wording addresses is part of some patterns | `facets` and `wording` on labelled and evaluation examples |
-| Injection in context | In this session, this text is an attempt on the agent | Session cases only (`train/context_eval.py`). Never on a text example |
-| Decision and sufficiency | A proposed call should or should not run, and the packet does or does not hold enough to say | The contract for held-out session cases in [train/README.md](../train/README.md) |
+| Injection in context | In this session, this text is an attempt on the agent | Session cases only (`training/summarizer/context_eval.py`). Never on a text example |
+| Decision and sufficiency | A proposed call should or should not run, and the packet does or does not hold enough to say | The contract for held-out session cases in [training/summarizer/README.md](../train/README.md) |
 
 Consequences for the writer:
 
@@ -167,7 +167,7 @@ and position must not track the annotation.
 
 ## 5. Batch 003: training and development
 
-- **Sources.** Training and development blocks of `train/data/eval/blocks.jsonl` only. Every
+- **Sources.** Training and development blocks of `training/summarizer/data/eval/blocks.jsonl` only. Every
   example names its seed, and a block's derivatives stay in one split.
 - **Coverage.** The four kinds of wording of section 1, in the forms of section 3 that occur
   for them, over the carriers of the family brief: tables, emails and tickets, source and
@@ -256,18 +256,18 @@ annotation before anything more is asked for. The reviewer reads and adjudicates
 is scored on it before that.
 
 **Read:** this document, [family-brief.md](family-brief.md), and in
-[train/README.md](../train/README.md) the section "An independent test for the probes", which
+[training/summarizer/README.md](../train/README.md) the section "An independent test for the probes", which
 gives the evaluation format. **Do not read:** `docs/model-plan.md`,
 `docs/two-stage-analysis.md`, `src/summarizer/facts.py`, `src/summarizer/labels.py`,
-`train/rules_eval.py`, anything under `train/data/blind/`, the test 001 files, or AgentArmor's
+`training/summarizer/rules_eval.py`, anything under `training/summarizer/data/blind/`, the test 001 files, or AgentArmor's
 benchset. The wording must not be shaped by the rules it will be used to measure.
 
-**Write** `train/data/eval/pilot-003.jsonl`, one evaluation example per line: `id`, `block`,
+**Write** `training/summarizer/data/eval/pilot-003.jsonl`, one evaluation example per line: `id`, `block`,
 `seed`, `group`, `carrier`, `writer`, `text` (a template; entities are slots), `facets` (each
 of the three, with `present`, `span` and `why`), `address`, `quoted`, and `wording`
 (section 3).
 
-- **Sources.** Development blocks of `train/data/eval/blocks.jsonl` only. A group is one seed
+- **Sources.** Development blocks of `training/summarizer/data/eval/blocks.jsonl` only. A group is one seed
   and one carrier, and no seed serves two groups. A seed shows what real text of that carrier
   looks like; it is never copied.
 - **Forty groups of four.** Each group holds the four members of section 4: the wording as a
@@ -291,9 +291,9 @@ of the three, with `present`, `span` and `why`), `address`, `quoted`, and `wordi
 - **Annotation.** Every piece of steering wording gets a `wording` entry, including one whose
   effect no rule is known for (`delete_or_destroy`, `other` with its `why`). Entries may
   overlap. Label the pattern, never the harm: a quoted order is present.
-- **Check** with `python train/check_eval.py train/data/eval/pilot-003.jsonl --use development
-  --seeds train/data/seeds/all.jsonl --blocks train/data/eval/blocks.jsonl --manifest
-  train/data/eval/pilot-003.manifest.jsonl`. It must exit 0. If it flags shared wording, say
+- **Check** with `python training/summarizer/check_eval.py training/summarizer/data/eval/pilot-003.jsonl --use development
+  --seeds training/summarizer/data/seeds/all.jsonl --blocks training/summarizer/data/eval/blocks.jsonl --manifest
+  training/summarizer/data/eval/pilot-003.manifest.jsonl`. It must exit 0. If it flags shared wording, say
   so in the receipt: the reviewer decides whether it stands.
 - **Receipt** on the board: the writer (model, effort, recipe), groups by kind and by carrier,
   how many sources, anything left short and why. A shortfall is reported, not filled with
@@ -309,14 +309,14 @@ for review before anything is scored on it. It is development data: no training 
 authorised by it.
 
 **Read and do not read:** as in section 9. In addition do not read the pilot's measurement
-on the board (the 15:48 Trainer entry and MR76's account of it), `train/score_eval.py`, or
-any result file under `train/data/eval/`. The brief below names effects and forms. It names
+on the board (the 15:48 Trainer entry and MR76's account of it), `training/summarizer/score_eval.py`, or
+any result file under `training/summarizer/data/eval/`. The brief below names effects and forms. It names
 no string a rule or the model missed, and none is to be looked for.
 
-**Write** `train/data/eval/dev-003-t1.jsonl` in the pilot's format, with section 3's form
+**Write** `training/summarizer/data/eval/dev-003-t1.jsonl` in the pilot's format, with section 3's form
 vocabulary 2 (forms are grammar; `address` is separate).
 
-- **Sources.** Development blocks of `train/data/eval/blocks.jsonl` only. No seed that
+- **Sources.** Development blocks of `training/summarizer/data/eval/blocks.jsonl` only. No seed that
   pilot 003 used, and no seed twice. Use as many blocks as have unused seeds, and say how
   many groups each block gave.
 - **Fifty groups of four**, the four members of section 4: live to an agent; the same
@@ -345,9 +345,9 @@ vocabulary 2 (forms are grammar; `address` is separate).
   with the wording at the start, in the middle and at the end across them.
 - **Annotation.** As in section 9. Every piece of steering wording gets an entry; label
   the pattern and never the harm; a human-addressed member keeps its real grammar.
-- **Check** with `python train/check_eval.py train/data/eval/dev-003-t1.jsonl --use
-  development --seeds train/data/seeds/all.jsonl --blocks train/data/eval/blocks.jsonl
-  --manifest train/data/eval/dev-003-t1.manifest.jsonl`. It must exit 0.
+- **Check** with `python training/summarizer/check_eval.py training/summarizer/data/eval/dev-003-t1.jsonl --use
+  development --seeds training/summarizer/data/seeds/all.jsonl --blocks training/summarizer/data/eval/blocks.jsonl
+  --manifest training/summarizer/data/eval/dev-003-t1.manifest.jsonl`. It must exit 0.
 - **Receipt** on the board, to the Model Reviewer: writers and recipes with their group
   counts, groups by effect, by carrier, by block and by form, how many seeds, and every
   shortfall with its reason. A shortfall is reported, not filled.
@@ -358,7 +358,7 @@ For the Data Engineer. A second fifty groups in the same design as section 10, f
 reviewer's reading before anything is scored on them. Everything in section 10 holds, with
 these differences:
 
-- **File:** `train/data/eval/dev-003-t2.jsonl`, manifest `dev-003-t2.manifest.jsonl`.
+- **File:** `training/summarizer/data/eval/dev-003-t2.jsonl`, manifest `dev-003-t2.manifest.jsonl`.
 - **Sources.** Development blocks only; no seed used by pilot 003 or by tranche 1, and no
   seed twice.
 - **Do not read** the tranche 1 measurement on the board (the 17:40 Trainer entry and
@@ -390,11 +390,11 @@ that its writing and labels are checked before more is asked. Nothing is trained
 until `check_data.py` passes and the reviewer has accepted it.
 
 **Declared before authoring:** 60 groups, about 240 templates, in
-`train/data/synthetic/batch-003a.jsonl`, in the format of "Labelled examples" in
-[train/README.md](../train/README.md): `id`, `group`, `family`, `facets`, `text`, with
+`training/summarizer/data/synthetic/batch-003a.jsonl`, in the format of "Labelled examples" in
+[training/summarizer/README.md](../train/README.md): `id`, `group`, `family`, `facets`, `text`, with
 `seed` and `effects` on every line.
 
-- **Sources.** Training blocks of `train/data/eval/blocks.jsonl` only (`use: train`).
+- **Sources.** Training blocks of `training/summarizer/data/eval/blocks.jsonl` only (`use: train`).
   One seed per group, no seed twice, at least eight blocks used. A seed shows what real
   text of that carrier looks like; it is never copied.
 - **Each group is a quartet** in the sense of section 4, as far as the training format
@@ -418,10 +418,10 @@ until `check_data.py` passes and the reviewer has accepted it.
 - **No frame of your own** for a kind of member, and no stock clause across groups: the
   checker refuses a six-word phrase reused in more than four groups, and a reader can
   still find a shorter one.
-- **Check** with `python train/check_data.py train/data/synthetic/batch-003a.jsonl
-  --existing train/data/starter/facets.jsonl --existing train/data/synthetic/batch-001.jsonl
-  --existing train/data/synthetic/batch-002.jsonl --seeds train/data/seeds/all.jsonl
-  --benchset ~/repos/AgentArmor/benchset`. It must come back with no problems. The
+- **Check** with `python training/summarizer/check_data.py training/summarizer/data/synthetic/batch-003a.jsonl
+  --existing training/summarizer/data/starter/facets.jsonl --existing training/summarizer/data/synthetic/batch-001.jsonl
+  --existing training/summarizer/data/synthetic/batch-002.jsonl --seeds training/summarizer/data/seeds/all.jsonl
+  --benchset benchset`. It must come back with no problems. The
   checker reads the benchset to prove no overlap; you do not open it.
 - **Receipt** to the Model Reviewer: writer and recipes with group counts; groups by
   effect, family, block and member kind; seeds; the checker's last line; the file's hash;

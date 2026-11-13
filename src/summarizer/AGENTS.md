@@ -7,7 +7,7 @@ part of AgentArmor and that the real work is here. These rules record decisions 
 does not show. The repository's own [AGENTS.md](../../AGENTS.md) applies as well.
 
 - **Roles.** Three agents work here: Model Trainer, Model Reviewer and Data Engineer. They hand
-  work over through `~/repos/msgboard.md`, which is append-only: never edit another role's
+  work over through the shared board, which is append-only: never edit another role's
   entry. The proof of concept's board holds the history through MR142.
 - **Branches.** Do all development on `dev`. `main` only receives merges from `dev` that the user
   asked for; never commit to it directly. The user set this on 2026-11-09.
@@ -54,12 +54,12 @@ does not show. The repository's own [AGENTS.md](../../AGENTS.md) applies as well
   probes), not fine distinctions. It must run on CPU, Apple silicon, NVIDIA and AMD; never use
   float16 (the model card rules it out).
 - **Training is for pattern recognition, not memorization.** Keep entity randomization, group-wise
-  splits and held-out-family evaluation in `train/`. AgentArmor's benchset is for measurement only;
+  splits and held-out-family evaluation in `training/summarizer/`. AgentArmor's benchset is for measurement only;
   never train or calibrate on it.
 - **Training data is synthetic, written from real seeds.** A seed is a masked excerpt of a real
   session; it shows what real text looks like and is never a training example. Seeds stay in
-  `train/data/seeds/`, untracked. AgentArmor's benchset and the corpora it was built from are
-  never seeds. Every synthetic batch passes `train/check_data.py` before it is used. The user set
+  `training/summarizer/data/seeds/`, untracked. AgentArmor's benchset and the corpora it was built from are
+  never seeds. Every synthetic batch passes `training/summarizer/check_data.py` before it is used. The user set
   this on 2026-11-09.
 - **Checks.** Run `ruff format --check .`, `ruff check .` and `pytest` from the project
   environment. CPU tests use a bag-of-words stand-in for the model; set `SUMMARIZER_TEST_MODEL=1`

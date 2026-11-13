@@ -1,12 +1,12 @@
 """What a second stage does to the tags: Summarizer's tag, then Kai's saved score, per case.
 
-    python train/two_stage.py --benchset ~/repos/AgentArmor/benchset
+    python training/summarizer/two_stage.py --benchset benchset
 
 Measurement only (the benchset is never trained or calibrated on). For each XPIA case of
 AgentArmor's benchset it combines two things:
 
 - stage 1, read two ways. "summarizer": whether any chunk of the case text earns an indicator
-  (wording rules or a calibrated probe, as train/evaluate.py counts it). "trigger": the level
+  (wording rules or a calibrated probe, as training/summarizer/evaluate.py counts it). "trigger": the level
   the session pipeline gives the text when an agent reads it as a file, which is what
   AgentArmor's monitor escalates on (its default sends medium and above to Kai);
 - stage 2: the score Kai gave that case, read from benchset/predictions/kai-4b.jsonl. No Kai
@@ -53,9 +53,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
 from evaluate import PANELS
 from score_eval import bundle, code_version
-
 from summarizer.embedder import Embedder, HashEmbedder
 from summarizer.events import chunk_spans
 from summarizer.facts import hidden_text, path_mentions, text_flags
