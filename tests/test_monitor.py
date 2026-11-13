@@ -330,7 +330,18 @@ def deciding(client, **options):
     return Decider(client, **({"wait": 1.0} | options))
 
 
-def gated(session, number, name, tool_input, client, watch, later=(), on_error="deny", **options):
+def gated(
+    session,
+    number,
+    name,
+    tool_input,
+    client,
+    watch,
+    later=(),
+    on_error="deny",
+    shadow=False,
+    **options,
+):
     """What the gate does with one PreToolUse event while the monitor daemon keeps up.
 
     client is the decision model's client, for a server in this process, or the gate's own
@@ -349,7 +360,7 @@ def gated(session, number, name, tool_input, client, watch, later=(), on_error="
     gate_handle = gate.handle
     try:
         gate.handle = keep_up
-        return gate.run("claude_code", json.dumps(payload).encode(), server, on_error)
+        return gate.run("claude_code", json.dumps(payload).encode(), server, on_error, shadow)
     finally:
         gate.handle = gate_handle
 
@@ -483,9 +494,9 @@ def test_the_gate_abstains_when_kai_allows(spool, service):
     assert (output, status) == (None, 0)
     record = gate_records("s-ok")[-1]
     assert record["decision"] == "allow" and record["stage"] == "issued" and not record["flagged"]
-    assert "enforced" not in record  # the server says what it decided, not what was done
+    assert "answered" not in record  # the server says what it decided, not what was done
     (done,) = applied_records("s-ok")
-    assert (done["enforced"], done["receipt"], done["attempt"]) == ("none", True, record["attempt"])
+    assert (done["answered"], done["receipt"], done["attempt"]) == ("none", True, record["attempt"])
 
 
 def test_the_gate_denies_when_it_cannot_decide_unless_told_to_abstain(spool, service):
@@ -555,15 +566,15 @@ def gate_records(session):
 
 
 def applied_records(session):
-    """What gates did with a session's calls, in order: the only records that say "enforced"."""
+    """What gates answered about a session's calls, in order: the only records that say so."""
     found = escalate.read(session_dir("claude_code", session))
-    return [r for r in found if r.get("stage") == "applied"]
+    return [r for r in found if r.get("stage") == "answered"]
 
 
 def watched_records(session):
     """What the watcher recorded for a session: neither a gate's question nor a gate's act."""
     found = escalate.read(session_dir("claude_code", session))
-    return [r for r in found if not r.get("gate") and r.get("stage") != "applied"]
+    return [r for r in found if not r.get("gate") and r.get("stage") != "answered"]
 
 
 def reason(output):
@@ -598,14 +609,14 @@ def test_an_unmarked_call_is_not_cleared_when_the_session_record_has_gaps(spool,
     )
     assert record["key"] == "gate:call-1" and record["policy_ready"] is False
     assert record["routing"]["reason"] == "below_threshold_with_gaps"
-    assert applied_records("s-gap")[-1]["enforced"] == "deny"
+    assert applied_records("s-gap")[-1]["answered"] == "deny"
     # The operator's choice still applies, and is on record as such.
     assert gated("s-gap", 2, "Bash", {"command": "ls src"}, client, watch, on_error="abstain") == (
         None,
         0,
     )
     assert gate_records("s-gap")[-1]["declared_on_error"] == "abstain"
-    assert applied_records("s-gap")[-1]["enforced"] == "none"
+    assert applied_records("s-gap")[-1]["answered"] == "none"
     # A marked call in the same session: Kai allows it, on a packet that says it is incomplete.
     output, status = gated("s-gap", 3, "Bash", {"command": PEEK}, client, watch)
     assert status == 2 and "Kai was shown incomplete evidence" in reason(output)
@@ -695,7 +706,7 @@ def test_an_allow_counts_only_on_evidence_from_before_the_call(spool, service):
     record = gate_records("s-now")[-1]
     assert (record["review"], record["verdict"]) == ("pre_action", "abstain")
     assert record["packet"]["later_events"] == 0
-    assert applied_records("s-now")[-1]["enforced"] == "none"
+    assert applied_records("s-now")[-1]["answered"] == "none"
     # What the daemon finds afterwards is labelled as a look back, never as a pre-action check.
     log(
         "s-now",
@@ -800,7 +811,7 @@ def test_a_gate_that_cannot_read_the_event_or_start_still_denies(
     # with the hash of the call it held.
     kept = applied_records("s-setup")
     assert gate_records("s-setup") == [] and {r["why"] for r in kept} == {"setup", "server"}
-    assert {r["enforced"] for r in kept} == {"deny", "none"} and not any(r["receipt"] for r in kept)
+    assert {r["answered"] for r in kept} == {"deny", "none"} and not any(r["receipt"] for r in kept)
     assert {r["call_sha256"] for r in kept} == {call_sha256("Bash", {"command": "ls"})}
     assert {r["policy_sha256"] for r in kept} == {None}  # no receipt: under no rules at all
     # Any other event is only observed, whatever is wrong with the gate's own setup.
@@ -2659,7 +2670,7 @@ def test_one_local_server_holds_summarizer_the_rules_and_the_kai_loaded_by_it(sp
         )
         assert (bound["complete"], bound["review"]) == (True, "pre_action")
         assert record["packet"]["call_source"] == "log" and record["declared_on_error"] == "deny"
-        assert record["policy_sha256"] == decider.policy["sha256"] and "enforced" not in record
+        assert record["policy_sha256"] == decider.policy["sha256"] and "answered" not in record
         assert bound["attempt"] == asked["attempt"] == record["attempt"]
         assert bound["routing"] == record["routing"] and bound["routing"]["requests_sent"] == 1
         assert bound["routing"]["eligible"] is True and bound["routing"]["reason"] == "marked"
@@ -2749,7 +2760,7 @@ def test_a_local_server_with_no_decision_model_watches_and_marks_and_decides_not
             ("no_decision_model", "undecided", "abstain"),
         ]
         assert all(r["decision"] is None and r["kai"] is None for r in kept)
-        assert [r["enforced"] for r in applied_records(name)] == ["none", "deny", "none"]
+        assert [r["answered"] for r in applied_records(name)] == ["none", "deny", "none"]
         assert [r["attempt"] for r in applied_records(name)] == [r["attempt"] for r in kept]
     finally:
         closed(api)
@@ -2834,7 +2845,7 @@ def test_an_answer_counts_only_from_the_decision_model_that_was_configured(spool
             # Set to abstain, the gate lets the call go by its own setting, never by that answer.
             done, record, _, _ = decided(name + "-lenient", Claiming(**reply), on_error="abstain")
             assert done == (None, 0) and record["decision"] is None
-            assert applied_records(name + "-lenient")[-1]["enforced"] == "none"
+            assert applied_records(name + "-lenient")[-1]["answered"] == "none"
     # The model behind an address can change between two requests: /health is right, and the
     # answer comes from something else.
     swapped = Claiming()
@@ -3017,7 +3028,7 @@ def test_bytes_nobody_could_read_are_not_taken_for_nothing_logged(spool, service
         assert (
             checked["from_log_bytes"] == checked["to_log_bytes"] == record["evidence"]["log_bytes"]
         )
-        assert applied_records(name)[-1]["enforced"] == "deny"
+        assert applied_records(name)[-1]["answered"] == "deny"
 
     # An append that is only slow finishes within the moment it is given, and is then read.
     def slow(session):
@@ -3114,7 +3125,7 @@ def test_a_proposal_that_was_already_overtaken_is_not_passed_marked_or_not(spool
                 why,
                 "abstain",
             )
-            assert applied_records(session)[-1]["enforced"] == "none"
+            assert applied_records(session)[-1]["answered"] == "none"
             assert service.seen == []
     # The control: another call proposed side by side takes nothing back. The unmarked call
     # passes without anyone being asked, and says what was looked at.
@@ -3253,7 +3264,7 @@ def test_a_receipt_of_the_wrong_shape_or_a_record_that_cannot_be_kept_never_cost
     def broken(*_):
         raise RuntimeError("the audit could not be written")
 
-    monkeypatch.setattr(gate, "applied", broken)
+    monkeypatch.setattr(gate, "answered", broken)
     receipt_for = {"bound": good}
 
     class Denying:
@@ -3312,7 +3323,7 @@ def test_only_a_gate_says_what_was_enforced_also_when_the_answer_comes_late(spoo
                 "server",
                 False,
             )
-            assert acted["enforced"] == ("none" if on_error == "abstain" else "deny")
+            assert acted["answered"] == ("none" if on_error == "abstain" else "deny")
             assert acted["call_sha256"] == call_sha256("Bash", tool_input)
             # The model's answer arrives afterwards. The server records the decision it would
             # have issued, as a late diagnostic, and claims nothing about what was done.
@@ -3327,12 +3338,12 @@ def test_only_a_gate_says_what_was_enforced_also_when_the_answer_comes_late(spoo
                 issued_verdict,
                 decision,
             )
-            assert "enforced" not in issued and issued["declared_on_error"] == on_error
-            # The two belong to one asking about one call, and exactly one says "enforced".
+            assert "answered" not in issued and issued["declared_on_error"] == on_error
+            # The two belong to one asking about one call, and exactly one says "answered".
             for key in ("attempt", "call_id", "call_sha256"):
                 assert issued[key] == acted[key], key
             every = escalate.read(session_dir("claude_code", name))
-            assert [r["stage"] for r in every if "enforced" in r] == ["applied"]
+            assert [r["stage"] for r in every if "answered" in r] == ["answered"]
             assert issued["policy_sha256"] == decider.policy["sha256"] and issued["evidence"]
             assert acted["policy_sha256"] is None  # it never had a receipt to take it from
         finally:
@@ -3348,7 +3359,7 @@ def test_only_a_gate_says_what_was_enforced_also_when_the_answer_comes_late(spoo
         assert watch.drain()
         gated("s-in-time", 3, "Bash", {"command": EXFIL}, local.Local(url), watch)
         (issued,), (acted,) = gate_records("s-in-time"), applied_records("s-in-time")
-        assert (acted["verdict"], acted["enforced"], acted["receipt"]) == ("deny", "deny", True)
+        assert (acted["verdict"], acted["answered"], acted["receipt"]) == ("deny", "deny", True)
         assert acted["policy_sha256"] == issued["policy_sha256"] == decider.policy["sha256"]
         assert acted["evidence"] == issued["evidence"] and acted["attempt"] == issued["attempt"]
         assert acted["request_sha256"] == issued["packet"]["request_sha256"]
@@ -3820,7 +3831,7 @@ def test_bytes_unread_before_routing_are_not_taken_for_nothing_logged(
             watch.close()
         found = escalate.read(session_dir(agent, session))
         issued = [r for r in found if r.get("gate")][-1]
-        applied = [r for r in found if r.get("stage") == "applied"][-1]
+        applied = [r for r in found if r.get("stage") == "answered"][-1]
         assert service.seen == []  # an unmarked call: no model is asked either way
         return done, issued, applied, covered[-1], events_of(session).stat().st_size
 
@@ -3838,15 +3849,15 @@ def test_bytes_unread_before_routing_are_not_taken_for_nothing_logged(
         assert about["summary_log_bytes"] == about["to_log_bytes"] == covered < present, name
         assert about["events_after_proposal"] is None
         assert issued["routing"]["reason"] == "proposal_unknown"
-        assert issued["routing"]["requests_sent"] == 0 and applied["enforced"] == "deny"
+        assert issued["routing"]["requests_sent"] == 0 and applied["answered"] == "deny"
         # The operator's setting for a check that was not completed applies as ever.
         lenient = decided(f"s-tail-{name}-lenient", arrives, on_error="abstain")
         assert lenient[0] == (None, 0) and lenient[1]["why"] == "log_unread", name
-        assert lenient[2]["enforced"] == "none"
+        assert lenient[2]["answered"] == "none"
     # An append that is only slow arrives within the moment it is given, and is then read.
     done, issued, applied, covered, present = decided("s-tail-slow", slow)
     assert done[1] == 2 and (issued["verdict"], issued["why"]) == ("undecided", "moved_on")
-    assert issued["applicable"]["to_the_end"] is True and applied["enforced"] == "deny"
+    assert issued["applicable"]["to_the_end"] is True and applied["answered"] == "deny"
     assert issued["applicable"]["to_log_bytes"] > covered
     # Controls. The same event whole is read as what it is; nothing new, and another call
     # proposed beside this one, leave the unmarked call to pass.
@@ -3856,7 +3867,7 @@ def test_bytes_unread_before_routing_are_not_taken_for_nothing_logged(
         done, issued, applied, covered, present = decided(f"s-tail-{name}", arrives)
         assert done == (None, 0) and applies(issued) == (True, None, after), name
         assert (issued["verdict"], issued["status"]) == ("abstain", "unmarked"), name
-        assert issued["applicable"]["to_log_bytes"] == present and applied["enforced"] == "none"
+        assert issued["applicable"]["to_log_bytes"] == present and applied["answered"] == "none"
     # A log that ends before the place the summary read to is not known either.
     directory = session_dir(agent, "s-tail-nothing")
     entry = {"seq": 3, "status": "proposed"}
@@ -4287,3 +4298,139 @@ def test_a_fine_tuned_model_is_loaded_with_its_own_probes_or_not_at_all(tmp_path
         cli._runtime(model_args(bare, probes=str(tmp_path / "raw.jsonl")))
     with pytest.raises(SystemExit, match="the probes cannot be used"):
         cli._runtime(model_args(bare, probes=str(tmp_path / "missing.jsonl")))
+
+
+# --- MR117: shadow mode, and what a gate's record does and does not say
+
+
+def test_a_shadow_gate_asks_and_records_and_stops_nothing(spool, service):
+    # The user's order of 2026-11-12: every marked call is put to Kai before it runs, in
+    # shadow first. --on-error abstain is not that: a real deny from Kai still blocked.
+    watch = monitor(service)
+    watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)
+    client = kai.KaiClient(service.url)
+    poisoned("s-shadow")
+    watch.update("claude_code", "s-shadow")
+    # The call Kai denies: asked exactly as an enforcing gate asks, and not stopped.
+    output, status = gated("s-shadow", 3, "Bash", {"command": EXFIL}, client, watch, shadow=True)
+    assert (output, status) == (None, 0)
+    state, asked = service.seen[-1]
+    assert asked == ["decision", "is_xpia_attempt"] and EXFIL in state
+    (done,) = applied_records("s-shadow")
+    assert (done["verdict"], done["answered"], done["would"]) == ("deny", "none", "deny")
+    assert (done["mode"], done["delivery"], done["receipt"]) == ("shadow", "unknown", True)
+    assert isinstance(done["elapsed_ms"], int) and done["policy_ready"] is False
+    # A check that cannot be completed is not stopped either, and what an enforcing gate
+    # would have answered is on record.
+    payload = event("s-shadow-none", hook_event_name="PreToolUse")
+    payload |= call(1, "Bash", {"command": EXFIL})
+    raw = json.dumps(payload).encode()
+    assert gate.run("claude_code", raw, deciding(client, wait=0.1), "deny", True) == (None, 0)
+    (lost,) = applied_records("s-shadow-none")
+    assert (lost["verdict"], lost["why"]) == ("undecided", "no_summary")
+    assert (lost["answered"], lost["would"], lost["mode"]) == ("none", "deny", "shadow")
+
+    def unreachable():
+        raise OSError("no local server")
+
+    assert gate.check("claude_code", raw, unreachable, "deny", True) == (None, 0)
+    assert applied_records("s-shadow-none")[-1]["why"] == "setup"
+    assert applied_records("s-shadow-none")[-1]["would"] == "deny"
+
+
+def test_a_gate_does_not_apply_what_its_server_issued_as_a_shadow_decision(spool, service):
+    # The server says what its decisions are for. A gate that was not started in shadow
+    # still stops nothing on a shadow receipt: the two can never enforce by accident.
+    watch = monitor(service)
+    watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)
+    client = kai.KaiClient(service.url)
+    poisoned("s-shadow-server")
+    watch.update("claude_code", "s-shadow-server")
+    output, status = gated(
+        "s-shadow-server", 3, "Bash", {"command": EXFIL}, client, watch, mode="shadow"
+    )
+    assert (output, status) == (None, 0)
+    issued = gate_records("s-shadow-server")[-1]
+    assert (issued["verdict"], issued["mode"]) == ("deny", "shadow")
+    (done,) = applied_records("s-shadow-server")
+    assert (done["answered"], done["would"], done["mode"]) == ("none", "deny", "shadow")
+    assert deciding(client, mode="shadow").about()["mode"] == "shadow"
+    assert deciding(client).about()["mode"] == "enforce"
+    with pytest.raises(ValueError, match="mode"):
+        deciding(client, mode="quiet")
+    # A receipt that names a mode nobody knows is no receipt.
+    asked = local.question("claude_code", "s", "call-1", "0" * 64)
+    receipt = deciding(client).receipt(asked, "abstain", None)
+    assert local.bound_to(receipt, asked) and not local.bound_to(receipt | {"mode": "x"}, asked)
+
+
+def test_what_the_agent_reports_next_is_tied_to_what_the_gate_answered(spool, service):
+    # MR117 P2. The gate's record was written before its answer reached the agent, and said
+    # "enforced". An answer is not an outcome: a client can end the hook at its deadline and
+    # run the call. What the hooks report next is now tied to the answer, and a result for a
+    # call the gate answered "deny" for is on record as that.
+    watch = monitor(service)
+    watch.client = kai.KaiClient("http://127.0.0.1:9", timeout=0.2)
+    client = kai.KaiClient(service.url)
+    poisoned("s-ran")
+    watch.update("claude_code", "s-ran")
+    output, status = gated("s-ran", 3, "Bash", {"command": EXFIL}, client, watch)
+    assert status == 2 and applied_records("s-ran")[-1]["answered"] == "deny"
+    assert applied_records("s-ran")[-1]["delivery"] == "unknown"
+
+    def reported(name, **more):
+        payload = event("s-ran", hook_event_name=name) | call(3, "Bash", {"command": EXFIL})
+        raw = json.dumps(payload | more).encode()
+        assert gate.run("claude_code", raw, deciding(client)) == (None, 0)
+        found = escalate.read(session_dir("claude_code", "s-ran"))
+        return [r for r in found if r.get("stage") == "observed"][-1]
+
+    # The agent's own refusal after the denial says nothing against it.
+    refused = reported("PermissionDenied")
+    assert (refused["reported"], refused["answered"]) == ("PermissionDenied", "deny")
+    assert refused["ran_after_deny"] is False
+    # A result for that very call: it ran, whatever the gate answered.
+    ran = reported("PostToolUse", tool_response={"stdout": "ok", "stderr": ""})
+    assert (ran["reported"], ran["answered"], ran["ran_after_deny"]) == (
+        "PostToolUse",
+        "deny",
+        True,
+    )
+    assert ran["attempt"] == applied_records("s-ran")[-1]["attempt"] and ran["call_id"] == "call-3"
+    # A report about a call no gate answered for is not a record of this kind.
+    other = event("s-ran", hook_event_name="PostToolUse") | call(9, "Bash", {"command": "ls"})
+    before = len(escalate.read(session_dir("claude_code", "s-ran")))
+    assert gate.run("claude_code", json.dumps(other).encode(), deciding(client)) == (None, 0)
+    assert len(escalate.read(session_dir("claude_code", "s-ran"))) == before
+    # And the count an operator reads: what was answered, what ran all the same, how long.
+    counted = cli.gates_summary(escalate.read(session_dir("claude_code", "s-ran")))
+    assert (counted["calls"], counted["answered_deny"], counted["would_deny"]) == (1, 1, 1)
+    assert (counted["put_to_kai"], counted["kai_denied"], counted["ran_after_deny"]) == (1, 1, 1)
+    assert counted["elapsed_ms"]["measured"] == 1 and counted["policy_ready"] is False
+
+
+def test_a_shadow_gate_is_configured_to_stop_nothing_also_by_failing(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "client_version", lambda agent: (2, 1, 323))
+    base = ["hooks-config", "--agent", "claude_code", "--gate", "/opt/x/agentarmor-monitor"]
+    assert main([*base, "--shadow"]) == 0
+    captured = capsys.readouterr()
+    handler_ = json.loads(captured.out)["hooks"]["PreToolUse"][0]["hooks"][0]
+    assert handler_["args"] == ["gate", "--shadow", "--agent", "claude_code"]
+    assert "onFailure" not in handler_ and "stops nothing" in captured.err
+    assert main(["hooks-config", "--agent", "codex_code", "--gate", "/opt/x/m", "--shadow"]) == 0
+    codex = json.loads(capsys.readouterr().out)["hooks"]["PreToolUse"][0]["hooks"][0]
+    assert codex["command"] == '"/opt/x/m" gate --shadow --agent codex_code'
+    with pytest.raises(SystemExit, match="--shadow is a setting of the gate"):
+        main(["hooks-config", "--agent", "claude_code", "--shadow"])
+
+
+def test_a_shadow_server_puts_every_marked_call_to_kai_unless_told_another_level():
+    import argparse
+
+    def level(**given):
+        return cli.gate_level(argparse.Namespace(**({"gate_level": None, "shadow": False} | given)))
+
+    assert level() == "medium" and level(shadow=True) == "low"
+    assert level(shadow=True, gate_level="high") == "high" and level(gate_level="low") == "low"
+    assert cli.mode_of(argparse.Namespace(shadow=True)) == "shadow"
+    assert cli.mode_of(argparse.Namespace()) == "enforce"

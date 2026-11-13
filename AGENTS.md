@@ -42,9 +42,15 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
     "Cannot decide" includes an event it cannot read or record, a gate that cannot start, gaps
     in what Summarizer captured, a call too large to show Kai whole, and an allow given on a
     packet that left key evidence out or held events from after the call.
-  - Watching escalates everything Summarizer marks (recall first); the gate asks Kai from
-    medium up until Kai's decisions on real calls are measured. Do not adopt a cutoff from the
-    benchset.
+  - Watching escalates everything Summarizer marks (recall first); an enforcing gate asks
+    Kai from medium up until Kai's decisions on real calls are measured. Do not adopt a
+    cutoff from the benchset.
+  - Shadow first. The user decided on 2026-11-12 that every marked call is to be put to Kai
+    before it runs, in shadow before anything is enforced at that level: `serve --shadow`
+    and `gate --shadow` ask about every marked call, record what would have been answered
+    and stop nothing. A gate's record says what it answered (`stage: answered`), never
+    what was enforced: whether the agent obeyed is read from what the hooks report next
+    (`stage: observed`). Do not count enforcement from a gate's answers alone.
   - The proposed call is redacted like the packet before it is sent. An allow counts only
     when the call was shown whole and the evidence is from before it; a request built from
     less is sent marked incomplete. Kai is asked off the summary loop: no Kai request may

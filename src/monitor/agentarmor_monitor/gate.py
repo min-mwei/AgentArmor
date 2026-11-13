@@ -25,6 +25,16 @@ not be reached or refused the request. Each is denied with its reason, unless --
 abstain was chosen. Every such outcome is appended to the session's detections, so default
 denials can be counted.
 
+In shadow (--shadow, or a server that says its decisions are shadow ones) the gate asks and
+records as always and stops nothing: the record says what it would have answered, and the
+agent's own permission flow is all that applies.
+
+What a gate records is what it answered. Whether the agent took the answer is not the
+gate's to know: a client can end a hook at its own deadline, and another hook can change the
+call afterwards. What the agent reports of the call next is tied to the answer in a record
+of its own (observe), and a result reported for a call the gate answered "deny" for is on
+record as that.
+
 The decision model's serving path is unqualified (policy_ready false): this gate applies an
 unqualified model's decisions and is not a claim of attack prevention.
 """
@@ -40,6 +50,7 @@ from summarizer.store import AGENTS, home, private_dir, session_dir
 from .escalate import SCHEMA, append, provenance, read
 from .local import bound_to, question
 
+REPORTS = ("PostToolUse", "PostToolUseFailure", "PermissionDenied")  # what became of a call
 DENIED = "AgentArmor: Kai denied this call under the session's rules"
 UNDECIDED = "AgentArmor could not complete the check"
 WHY = {
@@ -142,15 +153,33 @@ def keep(agent, session, record):
         note(agent, error, "keeping")
 
 
-def applied(agent, payload, asked, verdict, why, denied, on_error, receipt):
-    """Put on record what this gate did with one proposed call. Only a gate knows that.
+def answered(
+    agent,
+    payload,
+    asked,
+    verdict,
+    why,
+    denied,
+    on_error,
+    receipt,
+    would=None,
+    shadow=False,
+    began=None,
+):
+    """Put on record what this gate answered about one proposed call. Only a gate knows that.
 
-    The server records the decision it issued. Whether that decision arrived, and what was
-    then done, is recorded here, by the process that did it: a gate that stopped waiting has
-    stopped the call (or let it go, if it was set to) whatever the server answers later.
+    The server records the decision it issued. Whether that decision arrived, and what the
+    gate then answered, is recorded here, by the process that answered: a gate that stopped
+    waiting has answered (deny, or nothing if it was set to) whatever the server says later.
     The two records share the attempt and the call's ids, so they can be laid side by side,
-    and only this one says "enforced". What became of the call afterwards is neither's to
-    say: that is what the hooks report next.
+    and only this one says "answered".
+
+    It is the gate's answer and no more. Whether the agent received it in time and acted on
+    it is not known here ("delivery": "unknown"): a client that ends the hook at its own
+    deadline runs the call, and so does one in which another hook changes the call after
+    this one answered. "would" is what the gate answers when it is not in shadow, so a
+    shadow run can be counted as the enforcing run it stands in for. What became of the
+    call is what the hooks report next (observe).
     """
     session, call_id = payload.get("session_id"), payload.get("tool_use_id")
     if not isinstance(session, str) or not session:
@@ -158,21 +187,57 @@ def applied(agent, payload, asked, verdict, why, denied, on_error, receipt):
     asked = asked or {}
     attempt = asked.get("attempt")
     bound = (receipt or {}).get("bound") or {}
-    record = {"schema": SCHEMA, "ts": round(time.time(), 3), "status": "applied"}
-    record |= {"key": f"applied:{call_id if isinstance(call_id, str) else ''}:{attempt or ''}"}
-    record |= {"agent": agent, "session": session, "stage": "applied", "attempt": attempt}
+    record = {"schema": SCHEMA, "ts": round(time.time(), 3), "status": "answered"}
+    record |= {"key": f"answered:{call_id if isinstance(call_id, str) else ''}:{attempt or ''}"}
+    record |= {"agent": agent, "session": session, "stage": "answered", "attempt": attempt}
     record |= {"call_id": call_id if isinstance(call_id, str) else None}
     try:  # the hash of the call this gate held, also when nothing else could be done with it
         record["call_sha256"] = call_sha256(payload.get("tool_name"), payload.get("tool_input"))
     except Exception:
         record["call_sha256"] = None
     record |= {"verdict": verdict, "why": why, "on_error": on_error}
-    record |= {"enforced": "deny" if denied else "none", "receipt": receipt is not None}
+    would = denied if would is None else would
+    record |= {"mode": "shadow" if shadow else "enforce"}
+    record |= {"answered": "deny" if denied else "none", "would": "deny" if would else "none"}
+    record |= {"delivery": "unknown", "receipt": receipt is not None}
+    if began is not None:  # from reading the event to having an answer for the agent
+        record["elapsed_ms"] = round((time.monotonic() - began) * 1000)
     # What the receipt was bound to, carried into the record: None where there was none.
     record |= {"policy_sha256": (bound.get("policy") or {}).get("sha256")}
     record |= {"evidence": bound.get("evidence"), "request_sha256": bound.get("request_sha256")}
     record |= {"advisory": True, "policy_ready": False}
     keep(agent, session, record)
+
+
+def observe(agent, payload, event):
+    """Put on record what the agent reported of a call a gate answered about. Never raises.
+
+    A gate's answer is not what happened. This ties the two: the report (a result, a
+    failure, a refusal by the agent's own permissions) with the last answer a gate gave
+    for that call. A result for a call the gate answered "deny" for means the call ran all
+    the same, and "ran_after_deny" says so. Nothing is recorded for a call no gate answered
+    about, and a failure or a refusal after a deny is left as reported: either can be how
+    an agent reports the denial itself.
+    """
+    session, call_id = payload.get("session_id"), payload.get("tool_use_id")
+    if not isinstance(session, str) or not session or not isinstance(call_id, str) or not call_id:
+        return
+    try:
+        last = None
+        for record in read(session_dir(agent, session)):
+            if record.get("stage") == "answered" and record.get("call_id") == call_id:
+                last = record
+        if last is None:
+            return
+        record = {"schema": SCHEMA, "ts": round(time.time(), 3), "status": "observed"}
+        record |= {"key": f"observed:{call_id}:{event}", "agent": agent, "session": session}
+        record |= {"stage": "observed", "attempt": last.get("attempt"), "call_id": call_id}
+        record |= {"reported": event, "answered": last.get("answered"), "mode": last.get("mode")}
+        record["ran_after_deny"] = event == "PostToolUse" and last.get("answered") == "deny"
+        record |= {"advisory": True, "policy_ready": False}
+        keep(agent, session, record)
+    except Exception as error:
+        note(agent, error, "observing")
 
 
 def examine(agent, raw, prepare, on_error):
@@ -192,6 +257,8 @@ def examine(agent, raw, prepare, on_error):
         recorded = False
         note(agent, error, "recording")
     if event is not None and event != "PreToolUse":
+        if event in REPORTS:  # what became of a call a gate answered about
+            observe(agent, payload, event)
         return "observed", None, payload, None, None  # every other event is only observed
     if payload is None:
         return "undecided", "event", None, None, None
@@ -219,12 +286,14 @@ def examine(agent, raw, prepare, on_error):
     return receipt["verdict"], receipt.get("why"), payload, receipt, asked
 
 
-def check(agent, raw, prepare, on_error="deny"):
+def check(agent, raw, prepare, on_error="deny", shadow=False):
     """Handle one hook event; returns (what to print or None, exit status).
 
     Nothing leaves this function except its answer: a failure anywhere, in reading, recording,
-    starting or asking, is a check that was not completed.
+    starting or asking, is a check that was not completed. In shadow the answer is always
+    nothing, and what it would have been is on record.
     """
+    began = time.monotonic()
     try:
         verdict, why, payload, receipt, asked = examine(agent, raw, prepare, on_error)
     except Exception as error:
@@ -232,13 +301,19 @@ def check(agent, raw, prepare, on_error="deny"):
         verdict, why, payload, receipt, asked = "undecided", "failed", None, None, None
     if verdict == "observed":
         return None, 0
-    denied = verdict == "deny" or (verdict == "undecided" and on_error != "abstain")
+    would = verdict == "deny" or (verdict == "undecided" and on_error != "abstain")
+    # Shadow is this gate's own setting, or the server's word about its decisions. Either
+    # is enough: a gate never enforces what its server issued as a shadow decision.
+    shadow = bool(shadow) or (receipt or {}).get("mode") == "shadow"
+    denied = would and not shadow
     if payload is not None:
-        # What this gate does with the call, whether or not a receipt came: one such record
-        # for every call it handles, and the only one that says what was enforced. Keeping
-        # the record is best effort. Whatever goes wrong with it, the answer below stands.
+        # What this gate answers about the call, whether or not a receipt came: one such
+        # record for every call it handles, and the only one that says what was answered.
+        # Keeping it is best effort. Whatever goes wrong with it, the answer below stands.
         try:
-            applied(agent, payload, asked, verdict, why, denied, on_error, receipt)
+            answered(
+                agent, payload, asked, verdict, why, denied, on_error, receipt, would, shadow, began
+            )
         except Exception as error:
             note(agent, error, "keeping")
     if not denied:
@@ -252,10 +327,10 @@ def check(agent, raw, prepare, on_error="deny"):
     return denial("PreToolUse", reason)
 
 
-def run(agent, raw, server, on_error="deny"):
+def run(agent, raw, server, on_error="deny", shadow=False):
     """check() for a caller that already holds the way to the local server: local.Local for
     one that listens on a port, or the server's own Decider when it is in this process."""
-    return check(agent, raw, lambda: server, on_error)
+    return check(agent, raw, lambda: server, on_error, shadow)
 
 
 def main(args, prepare):
@@ -269,7 +344,7 @@ def main(args, prepare):
     except Exception as error:
         note(args.agent, error, "event")
         raw = None  # read_event treats it as an event that could not be read
-    output, status = check(args.agent, raw, prepare, args.on_error)
+    output, status = check(args.agent, raw, prepare, args.on_error, getattr(args, "shadow", False))
     if output is not None:
         print(json.dumps(output, allow_nan=False), flush=True)
         said = output["hookSpecificOutput"]
@@ -277,4 +352,5 @@ def main(args, prepare):
     return status
 
 
-__all__ = ["applied", "check", "denial", "keep", "main", "note", "outcome", "read", "run"]
+__all__ = ["answered", "check", "denial", "keep", "main", "note", "observe", "outcome", "read"]
+__all__ += ["run"]

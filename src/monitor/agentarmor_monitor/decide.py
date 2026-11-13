@@ -30,7 +30,7 @@ from summarizer.store import AGENTS, EVENTS, load_summary, read_events, session_
 
 from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
-from .local import ASKED, ON_ERROR, RECEIPT
+from .local import ASKED, MODES, ON_ERROR, RECEIPT
 from .policy import LAYOUT, load_rules
 
 SLOTS = 4  # calls decided at once; a caller beyond that is told so, and never queued unseen
@@ -253,10 +253,24 @@ class Decider:
     """The local server's answer to a gate: one proposed call, decided on the server's terms.
 
     client is the way to the decision model the server was configured for, or None. rules,
-    level, max_chars and wait are the server's: a gate cannot bring its own.
+    level, max_chars and wait are the server's: a gate cannot bring its own. mode says what
+    its decisions are for: "enforce", or "shadow" when they are issued to be recorded and
+    measured and never applied. It is in every receipt, and a gate does not apply a shadow one.
     """
 
-    def __init__(self, client, rules=None, level="medium", max_chars=5000, wait=3.0, slots=SLOTS):
+    def __init__(
+        self,
+        client,
+        rules=None,
+        level="medium",
+        max_chars=5000,
+        wait=3.0,
+        slots=SLOTS,
+        mode="enforce",
+    ):
+        if mode not in MODES:
+            raise ValueError(f"a server's mode is one of {MODES}")
+        self.mode = mode
         self.client = client
         self.rules = load_rules() if rules is None else rules
         self.level, self.max_chars, self.wait = level, max_chars, wait
@@ -268,6 +282,7 @@ class Decider:
         """What a decision here rests on, for /health: no session text, and no secret."""
         return {
             "policy": self.policy,
+            "mode": self.mode,
             "level": self.level,
             "max_chars": self.max_chars,
             "layout": LAYOUT,
@@ -306,7 +321,7 @@ class Decider:
                 self.room.release()
         if record is None:  # no summary of the call was read: the outcome alone
             record = outcome(asked["agent"], asked["session_id"], asked["tool_use_id"], why)
-        record |= {"gate": True, "stage": "issued", "attempt": asked["attempt"]}
+        record |= {"gate": True, "stage": "issued", "attempt": asked["attempt"], "mode": self.mode}
         record |= {"verdict": verdict, "declared_on_error": asked["on_error"]}
         record |= {"call_id": asked["tool_use_id"], "call_sha256": asked["call_sha256"]}
         record |= {"policy_sha256": self.policy["sha256"]}
@@ -326,6 +341,7 @@ class Decider:
         bound = {name: value if isinstance(value, str) else None for name, value in bound.items()}
         bound |= {"policy": self.policy, "layout": LAYOUT}
         told = {"schema": RECEIPT, "verdict": verdict, "why": why, "p_deny": None}
+        told["mode"] = self.mode
         record = record or {}
         packet, kai = record.get("packet") or {}, record.get("kai") or {}
         last = record.get("last_request") or {}

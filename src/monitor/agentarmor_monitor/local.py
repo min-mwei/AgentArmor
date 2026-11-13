@@ -34,6 +34,7 @@ RECEIPT = "agentarmor-decision/v1"
 PORT = 8010  # the local server's own; 8009 is where a Kai service answers
 VERDICTS = ("abstain", "deny", "undecided")
 ON_ERROR = ("deny", "abstain")
+MODES = ("enforce", "shadow")  # whether a server's decisions are to be applied or only recorded
 # What a gate sends: these six strings, and nothing else.
 ASKED = ("agent", "session_id", "tool_use_id", "call_sha256", "attempt", "on_error")
 BOUND = ASKED[:5]  # what a receipt must name as the gate named it
@@ -66,6 +67,8 @@ def bound_to(receipt, asked):
     if not isinstance(receipt, dict) or receipt.get("schema") != RECEIPT:
         return False
     if receipt.get("verdict") not in VERDICTS or receipt.get("policy_ready") is not False:
+        return False
+    if receipt.get("mode", "enforce") not in MODES:
         return False
     bound = receipt.get("bound")
     if not isinstance(bound, dict) or any(bound.get(name) != asked[name] for name in BOUND):

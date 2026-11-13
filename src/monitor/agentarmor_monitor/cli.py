@@ -166,6 +166,20 @@ def _judge(args):
     return Absent(), "none", None
 
 
+def mode_of(args):
+    return "shadow" if getattr(args, "shadow", False) else "enforce"
+
+
+def gate_level(args):
+    """What a call must be marked at for a gate's question to go to Kai.
+
+    Named, it is what the operator named. Otherwise medium for a server whose decisions are
+    applied: a denial blocks a call, and Kai's decisions on real calls are unmeasured. And
+    low in shadow, where nothing is blocked and the point is to measure every marked call.
+    """
+    return args.gate_level or ("low" if mode_of(args) == "shadow" else "medium")
+
+
 def _serve(args):
     """Run the local server: Summarizer and its model, the rules, and the decision model."""
     from .daemon import Monitor
@@ -193,7 +207,9 @@ def _serve(args):
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     monitor = Monitor(runtime, asks, args.level, args.max_chars)
     monitor.rules = rules
-    decider = Decider(asks, rules, args.gate_level, args.max_chars, args.wait, args.at_once)
+    decider = Decider(
+        asks, rules, gate_level(args), args.max_chars, args.wait, args.at_once, mode=mode_of(args)
+    )
     try:
         api, _ = listen(front, decider, args.port, monitor, args.model_api)
     except OSError as error:
@@ -345,6 +361,50 @@ def client_version(agent, run=subprocess.run):
     return tuple(int(part) for part in found.groups()) if found else None
 
 
+def gates_summary(records):
+    """What gates answered, counted from their own records and the server's: how many calls
+    they were run for, how many were put to the decision model, what was and would have been
+    answered, why checks were not completed, how long an answer took, and how many calls
+    are reported as run after a "deny". Counts only: no text of any session."""
+    answers = [r for r in records if r.get("stage") == "answered"]
+    issued = [r for r in records if r.get("gate") and r.get("stage") == "issued"]
+    observed = [r for r in records if r.get("stage") == "observed"]
+    took = sorted(r["elapsed_ms"] for r in answers if isinstance(r.get("elapsed_ms"), int))
+
+    def at(share):
+        return took[min(len(took) - 1, int(share * len(took)))] if took else None
+
+    undecided = {}
+    for record in answers:
+        if record.get("verdict") == "undecided":
+            undecided[str(record.get("why"))] = undecided.get(str(record.get("why")), 0) + 1
+    told = {"calls": len(answers), "decisions_issued": len(issued)}
+    told["by_mode"] = {
+        mode: sum(1 for r in answers if r.get("mode") == mode) for mode in ("enforce", "shadow")
+    }
+    told["put_to_kai"] = sum(
+        1 for r in issued if ((r.get("routing") or {}).get("requests_sent") or 0) > 0
+    )
+    told["kai_denied"] = sum(1 for r in answers if r.get("verdict") == "deny")
+    told["would_deny"] = sum(1 for r in answers if r.get("would") == "deny")
+    told["answered_deny"] = sum(1 for r in answers if r.get("answered") == "deny")
+    told["undecided"] = dict(sorted(undecided.items()))
+    told["no_receipt"] = sum(1 for r in answers if not r.get("receipt"))
+    told["elapsed_ms"] = {"measured": len(took), "median": at(0.5), "p95": at(0.95)}
+    told["elapsed_ms"]["max"] = took[-1] if took else None
+    told["reported_after_an_answer"] = len(observed)
+    told["ran_after_deny"] = sum(1 for r in observed if r.get("ran_after_deny"))
+    return told | {"advisory": True, "policy_ready": False}
+
+
+def _gates(args):
+    records = []
+    for _, _, directory, _ in _sessions(args):
+        records += read(directory)
+    print(json.dumps(gates_summary(records), indent=2))
+    return 0
+
+
 def _hooks(args):
     from summarizer.cli import hook_path, hooks_config, hooks_toml
 
@@ -353,20 +413,32 @@ def _hooks(args):
         config = hooks_config(args.agent, args.gate)
         for event, groups in config["hooks"].items():
             for handler in groups[0]["hooks"]:
+                words = "gate --shadow" if args.shadow else "gate"
                 if "args" in handler:
-                    handler["args"] = ["gate", *handler["args"]]
+                    handler["args"] = [*words.split(), *handler["args"]]
                 else:
                     handler["command"] = handler["command"].replace(
-                        f'"{args.gate}"', f'"{args.gate}" gate'
+                        f'"{args.gate}"', f'"{args.gate}" {words}'
                     )
                 handler["timeout"] = (
                     max(handler.get("timeout", 0), 60) if "timeout" in handler else 60
                 )
                 # The one handler that decides. Every other event is only recorded, and a
                 # recording that fails must not stop the agent.
-                if event == "PreToolUse" and args.agent == "claude_code" and args.failure_block:
+                # A shadow gate stops nothing, so it must not stop a call by failing either.
+                blocks = args.failure_block and not args.shadow
+                if event == "PreToolUse" and args.agent == "claude_code" and blocks:
                     handler["onFailure"] = "block"
-        _say_what_a_failed_hook_does(args)
+        if args.shadow:
+            print(
+                "agentarmor-monitor: a shadow gate stops nothing. It asks the local server "
+                "about every call and records what it would have answered.",
+                file=sys.stderr,
+            )
+        else:
+            _say_what_a_failed_hook_does(args)
+    elif args.shadow:
+        raise SystemExit("hooks-config: --shadow is a setting of the gate: give --gate as well")
     print(hooks_toml(config) if args.toml else json.dumps(config, indent=2))
     return 0
 
@@ -524,8 +596,14 @@ def main(argv=None):
     serve.add_argument(
         "--gate-level",
         choices=tuple(LEVELS),
-        default="medium",
-        help="what Summarizer must mark a call at for a gate's question to go to Kai",
+        help="what Summarizer must mark a call at for a gate's question to go to Kai: "
+        "medium unless given, and low with --shadow",
+    )
+    serve.add_argument(
+        "--shadow",
+        action="store_true",
+        help="issue every decision as a shadow one: gates record what they would have "
+        "answered and stop nothing, and every marked call is put to Kai",
     )
     serve.add_argument(
         "--wait", type=float, default=3.0, help="seconds a decision waits for the summary"
@@ -575,6 +653,11 @@ def main(argv=None):
         choices=("deny", "abstain"),
         default="deny",
         help="what to do when no decision can be reached for a call",
+    )
+    gate.add_argument(
+        "--shadow",
+        action="store_true",
+        help="stop nothing: ask and record as always, with what would have been answered",
     )
     gate.set_defaults(run=_gate)
 
@@ -642,6 +725,11 @@ def main(argv=None):
         help="absolute path of agentarmor-monitor: use the deciding gate, not the plain observer",
     )
     hooks.add_argument(
+        "--shadow",
+        action="store_true",
+        help="with --gate: a gate that stops nothing and records what it would have answered",
+    )
+    hooks.add_argument(
         "--no-failure-block",
         dest="failure_block",
         action="store_false",
@@ -649,6 +737,13 @@ def main(argv=None):
         + ".".join(str(part) for part in FAILURE_BLOCK),
     )
     hooks.set_defaults(run=_hooks)
+
+    counts = commands.add_parser(
+        "gates", help="count what gates answered: calls, questions to Kai, denials, latency"
+    )
+    counts.add_argument("--agent", choices=("claude_code", "codex_code"))
+    counts.add_argument("--session")
+    counts.set_defaults(run=_gates)
 
     doctor = commands.add_parser(
         "doctor", help="report the local setup and what the local server says of itself"

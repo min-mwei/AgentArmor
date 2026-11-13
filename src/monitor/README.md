@@ -213,17 +213,23 @@ about the very call it holds.
    it answers, a call nothing marks included (`status: unmarked`), so the calls that passed
    without Kai can be counted. It has the verdict, the attempt, the call's id and hash, the
    hash of the rules, the evidence it read, and `declared_on_error`: what the gate said it
-   would do without a verdict. It never says what was enforced. The server cannot know.
-2. *What the gate did*, by the gate: a record with `stage: applied` for every call it
-   handles, with `enforced` (`deny` or `none`), whether a receipt came, and what that receipt
-   was bound to. A gate that stopped waiting has stopped the call, or let it go if it was set
-   to, whatever the server answers later: the late answer is on record as issued, and only
-   this record says what happened at the gate.
+   would do without a verdict. It never says what was answered. The server cannot know.
+2. *What the gate answered*, by the gate: a record with `stage: answered` for every call it
+   handles, with `answered` (`deny` or `none`), `would` (what it answers when it is not in
+   shadow), `mode`, whether a receipt came, what that receipt was bound to, and how long
+   the answer took (`elapsed_ms`). A gate that stopped waiting has answered, deny or nothing
+   as it was set to, whatever the server says later: the late answer is on record as issued.
+   This is the gate's answer and no more. Whether the agent received it in time and acted
+   on it is not known at the gate (`delivery: unknown`): a client that ends the hook at its
+   own deadline runs the call, and so does one in which another hook changes the call
+   afterwards. **Do not count enforcement from these records alone.**
 3. *What became of the call*, by the hooks: the result, failure or refusal that the session's
    log reports afterwards. A call that was let through is not thereby a call that ran.
 
-The attempt and the call's ids tie the first two together. Count enforcement from the
-`applied` records alone.
+The attempt and the call's ids tie the first two together, and an `observed` record ties
+the third to them. What a gate answered is counted from the `answered` records. Whether a
+call was in fact stopped is known only from what was reported next: a deny followed by a
+result (`ran_after_deny`) was not.
 
 The server asks Kai from "medium" up (`--gate-level`): a denial blocks a call, and Kai's
 decisions on real calls are unmeasured.
@@ -259,7 +265,26 @@ decisions on real calls are unmeasured.
     is half written or the disk filled up. Another call proposed meanwhile changes nothing.
 
   `--on-error abstain` lets all of these through instead. Either way the outcome is appended
-  to the session's detections with what was enforced, so default denials can be counted.
+  to the session's detections with what the gate answered, so default denials can be counted.
+
+**What the agent reported next.** When a result, a failure or a refusal of a call arrives
+for which a gate answered, the gate appends a record with `stage: observed`: what was
+reported, the answer it follows, and `ran_after_deny`, which is true when a result came
+back for a call the gate answered `deny` for. That call ran all the same. A failure or a
+refusal after a deny is left as reported: either can be how an agent reports the denial.
+
+**Shadow.** `serve --shadow` issues every decision as a shadow one, and puts every marked
+call to Kai (the gate's level is `low` unless `--gate-level` names another).
+`hooks-config --gate PATH --shadow` prints a gate that asks and records as always and
+stops nothing: `answered` is `none`, `would` says what an enforcing gate would have
+answered, and the handler has no `onFailure`, so a shadow gate does not stop a call by
+failing either. A gate never applies a decision its server issued as a shadow one, whatever
+the gate's own setting. `--on-error abstain` is not shadow: a deny from Kai still blocks.
+`agentarmor-monitor gates` counts the records: calls, questions put to Kai, what was and
+would have been denied, checks not completed by reason, how long answers took, and calls
+reported as run after a deny. The user's order of 2026-11-12 is shadow first: measure the
+load and the latency of asking about every marked call before anything is enforced at that
+level.
 
 A denial is printed on stdout in the agent's own shape and its reason on stderr, with exit
 status 2. A failure is also noted in `gate-errors.log` in the spool, as the step that failed
@@ -563,7 +588,8 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `summary_detector` | What the summary says marked it: a version and hashes of Summarizer's wording rules, of its priors and levels, and of its source. The same session marked under other rules can build a different packet. Copied from the same summary as `summary_embedding`, and like it beside the request, never inside it. `null` when the summary does not say, as with summaries made before Summarizer named its detectors; a hash the summary gives as unknown stays `null` |
 | `status` | `scored`; `kai_unavailable` and `kai_mismatch` (what answered is not the configured model, with the part that differed in `error`), both retried by the watcher; `kai_rejected` (refused by the service); `too_large_to_send` (refused here for its bytes on the wire: nothing was sent); `call_too_large` or `policy_too_large` (nothing was sent); for a gate's question that was answered without a Kai request, `unmarked` or the reason (`no_summary`, `coverage`, `no_decision_model`, `busy`, `log_unread`, `moved_on`, `outcome_reported`); and `applied` on the gate's own record of what it did |
 | `gate`, `stage: issued`, `attempt`, `verdict`, `why`, `declared_on_error` | On the server's record of a decision it issued for a gate's question: the verdict (`abstain`, `deny`, `undecided`), what kept an undecided check from completing (also `moved_on`, `log_unread`, `outcome_reported` for an allow that no longer applied), and what the gate said it would do without a verdict. With `call_id`, `call_sha256` and `policy_sha256`. Never `enforced` |
-| `stage: applied`, `enforced`, `receipt`, `on_error` | On the gate's record of what it did with a call: `enforced` is `deny` or `none`; `receipt` says whether the server's answer arrived; `why` is the server's reason or the gate's own (`server`, `setup`, `recording`, `event`). With the attempt, the call's id and hash, and from the receipt the hash of the rules, the evidence and the request's hash, null where no receipt came. The only record that says what was enforced |
+| `stage: observed`, `reported`, `answered`, `ran_after_deny` | On the gate's record of what the agent reported of a call it had answered about: the hook event, the answer it follows and its mode, and whether a result came back for a call answered `deny` |
+| `stage: answered`, `answered`, `would`, `mode`, `delivery`, `elapsed_ms`, `receipt`, `on_error` | On the gate's record of what it answered about a call: `answered` is `deny` or `none`; `would` is what it answers outside shadow; `delivery` is always `unknown`; `receipt` says whether the server's answer arrived; `why` is the server's reason or the gate's own (`server`, `setup`, `recording`, `event`). With the attempt, the call's id and hash, and from the receipt the hash of the rules, the evidence and the request's hash, null where no receipt came. The only record that says what was enforced |
 | `evidence`, `routing`, `revalidated` | On the server's record: how far the session's log had been read when the decision was made (`events`, `log_bytes`), whether all of it was scanned and a hash of the workspace; whether Kai was asked, at which level and threshold and why; and for an allow, how far the log was read again when the answer came and whether that was its end |
 
 The packet text is not copied into the record; it can be rebuilt from the summary. When a gate
