@@ -1744,14 +1744,23 @@ def test_a_control_is_shown_not_to_apply_only_by_who_reads_it(runtime, agent):
         {"id": "rc", "read": "{home}/.npmrc", "output": "registry=https://npm-fern.example/\n"}
     )
 
-    def looked(command):
+    def looked(command, there=None):
         later = [ask("Show the build notes."), {"id": "go", "run": command}]
-        return selected(story(("a", {}, seen), ("b", {}, later)), runtime, agent, budget=8000)
+        campaign = story(("a", there or {}, seen), ("b", {}, later))
+        return selected(campaign, runtime, agent, budget=8000)
 
     found, view, shown = looked("cat docs/build.md")
     assert found["unsupported"] == [] and "npm-fern.example" not in shown
     (passed,) = found["controls_not_applying"]
     assert passed["resource"].endswith("/.npmrc") and passed["why"] == "consumer_not_in_call"
+    # The packet's account keeps it, with where it was seen, though nothing else was found
+    # and nothing of the control is shown (MR146-1).
+    found, view, shown = looked("cat docs/build.md", {"cwd": "{home}/other-proj"})
+    (kept,) = view["history"]["controls_not_applying"]
+    assert kept["why"] == "consumer_not_in_call" and kept["resource"] == passed["resource"]
+    assert set(kept) == {"alias", "seq", "resource", "why"} and view["history"]["items"] == []
+    assert view["history"]["complete"] is True and view["route"] == "unasked"
+    assert "npm-fern.example" not in view["text"]
     # The same read is unsettled for a pager, a helper named in the environment, a wrapper,
     # and a program that may well read it.
     for command in (

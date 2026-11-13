@@ -1534,7 +1534,10 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     ]
     # Nothing found, nothing missing and every source known to be near: no section. A source
     # searched without knowing that keeps its account, also when nothing in it matched.
-    if not items and not why and not found["unresolved"]:
+    # So does a lookup whose only finding is a control it passed over: the account is how
+    # that is traced, and it puts nothing of the control before the reader (MR146-1).
+    passed = found["controls_not_applying"]
+    if not items and not why and not found["unresolved"] and not passed:
         return view | {"route": found["route"], "route_reason": found["route_reason"]}
     sources, seen = [], set()
     for source, *_ in items:
@@ -1558,10 +1561,11 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
             account[name] = value
     if found["by_name"]:
         account["by_name"] = found["by_name"]
-    if found["controls_not_applying"]:  # read by an earlier session, shown not to apply
+    if passed:  # read by an earlier session and shown not to apply: where, and why
         account["controls_not_applying"] = [
-            {"resource": one["resource"], "why": one["why"]}
-            for one in found["controls_not_applying"]
+            {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}
+            | {"resource": one["resource"], "why": one["why"]}
+            for one in passed
         ]
     candidates = [
         {"alias": parts[c["key"]]["alias"], "seq": c["seq"], "resource": c["resource"]}
