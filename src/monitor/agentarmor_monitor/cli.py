@@ -311,6 +311,21 @@ def _render(args):
     return 0
 
 
+def _panels(args):
+    """Packets built elsewhere, written as the requests the monitor would make of them.
+    Nothing is sent, and nothing of a session is printed."""
+    from .panels import write
+    from .policy import load_rules
+
+    try:
+        rules = load_rules(args.policy) if args.policy else None
+        told = write(args.packets, args.out, rules)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"panels: {error}") from None
+    print(json.dumps(told))
+    return 0
+
+
 def _tally(args):
     """Count what the gate would do with every proposed call of a render.
 
@@ -717,6 +732,16 @@ def main(argv=None):
     )
     embedder(scripted)
     scripted.set_defaults(run=_render)
+
+    wrapped = commands.add_parser(
+        "panels", help="write packets built elsewhere as the requests the monitor would make"
+    )
+    wrapped.add_argument(
+        "packets", help="one record per line: run, arm, packet, tool, input (and pair, kind)"
+    )
+    wrapped.add_argument("--out", required=True, help="a new or an empty folder: <arm>.jsonl")
+    wrapped.add_argument("--policy", help="a policy file; the default rules if omitted")
+    wrapped.set_defaults(run=_panels)
 
     counted = commands.add_parser(
         "tally", help="count what the gate would do with every proposed call of a render"

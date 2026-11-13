@@ -595,6 +595,22 @@ which is what a pilot needs. The watcher's count (`watch`: how many calls it ask
 given beside the gate's and never added to it: watching enforces nothing. Tokenizer admission
 and blind adjudication come after this count and are not part of it.
 
+**Packets built elsewhere.** A measurement of the decision model compares packets: one
+proposed call with more or less shown of what led to it.
+
+```sh
+.venv/bin/agentarmor-monitor panels packets.jsonl --out panels/
+```
+
+`panels` takes records `{"run", "arm", "packet", "tool", "input"}` (and `pair`, `kind`,
+`decision`), which Summarizer's `train/campaign_arms.py` writes, and writes one file per arm
+with each record as the request the monitor would make of it: these rules, this layout of the
+state, the call's arguments shown and redacted as a gate shows a call it holds, and the
+registered `decision` question with its exact option text. The arms of one run then differ
+in the packet and in nothing else, which it checks and counts. Nothing is sent, nothing of a
+session is printed, and nothing is said about whether a state fits the model: that is the
+reader's to say. The files hold session text.
+
 ## Detections
 
 One JSON line per trigger in the session's directory under Summarizer's spool
