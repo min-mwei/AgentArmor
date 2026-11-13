@@ -543,11 +543,23 @@ def main(argv=None):
         if bad:
             print(json.dumps({"problems": len(bad)}))
             return 1
+        # What is run is named before the work starts and held to at its end: the commit,
+        # the campaign file and where the package was loaded from. A checkout that another
+        # role moved on while the replay ran would otherwise sign for code it did not run
+        # (MR148-1).
+        import summarizer
+
+        before = {"code": cc.code_version(), "source_sha256": _sha256(args.campaigns)}
+        before["package"] = str(Path(summarizer.__file__).resolve().parent)
         runtime = Runtime(create(args.embedder))
         rows = packets(campaigns, runtime, args.budget)
+        after = {"code": cc.code_version(), "source_sha256": _sha256(args.campaigns)}
+        if any(before[name] != after[name] for name in after):
+            raise SystemExit("write: the code or the campaign file changed while this ran")
         write_jsonl(out / "packets.jsonl", rows)
-        roster = roster_of(rows, _sha256(out / "packets.jsonl"), _sha256(args.campaigns))
-        roster |= {"scorer": cc.SCORERS[RULES], "code": cc.code_version()}
+        roster = roster_of(rows, _sha256(out / "packets.jsonl"), before["source_sha256"])
+        roster |= {"scorer": cc.SCORERS[RULES], "code": before["code"]}
+        roster["package"] = before["package"]
         # What made the summaries: the encoder, its revision, device, number type and
         # policy, the probes and the detector. A measurement names it and is held to it.
         roster |= {"embedder": args.embedder, "made_with": runtime.identity()}
