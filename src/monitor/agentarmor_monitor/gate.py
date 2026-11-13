@@ -152,9 +152,13 @@ def one_at_a_time(agent, session, wait=1.0):
     before it so: between the two, the other process can write. A lock on a file beside
     the detections makes the pair one step. A gate must not hang on it, so it is asked for
     without blocking for a moment and then gone without. It yields whether the lock was
-    taken, and a record written under it says so ("locked"): the place of such a record in
-    the file is then the order things happened in. Without the lock that cannot be said,
-    and the order is worked out when the record is read (joined), or said not to be known.
+    taken, and a record written under it says so ("locked"): its writer saw everything
+    that is before it in the file, so no report and answer of one call miss each other.
+
+    That is all the lock says. It orders the appends, not the arrivals: a report can come
+    in, be stamped, and then wait for the lock behind an answer that was made later. The
+    order two things happened in is taken from when each arrived and where each landed
+    together (_sure), under the lock as without it, or said not to be known.
     """
     held, got = None, False
     try:
@@ -273,12 +277,20 @@ def observe(agent, payload, event):
     failure, a refusal by the agent's own permissions) with the last answer a gate gave
     for that call, and says in which order they came ("order"):
 
-    - "after_answer": the answer was on record when the report came. A result for a call
-      the gate answered "deny" for means the call ran all the same ("ran_after_deny").
+    - "after_answer": an answer was on record that had been made before the report came.
+      A result for a call the gate answered "deny" for means the call ran all the same
+      ("ran_after_deny").
+    - "unknown": an answer is on record, and it was made at the same instant as the report
+      came or later. It got its place first while the report waited its turn. Which of the
+      two happened first is not known, and nothing is made of the report.
     - "no_answer": no answer for that call is on record yet. The report is kept as it is,
       so that it is not lost if the answer is still being awaited, and so that a call for
       which no gate ever answered can be counted. When an answer is recorded it is tied to
-      the report (reconcile) in a record of its own with "before_answer".
+      the report (reconcile) in a record of its own.
+
+    The report is timed when it comes, before the lock is asked for and before anything
+    on record is read: that is when the call had already run, and waiting for the lock
+    must not move it.
 
     A failure or a refusal after a deny is left as reported: either can be how an agent
     reports the denial itself. A reported result is not proof of any effect.
@@ -289,11 +301,17 @@ def observe(agent, payload, event):
     began = round(time.time(), 3)  # when the report came, before anything on record is read
     try:
         with one_at_a_time(agent, session) as locked:  # what is on record, and this report
-            last = None
-            for record in read(session_dir(agent, session)):
-                if record.get("stage") == "answered" and record.get("call_id") == call_id:
-                    last = record
-            order = "after_answer" if last is not None else "no_answer"
+            mine = [
+                record
+                for record in read(session_dir(agent, session))
+                if record.get("stage") == "answered" and record.get("call_id") == call_id
+            ]
+            # An answer on record came before this report only if it was also made before
+            # the report arrived. One made at the same instant or later got its place in
+            # the file while this report waited its turn, and says nothing of the order.
+            before = [answer for answer in mine if _earlier(answer.get("ts"), began)]
+            last = before[-1] if before else None
+            order = "after_answer" if before else "unknown" if mine else "no_answer"
             record = _observed(agent, session, call_id, event, last, order)
             record |= {"key": f"observed:{call_id}:{event}", "ts": began, "locked": bool(locked)}
             keep(agent, session, record)
@@ -301,16 +319,25 @@ def observe(agent, payload, event):
         note(agent, error, "observing")
 
 
+def _earlier(first, second):
+    """Whether one arrival is known to be before another: both timed, and differently."""
+    timed = isinstance(first, int | float) and isinstance(second, int | float)
+    return timed and first < second
+
+
 def _sure(report, place, answer, at, earlier):
     """Whether an answer at place `at` is known to have come before (earlier) or after the
-    report at `place`: both written under the lock, or place and time agreeing and the
-    times different."""
-    if report.get("locked") and answer.get("locked"):
-        return (at < place) is earlier  # serialized: the file's order is the order
+    report at `place`: its place and its time both say so, the times being different.
+
+    A record's time is when its writer arrived and its place is where its append landed.
+    Neither alone is the order: without the lock an append can land anywhere, and with it
+    a writer that arrived first can still be the one that waited. So the lock is no
+    shortcut here. Where the two disagree, or the times are equal, the order is not known.
+    """
     when, then = report.get("ts"), answer.get("ts")
-    if not isinstance(when, int | float) or not isinstance(then, int | float):
-        return False
-    return (at < place and then < when) if earlier else (at > place and then > when)
+    if earlier:
+        return at < place and _earlier(then, when)
+    return at > place and _earlier(when, then)
 
 
 def joined(records):
@@ -322,13 +349,13 @@ def joined(records):
     A call is an agent's, a session's and a call id together: two agents can use the same
     session and call ids, and an answer of one is never an answer for the other.
 
-    For a report and an answer of its call, which came first is known in two ways only.
-    Both were written under the lock (one_at_a_time): their places in the file are then
-    the order they happened in. Or their places and their times agree, the times being
-    different: an answer before the report in the file and dated earlier, or after it and
-    dated later. Equal times say nothing, and neither does a time that contradicts the
-    place: without the lock a record's place is where its append landed, not when its
-    writer looked.
+    For a report and an answer of its call, which came first is known in one way only:
+    their places and their times agree, the times being different. An answer before the
+    report in the file and dated earlier came first; one after it and dated later came
+    after. Equal times say nothing, and neither does a time that contradicts the place,
+    whether or not the records were written under the lock: a record's place is where its
+    append landed and its time is when its writer arrived, and a report that arrived
+    first can land second.
 
     order is "after_answer" when an answer is known to have come before the report,
     "before_answer" when every answer is known to have come after it, "no_answer" when
@@ -343,7 +370,7 @@ def joined(records):
     for place, record in enumerate(records):
         if record.get("stage") == "answered":
             answers.setdefault(call_of(record), []).append((place, record))
-        elif record.get("stage") == "observed" and record.get("order") != "before_answer":
+        elif record.get("stage") == "observed" and not _tie(record):
             reports.append((place, record))  # a report itself, not a copy that ties one
     found = []
     for place, report in reports:
@@ -365,27 +392,36 @@ def joined(records):
     return found
 
 
+def _tie(record):
+    """Whether an observed record is a copy that ties an earlier report to an answer."""
+    return bool(record.get("tie")) or record.get("order") == "before_answer"
+
+
 def reconcile(agent, session, call_id, answer):
-    """Tie an answer to the reports of its call that came before it. Never raises.
+    """Tie an answer to the reports of its call that are on record without one. Never raises.
 
     A result can be reported while the gate still waits for the server: the client did
     not wait, or ended the hook and went on. Such a report was recorded with no answer
-    beside it. Now that there is one, each is recorded again as "before_answer" with this
-    answer and its attempt, and a result among them is "ran_before_answer": whatever the
-    gate then answered came too late for that call. Each report is tied once.
+    beside it. Now that there is one, each is recorded again with this answer and its
+    attempt. One that arrived before the answer was made is "before_answer", and a result
+    among them is "ran_before_answer": whatever the gate then answered came too late for
+    that call. One that arrived at the same instant or after the answer was made, and
+    only got its place first, is "unknown": nothing is made of it. Each report is tied once.
     """
     try:
         found = read(session_dir(agent, session))
         mine = [r for r in found if r.get("stage") == "observed" and r.get("call_id") == call_id]
-        tied = {r.get("reported") for r in mine if r.get("order") == "before_answer"}
+        tied = {r.get("reported") for r in mine if _tie(r)}
         for report in mine:
             event = report.get("reported")
-            if report.get("order") != "no_answer" or event in tied:
+            if report.get("order") != "no_answer" or _tie(report) or event in tied:
                 continue
             tied.add(event)
-            record = _observed(agent, session, call_id, event, answer, "before_answer")
+            first = _earlier(report.get("ts"), answer.get("ts"))
+            order = "before_answer" if first else "unknown"
+            record = _observed(agent, session, call_id, event, answer, order)
             record |= {"key": f"observed:{call_id}:{event}:before", "reported_ts": report.get("ts")}
-            keep(agent, session, record)
+            keep(agent, session, record | {"tie": True})
     except Exception as error:
         note(agent, error, "observing")
 

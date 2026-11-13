@@ -4381,6 +4381,7 @@ def test_what_the_agent_reports_next_is_tied_to_what_the_gate_answered(spool, se
     def reported(name, **more):
         payload = event("s-ran", hook_event_name=name) | call(3, "Bash", {"command": EXFIL})
         raw = json.dumps(payload | more).encode()
+        time.sleep(0.01)  # a report comes after the answer was made, not in its millisecond
         assert gate.run("claude_code", raw, deciding(client)) == (None, 0)
         found = escalate.read(session_dir("claude_code", "s-ran"))
         return [r for r in found if r.get("stage") == "observed"][-1]
@@ -4525,6 +4526,7 @@ def test_a_report_and_an_answer_written_at_once_are_still_joined(spool, monkeypa
     first.start()
     assert reading.wait(5)
     monkeypatch.setattr(gate, "read", real)  # only the report's own reading is slow
+    time.sleep(0.01)  # the answer is made after the report came, not in its millisecond
     second = threading.Thread(target=answer, args=("s-race",))
     second.start()
     second.join(0.2)
@@ -4631,13 +4633,22 @@ def test_a_join_is_one_agents_call_and_takes_no_order_from_equal_times():
         gate.joined([report("claude_code", 1000.124), answer("claude_code", 1000.125)])[0]["order"]
         == "before_answer"
     )
-    # Under the lock the file's order is the order, equal times or not.
-    locked = [
-        answer("claude_code", 1000.125, locked=True),
-        report("claude_code", 1000.125, locked=True),
-    ]
-    assert gate.joined(locked)[0]["order"] == "after_answer"
-    assert gate.joined(locked[::-1])[0]["order"] == "before_answer"
+
+    # MR125-1. The lock orders the appends and not the arrivals: under it, as without it,
+    # equal times say nothing and a time that contradicts the place says nothing.
+    def locked(*records):
+        return [record | {"locked": True} for record in records]
+
+    tie = locked(answer("claude_code", 1000.125), report("claude_code", 1000.125))
+    assert gate.joined(tie)[0]["order"] == "unknown"
+    assert gate.joined(tie[::-1])[0]["order"] == "unknown"
+    late = locked(answer("claude_code", 1000.475), report("claude_code", 1000.445))
+    assert gate.joined(late)[0]["order"] == "unknown"  # the report had come first
+    assert cli.gates_summary(late)["ran_after_deny"] == 0
+    assert gate.joined(late[::-1])[0]["order"] == "before_answer"
+    agree = locked(answer("claude_code", 1000.124), report("claude_code", 1000.125))
+    assert gate.joined(agree)[0]["order"] == "after_answer"
+    assert cli.gates_summary(agree)["ran_after_deny"] == 1
     half = [answer("claude_code", 1000.125, locked=True), report("claude_code", 1000.125)]
     assert gate.joined(half)[0]["order"] == "unknown"  # one of the two was not under it
     # A missing time is no evidence.
@@ -4647,9 +4658,71 @@ def test_a_join_is_one_agents_call_and_takes_no_order_from_equal_times():
     )
 
 
+def test_a_report_that_came_before_the_answer_was_made_never_ran_after_a_deny(spool, monkeypatch):
+    # MR125-1. A report is timed when it comes, and then waits for the lock. An answer made
+    # after that, which took the lock first, is before the report in the file. Both were
+    # written under the lock, and the join read the file's order as the order: a call that
+    # had run before any answer existed was counted as having run after a deny.
+    import contextlib
+
+    payload = event("s-wait", hook_event_name="PostToolUse") | call(4, "Bash", {"command": "ls"})
+    real, waited = gate.one_at_a_time, []
+
+    @contextlib.contextmanager
+    def behind_an_answer(agent, session, wait=1.0):
+        if not waited:  # the report has come and is timed; it has not asked for the lock
+            waited.append(True)
+            time.sleep(0.02)
+            gate.answered(agent, payload, {"attempt": "a1"}, "deny", None, True, "deny", None)
+        with real(agent, session, wait) as taken:
+            yield taken
+
+    monkeypatch.setattr(gate, "one_at_a_time", behind_an_answer)
+    gate.observe("claude_code", payload, "PostToolUse")
+    answer, report = audit_of("s-wait")
+    assert (answer["stage"], report["stage"]) == ("answered", "observed")
+    assert answer["locked"] and report["locked"] and report["ts"] < answer["ts"]
+    # What is stored says the order is not known, and so does the join when it is read.
+    assert (report["order"], report["ran_after_deny"], report["ran_before_answer"]) == (
+        "unknown",
+        False,
+        False,
+    )
+    assert report["answered"] is None  # no answer is put beside it
+    (found,) = gate.joined([answer, report])
+    assert (found["order"], found["answered"]) == ("unknown", None)
+    counted = cli.gates_summary([answer, report])
+    assert (counted["ran_after_deny"], counted["ran_before_answer"]) == (0, 0)
+    assert counted["reported_in_an_order_not_known"] == 1 and counted["answered_deny"] == 1
+    # The ordinary order: the answer is made, and later the report comes. Both under the lock.
+    monkeypatch.setattr(gate, "one_at_a_time", real)
+    later = payload | {"session_id": "s-plain"}
+    gate.answered("claude_code", later, {"attempt": "a1"}, "deny", None, True, "deny", None)
+    time.sleep(0.02)
+    gate.observe("claude_code", later, "PostToolUse")
+    answer, report = audit_of("s-plain")
+    assert (report["order"], report["ran_after_deny"]) == ("after_answer", True)
+    assert cli.gates_summary([answer, report])["ran_after_deny"] == 1
+    # And the report that comes first with no answer on record, tied when the answer is made.
+    early = payload | {"session_id": "s-early"}
+    gate.observe("claude_code", early, "PostToolUse")
+    time.sleep(0.02)
+    gate.answered("claude_code", early, {"attempt": "a1"}, "deny", None, True, "deny", None)
+    report, answer, tied = audit_of("s-early")
+    assert (report["order"], tied["order"], tied["ran_before_answer"]) == (
+        "no_answer",
+        "before_answer",
+        True,
+    )
+    assert tied["tie"] is True and len(gate.joined([report, answer, tied])) == 1
+    counted = cli.gates_summary([report, answer, tied])
+    assert (counted["ran_before_answer"], counted["ran_after_deny"]) == (1, 0)
+
+
 def test_records_say_whether_they_were_written_under_the_lock(spool):
     payload = event("s-lock", hook_event_name="PostToolUse") | call(3, "Bash", {"command": "ls"})
     gate.observe("claude_code", payload, "PostToolUse")
+    time.sleep(0.01)  # the answer is made later: in one millisecond the order is not known
     gate.answered("claude_code", payload, {"attempt": "a1"}, "deny", None, True, "deny", None)
     kept = audit_of("s-lock")
     assert [(r["stage"], r["locked"]) for r in kept[:2]] == [("observed", True), ("answered", True)]

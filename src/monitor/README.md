@@ -271,25 +271,31 @@ decisions on real calls are unmeasured.
 arrives, the gate appends a record with `stage: observed`: what was reported, the answer
 it is tied to, and `order`:
 
-- `after_answer`: the gate's answer was on record when the report came. `ran_after_deny`
-  is true when a result came back for a call the gate answered `deny` for: that call ran
-  all the same.
+- `after_answer`: an answer was on record that had been made before the report came.
+  `ran_after_deny` is true when a result came back for a call the gate answered `deny`
+  for: that call ran all the same.
 - `no_answer`: no answer for that call was on record. The report is kept as it is. If
   no answer is ever tied to it, the gate was never run for that call.
 - `before_answer`: written when the answer is recorded, for each report that had come
-  first. A result among them is `ran_before_answer`: the client did not wait, and
-  whatever the gate then answered came too late for that call.
+  before the answer was made. A result among them is `ran_before_answer`: the client did
+  not wait, and whatever the gate then answered came too late for that call.
+- `unknown`: an answer and the report are both on record, and when each arrived does not
+  agree with where each landed, or they arrived in the same millisecond. Nothing is made
+  of such a report: it neither ran after a deny nor before the answer.
+
+A report is timed when it comes, before it waits for anything, and an answer when it is
+made.
 
 A report and an answer for one call are written by two hook processes. Each takes a lock
-beside the session's detections for its read-and-append, so the two cannot interleave; a
-gate does not wait for that lock for more than a second, and each record says whether it
-was written under it (`locked`). `gates` does not rely on what a record says of itself
-either. It puts each report beside the answers of the same agent, session and call, and
-takes an order from two things only: both records written under the lock, where the
-file's order is the order; or their places and their times agreeing, with the times
-different. Equal times, a time that contradicts the place, and a missing time say
-nothing: the order is then not known (`reported_in_an_order_not_known`) and nothing is
-made of that report.
+beside the session's detections for its read-and-append, so that neither misses the other;
+a gate does not wait for that lock for more than a second, and each record says whether it
+was written under it (`locked`). The lock orders the appends and not the arrivals: a
+report that came first can wait behind an answer made later. So `gates` does not rely on
+the lock, nor on what a record says of itself. It puts each report beside the answers of
+the same agent, session and call, and takes an order from one thing only: their places in
+the file and their times agreeing, with the times different. Equal times, a time that
+contradicts the place, and a missing time say nothing, under the lock as without it, and
+the report is counted as `reported_in_an_order_not_known`.
 
 A failure or a refusal after a deny is left as reported: either can be how an agent
 reports the denial. A reported result is not proof of any effect. A gate that could not
