@@ -125,6 +125,15 @@ SHELLS = frozenset({"Bash", "exec_command", "shell", "local_shell"})
 _SHELL_NAMES = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 _RUNNERS = _SHELL_NAMES | {"source", ".", "python", "node", "ruby", "perl"}
 _READERS = frozenset({"cat", "less", "more", "head", "tail"})
+_PRINTERS = frozenset({"cat", "head", "tail"})  # print a file and run nothing; no pager
+# Control files that only named programs read, by the file's name. A control not listed
+# here has no known consumers, and whether it applies to a call is then never settled.
+_CONSUMERS = {
+    ".npmrc": frozenset({"npm", "npx", "node", "pnpm", "yarn"}),
+    ".yarnrc": frozenset({"yarn", "node"}),
+    ".gitconfig": frozenset({"git"}),
+    ".pypirc": frozenset({"twine", "python", "pip"}),
+}
 # Words that stand before the command word. For each: the options that take the next word
 # as a plain value, those that name the directory the command then runs in, and its flags.
 # An option in none of the three may take the next word or not, and may change what runs:
@@ -710,17 +719,21 @@ def _use(path, mine_uses, command, call, cwd, home):
     return None
 
 
-def _only_reads(command):
-    """Whether a command is made of nothing but programs that print a file: cat, head and
-    their like, with no substitution in it. Such a call loads no control file, whichever
-    is within its reach: that much is shown by its words, where for any other program
-    whether a control applies is not settled."""
-    if any(mark in command for mark in "()`"):
+def _not_consumed(command, path):
+    """Whether a control file is shown, by the call's own words, not to be read by it:
+    the control belongs to named programs (a package manager's settings, git's), and the
+    call is nothing but cat, head or tail of files, with no assignment before a command,
+    no wrapper and no substitution. A relationship between that control and its consumers,
+    and no claim about what a reader loads: a pager can run a preprocessor, an assignment
+    can name a helper, and a shell's own startup files are read by the shell that runs
+    any command, so none of those is ever shown not to apply here (MR145-1)."""
+    consumers = _CONSUMERS.get(os.path.basename(path))
+    if not consumers or any(mark in command for mark in "()`"):
         return False
     segments = list(shell_segments(command, split_assignments=False, redirections=False))
     for words in segments:
         at = _command(words)[0]
-        if at is None or _program(words[at]) not in _READERS:
+        if at != 0 or _program(words[0]) not in _PRINTERS:
             return False
     return bool(segments)
 
@@ -864,30 +877,36 @@ def select(mine, call_id, others, home):
     # that file's body as it was observed then, whoever wrote it and whenever (MR143-1).
     # A body that was observed is a lead to evidence and no proof that it will run, and
     # it stays lower-trust text. So is what was read of a control the call may load.
-    places, printing = _places(call), _only_reads(command)
+    places, passed = _places(call), []
     for other, acted in sources:
         results = {}
         for content in _lower(other["summary"]["entries"]):
             results.setdefault(content.get("call_id"), []).append(content)
         for entry, theirs in acted:
-            path, bodies = theirs["write"], []
+            path, bodies, cut = theirs["write"], [], False
             if path and _use(path, mine_uses, command, call, cwd, home) in ("run", *LOADS):
                 bodies, cut = [entry], "text_chars" in entry
             uses_of = {p: _use(p, mine_uses, command, call, cwd, home) for p in theirs["read"]}
             seen = [p for p, use in uses_of.items() if use in ("run", "load")]
-            seen += [p for p, use in uses_of.items() if use == "may_load" and not printing]
+            for control in (p for p, use in uses_of.items() if use == "may_load"):
+                if not _not_consumed(command, control):
+                    seen.append(control)
+                elif control not in [one["resource"] for one in passed]:
+                    # Shown not to apply, and said: the account names it with its reason.
+                    passed.append({"key": other["key"], "seq": entry["seq"]})
+                    passed[-1] |= {"resource": control, "why": "consumer_not_in_call"}
             if seen:
                 path = seen[0]
                 back = results.get(entry.get("call_id"), ())
                 bodies = [e for e in back if e["seq"] > entry["seq"] and not e.get("aside")]
                 # Whole only when the summary says how many pieces came back and every one
-                # is here. A count that is not known is not taken to be the number kept: an
-                # older call keeps the head and the tail of what it returned (MR144-2).
+                # is here: a count that is not known is not taken to be the number kept,
+                # and a result of which no piece is kept is a gap as well, unless it is
+                # known to have been empty (MR144-2).
                 cut = entry.get("result_pieces") != len(bodies)
                 # A control the call only may load: whether it applies is not settled by
                 # its words, and what was seen of it is followed all the same. That it is
-                # unsettled is said, and never taken for "does not apply" (MR144-1). Only a
-                # call that does nothing but print files is shown to load no control.
+                # unsettled is said, and never taken for "does not apply" (MR144-1).
                 unsettled = all(uses_of[p] == "may_load" for p in seen)
                 if unsettled and "control_load_unresolved" not in unsupported:
                     unsupported.append("control_load_unresolved")
@@ -895,7 +914,7 @@ def select(mine, call_id, others, home):
                 mine_uses["named"] |= _said(body, cwd, home) - {path}
                 places |= _places(body)
                 cut = cut or len(body.get("iocs") or ()) >= ENTRY_IOCS
-            if bodies and cut and "program_text_cut" not in unsupported:
+            if cut and "program_text_cut" not in unsupported:
                 unsupported.append("program_text_cut")
     # What the user said in this very session that states a bound the call can be held
     # against. It is in the session's own packet already; here it decides the route.
@@ -1027,6 +1046,7 @@ def select(mine, call_id, others, home):
         "why": why,
         "unsupported": unsupported,
         "by_name": list(mine_uses["by_name"]),
+        "controls_not_applying": passed,
         "unresolved": unresolved,
         "searched": searched,
         "excluded": excluded,
@@ -1089,7 +1109,7 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
 
     def loaded(path):
         use = _use(path, mine_uses, command, call, cwd, home)
-        return use == "load" or (use == "may_load" and not _only_reads(command))
+        return use == "load" or (use == "may_load" and not _not_consumed(command, path))
 
     for entry, theirs in acted:
         reads.append((entry["seq"], entry.get("call_id"), theirs["read"]))
@@ -1538,6 +1558,11 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
             account[name] = value
     if found["by_name"]:
         account["by_name"] = found["by_name"]
+    if found["controls_not_applying"]:  # read by an earlier session, shown not to apply
+        account["controls_not_applying"] = [
+            {"resource": one["resource"], "why": one["why"]}
+            for one in found["controls_not_applying"]
+        ]
     candidates = [
         {"alias": parts[c["key"]]["alias"], "seq": c["seq"], "resource": c["resource"]}
         for c in found["candidates"]

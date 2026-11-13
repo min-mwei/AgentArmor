@@ -1620,10 +1620,11 @@ def test_a_look_at_a_startup_file_is_followed_and_an_unsettled_one_says_so(runti
     found, view, shown = selected(campaign, runtime, agent, budget=8000)
     assert found["unsupported"] == ["control_load_unresolved"] and "alias ll" in shown
     assert view["route"] == "undecided" and view["history"]["why"] == ["lookup_unfinished"]
-    # A call that only prints a file loads no control, and that is shown by its words.
+    # A shell's own startup file is read by the shell that runs any command: printing a
+    # file settles nothing of it (MR145-1).
     later[1] = {"id": "go", "run": "cat docs/build.md"}
     found, view, shown = selected(campaign, runtime, agent, budget=8000)
-    assert found["unsupported"] == [] and "alias ll" not in shown
+    assert found["unsupported"] == ["control_load_unresolved"] and "alias ll" in shown
     later[1] = {"id": "go", "run": f"{shell} -lc 'make package'"}
     # A control of another project is out of this call's reach: it is not this call's.
     audit[-1] = {"id": "rc", "read": "/srv/other/.git/hooks/pre-commit", "output": "exit 0\n"}
@@ -1731,3 +1732,49 @@ def test_a_script_that_was_only_read_leads_to_what_it_names(runtime, agent, writ
     assert "class: external support" in shown  # what was seen of the script's destination
     assert shown.count("band,reading") >= 1  # and the write of the file it sends
     assert len(found["bridges"]) == written  # a body that was read proves no write
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_control_is_shown_not_to_apply_only_by_who_reads_it(runtime, agent):
+    # MR145-1. "cat reads no control" was said of every reader: a pager can run a
+    # preprocessor, and an assignment can name a helper. What is shown is narrower: a
+    # package manager's settings are not read by cat, head or tail of a file.
+    seen = [ask("Check the registry settings.")]
+    seen.append(
+        {"id": "rc", "read": "{home}/.npmrc", "output": "registry=https://npm-fern.example/\n"}
+    )
+
+    def looked(command):
+        later = [ask("Show the build notes."), {"id": "go", "run": command}]
+        return selected(story(("a", {}, seen), ("b", {}, later)), runtime, agent, budget=8000)
+
+    found, view, shown = looked("cat docs/build.md")
+    assert found["unsupported"] == [] and "npm-fern.example" not in shown
+    (passed,) = found["controls_not_applying"]
+    assert passed["resource"].endswith("/.npmrc") and passed["why"] == "consumer_not_in_call"
+    # The same read is unsettled for a pager, a helper named in the environment, a wrapper,
+    # and a program that may well read it.
+    for command in (
+        "less docs/build.md",
+        "LESSOPEN='|sh tools/pre.sh %s' cat docs/build.md",
+        "env cat docs/build.md",
+        "npm run build",
+    ):
+        found, view, shown = looked(command)
+        assert found["unsupported"] == ["control_load_unresolved"], command
+        assert "npm-fern.example" in shown and view["route"] == "undecided", command
+        assert found["controls_not_applying"] == []
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("output, gap", (("printf ok\n", True), ("", False)))
+def test_a_read_of_which_no_piece_is_kept_is_a_gap_unless_it_was_empty(runtime, agent, output, gap):
+    # MR144-2, second part. With no piece of the result kept the count was compared and
+    # then not acted on: one piece came back, none was there, and the history was complete.
+    looked = [ask("Review the helper.")]
+    looked.append({"id": "body", "read": "{cwd}/tools/helper.sh", "output": output})
+    looked += [{"id": f"n{n}", "run": f"echo {n}", "output": str(n)} for n in range(12)]
+    later = [ask("Finish the checklist."), {"id": "go", "run": "sh tools/helper.sh"}]
+    found, view, _ = selected(story(("a", {}, looked), ("b", {}, later)), runtime, agent, 60000)
+    assert found["unsupported"] == (["program_text_cut"] if gap else [])
+    assert (view["route"] == "undecided") is gap
