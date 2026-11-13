@@ -304,13 +304,22 @@ Three things to know about it:
 - **It is a lead, never evidence.** A name or a phrase found in another session ties nothing
   to anything. What a packet says of earlier sessions is made by `summarizer.history` from
   the summaries, as they stood when a call was proposed.
-- **It holds nothing a model said.** No level, label, score or vector, so it does not go
-  stale when the model or its probes change. What is marked is in the summaries.
+- **What the log says and what a model said are kept apart.** The tables of pieces and
+  names hold no level, label or score, so they do not go stale when the model or its
+  probes change. The one thing kept of the model is each piece's vector, in its own table
+  under the name of the encoder that made it. A rebuild from the logs leaves vectors be.
 - **It says how far it has read.** `index status` counts the sessions it has not read to the
   end of their log. Nothing found in such a session is not nothing there.
 
 Full-text search needs SQLite's FTS5, which the Python builds this project supports have;
 without it `--text` says so and `--name` still works. Agent messages are not indexed yet.
+
+A third way to search is by vector, from code: `Index.like(vector, encoder)` returns the
+pieces whose stored vector is nearest, by an exact scan with NumPy (a few milliseconds for
+a hundred thousand pieces). It has no command yet, because a query has to be embedded by
+the model that made the stored vectors: a server that holds that model asks, with the
+vector it already has of the proposed call. Likeness is the weakest lead of the three:
+text that says the opposite can be as near as text that agrees.
 
 ## What it reads, and what it cannot see
 

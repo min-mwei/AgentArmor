@@ -9,18 +9,20 @@ opens the session it points to.
 
 Three rules keep it a help and never an authority:
 
-- **It holds what the log says, never what a model said of it.** A row is a piece of a
-  session as the summarizer cut it: when, who (the user, the agent, lower-trust content),
-  where from, the tool, what became of a call, the text, and the paths, hosts and
-  identifiers named in it. There is no level, no label, no score and no vector here, so
-  nothing goes stale when a model or its probes are replaced, and the index can be rebuilt
-  on a machine that has no model.
+- **What the log says and what a model said of it are kept apart.** A piece is a row as the
+  summarizer cut it: when, who (the user, the agent, lower-trust content), where from, the
+  tool, what became of a call, the text, and the paths, hosts and identifiers named in it.
+  Those tables hold no level, no label and no score, so they do not go stale when a model
+  or its probes are replaced, and they can be rebuilt on a machine that has no model. The
+  one thing kept of a model is each piece's vector, in a table of its own, under the name
+  of the encoder that made it. Vectors of two encoders are never compared, and a rebuild
+  from the logs leaves them where they are.
 - **It says how far it has read.** Every session has the bytes of its log the index covers.
   A session whose log has moved on, or that is not here at all, is said to be behind or
   missing by behind() and status(): nothing found in such a session is not nothing there.
-- **A hit is a candidate.** A name or a word found here ties nothing to anything. It says
-  where to look, in a session and before a time. The ties a packet shows are made by
-  summarizer.history from the summaries, as they stood when a call was proposed.
+- **A hit is a candidate.** A name, a phrase or a likeness found here ties nothing to
+  anything. It says where to look, in a session and before a time. The ties a packet shows
+  are made by summarizer.history from the summaries, as they stood when a call was proposed.
 
 The hook never opens this file. It appends to a session's own log and returns: many hooks
 writing one database would have to wait for each other, and a hook must not wait. The
@@ -28,7 +30,8 @@ daemon writes here after it has replaced a summary, one transaction for each upd
 failure here never stops it summarizing. Readers open the file read-only.
 
 Agent messages (what an agent said when it stopped) are not indexed yet: prompts, calls
-and what calls returned are.
+and what calls returned are. Everything here is the standard library but like(), the
+search by vector, which needs NumPy and says so when it is missing.
 """
 
 import json
@@ -93,6 +96,17 @@ CREATE TABLE IF NOT EXISTS names (
     PRIMARY KEY (kind, value, unit_id)
 ) WITHOUT ROWID, STRICT;
 CREATE INDEX IF NOT EXISTS names_by_unit ON names (unit_id);
+CREATE TABLE IF NOT EXISTS encoders (
+    id INTEGER PRIMARY KEY,
+    identity TEXT NOT NULL UNIQUE,      -- what made the vectors, as the runtime names itself
+    dim INTEGER NOT NULL                -- how many numbers of each vector are kept
+) STRICT;
+CREATE TABLE IF NOT EXISTS vectors (
+    encoder INTEGER NOT NULL REFERENCES encoders (id) ON DELETE CASCADE,
+    unit_id INTEGER NOT NULL REFERENCES units (id) ON DELETE CASCADE,
+    vec BLOB NOT NULL,                  -- dim float32 numbers, little-endian, of length one
+    PRIMARY KEY (encoder, unit_id)
+) WITHOUT ROWID, STRICT;
 """
 _WORDS = "CREATE VIRTUAL TABLE IF NOT EXISTS words USING fts5(text, tokenize = 'unicode61')"
 
@@ -140,6 +154,7 @@ class Index:
             self.db.close()
             raise IndexError_(f"{self.file.name} has schema {found}, this version reads {SCHEMA}")
         self.words = self._meta("words") == "fts5"
+        self._matrices = {}  # encoder -> what like() last read of its vectors
 
     def close(self):
         self.db.close()
@@ -178,26 +193,37 @@ class Index:
     # --- writing: the daemon only ---------------------------------------------------------------
 
     def record(
-        self, agent, name, session_id, units, log_bytes, events, total, cwd="", names_dropped=0
+        self,
+        agent,
+        name,
+        session_id,
+        units,
+        log_bytes,
+        events,
+        total,
+        cwd="",
+        names_dropped=0,
+        encoder=None,
     ):
         """Bring one session's rows up to what the summarizer holds, in one transaction.
 
-        units are pieces of the session as dicts with COLUMNS and "names", a list of
-        (kind, value). A piece whose "unit" is here already is replaced, which is how a call's
-        status follows what became of it; its text never changes. When the pieces start at 0
-        the session is written afresh, so a log that was replaced leaves nothing behind.
-        total is how many pieces the session has, log_bytes how much of its log they cover.
+        units are pieces of the session as dicts with COLUMNS, "names" (a list of
+        (kind, value)) and, where the piece was embedded, "vector" (float32 bytes).
+        encoder is (identity, dimension) of what made those vectors. total is how many
+        pieces the session has, log_bytes how much of its log they cover.
+
+        A piece that is here already and unchanged stays the row it was, with its names
+        and its vectors: only its status follows what became of a call. A piece that
+        differs is a piece of another log under the same name: it is replaced, and what
+        hung on the old one goes with it. Pieces beyond total are removed. So reading a
+        log again changes nothing, and a log that was replaced leaves nothing behind.
         """
-        units = list(units)
-        fresh = bool(units) and min(unit["unit"] for unit in units) == 0
+        fixed = [column for column in COLUMNS if column != "status"]
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             row = self.db.execute(
                 "SELECT id FROM sessions WHERE agent = ? AND name = ?", (agent, name)
             ).fetchone()
-            if row is not None and fresh:
-                self._drop(row["id"])
-                row = None
             if row is None:
                 made = self.db.execute(
                     "INSERT INTO sessions (agent, name, session_id, log_bytes, events, units)"
@@ -207,31 +233,40 @@ class Index:
                 session = made.lastrowid
             else:
                 session = row["id"]
+            made_by = self._encoder(encoder) if encoder is not None else None
             for unit in units:
-                values = [unit[column] for column in COLUMNS]
                 old = self.db.execute(
-                    "SELECT id FROM units WHERE session = ? AND unit = ?", (session, unit["unit"])
+                    f"SELECT id, {', '.join(fixed)} FROM units WHERE session = ? AND unit = ?",
+                    (session, unit["unit"]),
                 ).fetchone()
-                if old is not None:
+                if old is not None and all(old[column] == unit[column] for column in fixed):
+                    piece = old["id"]
                     self.db.execute(
-                        "UPDATE units SET status = ? WHERE id = ?", (unit["status"], old["id"])
+                        "UPDATE units SET status = ? WHERE id = ?", (unit["status"], piece)
                     )
-                    continue
-                made = self.db.execute(
-                    f"INSERT INTO units (session, {', '.join(COLUMNS)})"
-                    f" VALUES (?{', ?' * len(COLUMNS)})",
-                    (session, *values),
-                )
-                for kind, value in sorted(set(map(tuple, unit.get("names", ())))):
+                else:
+                    if old is not None:
+                        self._remove("id = ?", (old["id"],))
+                    made = self.db.execute(
+                        f"INSERT INTO units (session, {', '.join(COLUMNS)})"
+                        f" VALUES (?{', ?' * len(COLUMNS)})",
+                        (session, *(unit[column] for column in COLUMNS)),
+                    )
+                    piece = made.lastrowid
+                    for kind, value in sorted(set(map(tuple, unit.get("names", ())))):
+                        self.db.execute(
+                            "INSERT OR IGNORE INTO names VALUES (?, ?, ?)", (kind, value, piece)
+                        )
+                    if self.words:
+                        self.db.execute(
+                            "INSERT INTO words (rowid, text) VALUES (?, ?)", (piece, unit["text"])
+                        )
+                if made_by is not None and unit.get("vector") is not None:
                     self.db.execute(
-                        "INSERT OR IGNORE INTO names VALUES (?, ?, ?)",
-                        (kind, value, made.lastrowid),
+                        "INSERT OR REPLACE INTO vectors VALUES (?, ?, ?)",
+                        (made_by, piece, unit["vector"]),
                     )
-                if self.words:
-                    self.db.execute(
-                        "INSERT INTO words (rowid, text) VALUES (?, ?)",
-                        (made.lastrowid, unit["text"]),
-                    )
+            self._remove("session = ? AND unit >= ?", (session, total))
             times = self.db.execute(
                 "SELECT min(ts) AS first, max(ts) AS last FROM units WHERE session = ?", (session,)
             ).fetchone()
@@ -252,12 +287,29 @@ class Index:
             )
         return session
 
-    def _drop(self, session):
+    def _encoder(self, encoder):
+        """The row of an encoder, made when it is first seen."""
+        identity, dim = encoder
+        row = self.db.execute("SELECT id, dim FROM encoders WHERE identity = ?", (identity,))
+        row = row.fetchone()
+        if row is None:
+            made = self.db.execute("INSERT INTO encoders (identity, dim) VALUES (?, ?)", encoder)
+            return made.lastrowid
+        if row["dim"] != dim:
+            raise IndexError_("an encoder's vectors are kept at one dimension")
+        return row["id"]
+
+    def _remove(self, where, given):
+        """Delete pieces of the units table. Their names and vectors go with the rows; the
+        full-text entries are not tied to them and are deleted here."""
         if self.words:
             self.db.execute(
-                "DELETE FROM words WHERE rowid IN (SELECT id FROM units WHERE session = ?)",
-                (session,),
+                f"DELETE FROM words WHERE rowid IN (SELECT id FROM units WHERE {where})", given
             )
+        self.db.execute(f"DELETE FROM units WHERE {where}", given)
+
+    def _drop(self, session):
+        self._remove("session = ?", (session,))
         self.db.execute("DELETE FROM sessions WHERE id = ?", (session,))
 
     def forget(self, agent, name):
@@ -324,10 +376,74 @@ class Index:
             query, given = query + " AND u.ts < ?", [*given, before]
         return self.db.execute(query + " ORDER BY rank, u.ts LIMIT ?", (*given, limit)).fetchall()
 
+    def like(self, vector, encoder, before=None, limit=20):
+        """Pieces whose vector is nearest to this one, nearest first, each with its "score"
+        (the cosine). vector is a sequence of numbers at least as long as the encoder keeps;
+        encoder is the identity the vectors were stored under, and only its vectors are
+        searched: vectors of two encoders are of two spaces. An exact scan, which at the
+        sizes of one machine's sessions is a few milliseconds.
+
+        Likeness is the weakest lead there is. Text that says the opposite, or the same
+        events in another order, can be as near as text that agrees."""
+        try:
+            import numpy as np
+        except ImportError:
+            raise IndexError_("the search by vector needs NumPy") from None
+        row = self.db.execute("SELECT id, dim FROM encoders WHERE identity = ?", (encoder,))
+        row = row.fetchone()
+        if row is None:
+            return []
+        ids, times, matrix = self._matrix(np, row["id"], row["dim"])
+        query = np.asarray(vector, dtype=np.float32).ravel()[: row["dim"]]
+        size = float(np.linalg.norm(query))
+        if not len(ids) or len(query) < row["dim"] or size == 0.0:
+            return []
+        scores = matrix @ (query / size)
+        if before is not None:
+            scores = np.where(times < before, scores, -np.inf)
+        count = min(limit, int(np.isfinite(scores).sum()))
+        if count <= 0:
+            return []
+        top = np.argpartition(scores, -count)[-count:]
+        found = []
+        for at in top[np.argsort(scores[top], kind="stable")[::-1]]:
+            hit = self.db.execute(
+                self._FOUND + " FROM units u JOIN sessions s ON s.id = u.session WHERE u.id = ?",
+                (int(ids[at]),),
+            ).fetchone()
+            found.append(hit | {"score": float(scores[at])})
+        return found
+
+    def _matrix(self, np, encoder, dim):
+        """(piece ids, their times, their vectors as one matrix) of an encoder, read again
+        only when vectors were added or removed since the last look."""
+        seen = self.db.execute(
+            "SELECT count(*) AS n, max(unit_id) AS last FROM vectors WHERE encoder = ?", (encoder,)
+        ).fetchone()
+        held = self._matrices.get(encoder)
+        if held is None or held[0] != (seen["n"], seen["last"]):
+            rows = self.db.execute(
+                "SELECT v.unit_id, u.ts, v.vec FROM vectors v JOIN units u ON u.id = v.unit_id"
+                " WHERE v.encoder = ? ORDER BY v.unit_id",
+                (encoder,),
+            ).fetchall()
+            if any(len(row["vec"]) != 4 * dim for row in rows):
+                raise IndexError_("a stored vector is not of its encoder's dimension")
+            ids = np.fromiter((row["unit_id"] for row in rows), np.int64, len(rows))
+            times = np.fromiter((row["ts"] for row in rows), np.float64, len(rows))
+            matrix = np.frombuffer(b"".join(row["vec"] for row in rows), dtype="<f4")
+            held = self._matrices[encoder] = (
+                (seen["n"], seen["last"]),
+                ids,
+                times,
+                matrix.reshape(len(rows), dim),
+            )
+        return held[1:]
+
     def status(self):
         """Counts, and whether full-text search is here. No text."""
         told = {"file": str(self.file), "schema": SCHEMA, "full_text": self.words}
-        for table in ("sessions", "units", "names"):
+        for table in ("sessions", "units", "names", "vectors", "encoders"):
             told[table] = self.db.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"]
         return told
 
@@ -336,7 +452,7 @@ def rows(session, start=0, also=()):
     """What the log says of a summarizer session's pieces from `start` on, and of the pieces
     listed in also: rows for record(). session is a summarize.Session, read by its plain
     fields: when, who, where from, the tool, what became of a call, the text and the names
-    in it. Nothing it embedded and nothing it marked is taken."""
+    in it. Nothing it marked is taken. A piece it embedded comes with its vector."""
     units = session.units
     chosen = sorted(
         {index for index in also if 0 <= index < len(units)} | set(range(start, len(units)))
@@ -352,8 +468,23 @@ def rows(session, start=0, also=()):
             "tool": unit.tool,
         }
         row |= {"call_id": unit.call_id, "status": unit.status, "text": unit.text}
-        made.append(row | {"names": sorted(set(unit.iocs))})
+        row |= {"names": sorted(set(unit.iocs)), "vector": None}
+        if index < session.embedded and index not in session.unembedded:
+            part = session.vectors[index][: encoder_of(session)[1]]
+            size = float(part @ part) ** 0.5
+            if size > 0.0:  # kept at the dimension the summaries keep, and of length one again
+                row["vector"] = (part / size).astype("<f4").tobytes()
+        made.append(row)
     return made
+
+
+def encoder_of(session):
+    """(identity, dimension kept) of what made a session's vectors: the encoder as the
+    runtime names it, without what only concerns marking, and how much of a vector is kept."""
+    made = session.runtime.identity()["embedding"]
+    made = {key: value for key, value in made.items() if key not in ("probes", "calibrated")}
+    kept = min(session.runtime.config.vector_dim, session.vectors.shape[1])
+    return json.dumps(made | {"kept": kept}, sort_keys=True), kept
 
 
 def record(index, agent, name, session, start=0, also=()):
@@ -369,6 +500,7 @@ def record(index, agent, name, session, start=0, also=()):
         len(session.units),
         cwd=str(session.info.get("cwd") or ""),
         names_dropped=session.counts["observables_dropped"],
+        encoder=encoder_of(session),
     )
     return units
 

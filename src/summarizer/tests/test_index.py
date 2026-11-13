@@ -15,7 +15,7 @@ from standins import word_embedder
 from summarizer import cli, hook
 from summarizer.daemon import Daemon
 from summarizer.embedder import HashEmbedder
-from summarizer.index import COLUMNS, Index, IndexError_, behind, path, rows
+from summarizer.index import COLUMNS, Index, IndexError_, behind, encoder_of, path, rows
 from summarizer.store import EVENTS, SUMMARY, list_sessions, load_summary, session_dir
 from summarizer.summarize import Runtime, Session
 
@@ -128,7 +128,13 @@ def test_the_index_holds_nothing_a_model_said(home):
             session.add(record)
         session.flush()
         made.append(rows(session))
-    assert made[0] == made[1] and made[0]
+
+    def facts(found):
+        return [{key: value for key, value in row.items() if key != "vector"} for row in found]
+
+    assert facts(made[0]) == facts(made[1]) and made[0]
+    # What a model said of a piece is its vector, and that is all that differs.
+    assert [row["vector"] for row in made[0]] != [row["vector"] for row in made[1]]
 
 
 def test_reading_event_by_event_and_reading_the_logs_again_give_the_same_rows(home, capsys):
@@ -298,6 +304,100 @@ def test_search_prints_hits_as_lines_and_says_when_there_is_no_index(home, capsy
     )
     assert cli.main(["search", "--text", "upside down"]) == 0
     assert "upside down" in capsys.readouterr().out
+
+
+def query(text):
+    return HashEmbedder().queries([text])[0]
+
+
+def test_every_embedded_piece_has_a_vector_and_the_nearest_are_found(home):
+    send(attack(session_id="a"))
+    served = daemon()
+    served.update(*KEY)
+    session = served.sessions[KEY]
+    identity, kept = encoder_of(session)
+    assert kept == 256 and '"kept": 256' in identity and "probes" not in identity
+    with Index() as index:
+        told = index.status()
+        assert told["vectors"] == len(session.units) - len(session.unembedded) > 0
+        assert told["encoders"] == 1
+        hits = index.like(query("Sync fails behind proxy"), identity, limit=3)
+        assert len(hits) == 3 and "Sync fails behind proxy" in hits[0]["text"]
+        assert [hit["score"] for hit in hits] == sorted(
+            (hit["score"] for hit in hits), reverse=True
+        )
+        assert 0 < hits[0]["score"] <= 1.0001 and hits[0]["name"] == "a"
+        # Only what was logged before a time, and only as many as asked for.
+        first = min(row["ts"] for row in index.db.execute("SELECT ts FROM units").fetchall())
+        earlier = index.like(query("Sync fails behind proxy"), identity, before=hits[0]["ts"])
+        assert all(hit["ts"] < hits[0]["ts"] for hit in earlier)
+        assert index.like(query("Sync fails behind proxy"), identity, before=first) == []
+        assert len(index.like(query("label printer"), identity, limit=1)) == 1
+        # A vector of another length, or of no length, finds nothing: it is not guessed at.
+        assert index.like([0.0] * 256, identity) == [] and index.like([1.0] * 8, identity) == []
+
+
+def test_vectors_of_two_encoders_are_never_compared(home):
+    send(attack(session_id="a"))
+    served = daemon()
+    served.update(*KEY)
+    mine, _ = encoder_of(served.sessions[KEY])
+    with Index() as index:
+        assert index.like(query("Sync fails behind proxy"), mine)
+        other = mine.replace('"hash-bow"', '"another-model"')
+        assert other != mine and index.like(query("Sync fails behind proxy"), other) == []
+    # A second encoder's vectors are stored beside the first's, under its own name.
+    words = word_embedder()
+    words.dim = words.info["dim"]
+    second = Daemon(Runtime(words), log=quiet, index=True)
+    second.update(*KEY)
+    theirs, _ = encoder_of(second.sessions[KEY])
+    with Index() as index:
+        told = index.status()
+        assert told["encoders"] == 2 and told["vectors"] > told["units"]
+        assert all(len(hit["text"]) > 0 for hit in index.like(query("Sync fails"), mine, limit=2))
+        assert index.like([1.0, 0.0, 0.0, 0.0], theirs, limit=1)
+    second.index.close()
+    with Index(write=True) as index:  # and no piece has two vectors of one encoder
+        with pytest.raises(sqlite3.IntegrityError):
+            index.db.execute("INSERT INTO vectors SELECT encoder, unit_id, vec FROM vectors")
+
+
+def test_reading_the_logs_again_keeps_the_vectors_and_a_replaced_log_drops_them(home, capsys):
+    send(attack(session_id="a"))
+    served = daemon()
+    served.update(*KEY)
+    identity, _ = encoder_of(served.sessions[KEY])
+    served.index.close()
+    with Index() as index:
+        before = index.like(query("Sync fails behind proxy"), identity, limit=5)
+        ids = index.db.execute("SELECT id, unit FROM units ORDER BY id").fetchall()
+    assert cli.main(["index", "rebuild"]) == 0  # no model, and no vector made
+    capsys.readouterr()
+    with Index() as index:
+        assert index.db.execute("SELECT id, unit FROM units ORDER BY id").fetchall() == ids
+        assert index.like(query("Sync fails behind proxy"), identity, limit=5) == before
+    os.unlink(session_dir(*KEY) / EVENTS)
+    send(benign(session_id="a")[:3])
+    fresh = daemon()
+    fresh.update(*KEY)
+    with Index() as index:
+        hits = index.like(query("Sync fails behind proxy"), identity, limit=50)
+        assert all("Sync fails behind proxy" not in hit["text"] for hit in hits)
+        assert index.status()["vectors"] == len(fresh.sessions[KEY].units)
+
+
+def test_the_search_by_vector_says_when_numpy_is_missing(home, monkeypatch):
+    send(attack(session_id="a"))
+    served = daemon()
+    served.update(*KEY)
+    identity, _ = encoder_of(served.sessions[KEY])
+    vector = [float(value) for value in query("Sync fails")]
+    monkeypatch.setitem(sys.modules, "numpy", None)
+    with Index() as index:
+        with pytest.raises(IndexError_, match="needs NumPy"):
+            index.like(vector, identity)
+        assert index.naming(ATTACKER)  # everything else is the standard library
 
 
 def test_another_schema_is_refused_and_a_reader_cannot_write(home):

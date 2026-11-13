@@ -226,12 +226,15 @@ record. An incomplete history never inherits readiness from the current session.
 
 - The core's package, tests, tools and documents are under `src/summarizer`, copied from
   the proof of concept at `362fd15`. Its history, boards and data stayed there.
-- `summarizer.index`: `sessions`, `units`, `names` and `words`, written by the daemon when
-  `summarizer serve` runs, rebuilt from journals without a model, with `summarizer search`
-  and `summarizer index status`. It holds no opinion layer yet.
+- `summarizer.index`: `sessions`, `units`, `names`, `words` and `vectors`, written by the
+  daemon when `summarizer serve` runs. The fact tables are rebuilt from journals without a
+  model and a rebuild leaves the vectors in place. `summarizer search` by name and by
+  words, `summarizer index status`, and `Index.like()` for the exact scan by vector, which
+  only compares vectors one encoder made.
 - The lookup (`summarizer.history`) is reviewed and measured offline. No server calls it.
 - The monitor still installs Summarizer `38e5bc6`. Its tests pass against the tree here.
-- Not built: `vectors`, `marks`, `removed`, compaction, retention, candidates in a packet.
+- Not built: `marks`, `removed`, compaction, retention, and candidates in a packet. No
+  search result reaches Kai yet.
 
 ## 10. Open decisions
 
