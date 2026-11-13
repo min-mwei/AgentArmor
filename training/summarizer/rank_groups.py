@@ -9,7 +9,8 @@ evidence is what summarizer.history.select() finds, in its own whole groups. A g
 taken whole or not at all, as a packet takes it. Four orders give room to the groups:
 
 - selected: as the packet does now (key evidence, what bears, then context);
-- recent: the group whose newest entry is nearest the call first;
+- recent: the group whose newest event is nearest the call first, by the campaign's own
+  order of events, which no replay's clock changes;
 - words: full-text score (SQLite FTS5, bm25) of a group's text against the call's own text;
 - encoder: the largest similarity of the call, as a query, to one of the group's entries.
 
@@ -40,6 +41,7 @@ from summarizer.text import entry_lines
 
 ORDERS = ("selected", "recent", "words", "encoder")
 TIE = 50  # characters allowed for an alias and the words of a tie on each line
+TOPS = (5, 10, 20)  # how many leads from outside the found groups are looked at
 
 
 def found_groups(laid, summaries):
@@ -75,8 +77,23 @@ def labels(laid, summaries):
     return wanted
 
 
-def measured(found, call, summaries, embedder):
-    """Each group with its items, cost, newest time, text and the two scores."""
+def happened(laid):
+    """When an event of a session happened among all the sessions' events: the turn of the
+    layout's schedule it fell in, then its own number. A campaign's own order, the same in
+    every replay; the time a hook stamped depends on how fast the replay ran (MR153)."""
+    turns = list(enumerate(laid["schedule"]))
+
+    def at(key, seq):
+        turn = next(
+            (t for t, (name, start, stop) in turns if name == key and start < seq <= stop), -1
+        )
+        return (turn, seq)
+
+    return at
+
+
+def measured(found, call, summaries, embedder, when):
+    """Each group with its items, cost, newest event, text and the two scores."""
     texts, cost, stamp = {}, Counter(), {}
     for key in {item["key"] for item in found["items"]}:
         for about, line in entry_lines(summaries[key]):
@@ -84,7 +101,7 @@ def measured(found, call, summaries, embedder):
         for entry in summaries[key]["entries"]:
             at = (key, entry["seq"], entry["type"])
             texts[at] = (texts.get(at, "") + " " + str(entry.get("text") or "")).strip()
-            stamp[at] = max(stamp.get(at, 0.0), float(entry.get("ts") or 0.0))
+            stamp[at] = when(key, entry["seq"])
     groups = []
     for order, group in enumerate(found["groups"]):
         items = [
@@ -104,7 +121,7 @@ def measured(found, call, summaries, embedder):
     db.execute("CREATE VIRTUAL TABLE docs USING fts5(body, tokenize = 'unicode61')")
     for index, group in enumerate(groups):
         group["encoder"] = max(float(next(scores)) for _ in group["items"])
-        group["recent"] = max(stamp.get(at, 0.0) for at in group["items"])
+        group["recent"] = max(stamp.get(at, (-1, 0)) for at in group["items"])
         body = " ".join(texts.get(at, "") for at in group["items"])
         db.execute("INSERT INTO docs(rowid, body) VALUES (?, ?)", (index, body))
     words = {w.strip(".-_") for w in history._WORD.findall(query)}
@@ -124,9 +141,48 @@ def _costed(groups, cost):
     return groups
 
 
+def outside(found, call, summaries, others, embedder):
+    """Every entry of the earlier sessions that is in no found group, with its rank by
+    full-text score and by the encoder's similarity to the call: {(key, seq, type):
+    {"words": rank or None, "encoder": rank}} and the size of the pool. These are leads
+    from outside what the exact ties reach. A rank says where an entry would stand
+    among candidates, and nothing of whether it is evidence."""
+    inside = {(item["key"], item["seq"], item["type"]) for item in found["items"]}
+    pool = {}
+    for key in others:
+        for entry in summaries[key]["entries"]:
+            at = (key, entry["seq"], entry["type"])
+            if at not in inside and str(entry.get("text") or "").strip():
+                pool[at] = (pool.get(at, "") + " " + str(entry["text"])).strip()
+    if not pool:
+        return {}, 0
+    ats = sorted(pool)
+    query = str(call.get("text") or "")
+    scores = np.asarray(embedder.documents([pool[at] for at in ats])) @ np.asarray(
+        embedder.queries([query])[0]
+    )
+    by_encoder = [ats[i] for i in np.argsort(-scores, kind="stable")]
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE VIRTUAL TABLE docs USING fts5(body, tokenize = 'unicode61')")
+    db.executemany("INSERT INTO docs(rowid, body) VALUES (?, ?)", enumerate(pool[at] for at in ats))
+    words = {w.strip(".-_") for w in history._WORD.findall(query)}
+    match = " OR ".join('"' + word.replace('"', "") + '"' for word in sorted(words) if word)
+    rows = []
+    if match:
+        asked = "SELECT rowid FROM docs WHERE docs MATCH ? ORDER BY bm25(docs), rowid"
+        rows = [row for (row,) in db.execute(asked, (match,))]
+    by_words = [ats[row] for row in rows]
+    ranks = {at: {"words": None, "encoder": by_encoder.index(at) + 1} for at in ats}
+    for place, at in enumerate(by_words, 1):
+        ranks[at]["words"] = place
+    return ranks, len(ats)
+
+
 def ordered(groups, order):
     if order == "selected":
         return sorted(groups, key=lambda g: (not g["key"], not g["bears"], g["selected"]))
+    if order == "recent":
+        return sorted(groups, key=lambda g: g["recent"], reverse=True)
     return sorted(groups, key=lambda g: (-g[order], g["selected"]))
 
 
@@ -153,19 +209,37 @@ def main(argv=None):
     told = {"runs": 0, "facts": 0, "facts_in_a_found_group": 0, "facts_with_no_entry": 0}
     kept = {(order, room): Counter() for order in ORDERS for room in args.room}
     pairs = {(order, room): {} for order in ORDERS for room in args.room}
+    leads = {"facts_outside_every_group": 0, "pool_sizes": []}
+    leads |= {f"{order}_within_{top}": 0 for order in ("words", "encoder") for top in TOPS}
+    leads["either_within_10"] = 0
     for campaign in campaigns:
         kind = (campaign.get("story") or {}).get("kind", "?")
         for agent in cc.AGENTS:
             laid = cc.layout(campaign, agent)
             summaries, _ = cc.replay(laid, runtime, **cc.VARIANTS[0])
             found, call = found_groups(laid, summaries)
-            groups = measured(found, call, summaries, runtime.embedder)
+            groups = measured(found, call, summaries, runtime.embedder, happened(laid))
             wanted = labels(laid, summaries)
             everything = {at for group in groups for at in group["items"]}
             told["runs"] += 1
             told["facts"] += len(wanted)
             told["facts_with_no_entry"] += sum(at is None for at in wanted)
             told["facts_in_a_found_group"] += sum(at in everything for at in wanted)
+            missed = [at for at in wanted if at is not None and at not in everything]
+            if missed:
+                keys = [p["id"] for p in laid["parts"] if not p["later"] and not p["mine"]]
+                ranks, size = outside(found, call, summaries, keys, runtime.embedder)
+                leads["pool_sizes"].append(size)
+                for at in missed:
+                    leads["facts_outside_every_group"] += 1
+                    rank = ranks.get(at, {"words": None, "encoder": None})
+                    for order in ("words", "encoder"):
+                        for top in TOPS:
+                            leads[f"{order}_within_{top}"] += bool(
+                                rank[order] and rank[order] <= top
+                            )
+                    near = [rank[order] for order in ("words", "encoder") if rank[order]]
+                    leads["either_within_10"] += bool(near and min(near) <= 10)
             for (order, room), count in kept.items():
                 held = taken(groups, order, room)
                 got = sum(at in held for at in wanted)
@@ -180,6 +254,9 @@ def main(argv=None):
         }
         table.setdefault(order, {})[room] = row
     told |= {"embedder": args.embedder, "made_with": runtime.identity(), "by_order_and_room": table}
+    sizes = sorted(leads.pop("pool_sizes"))
+    leads["pool_size_median"] = sizes[len(sizes) // 2] if sizes else 0
+    told["leads_from_outside_the_found_groups"] = leads
     print(json.dumps(told))
     return 0
 
