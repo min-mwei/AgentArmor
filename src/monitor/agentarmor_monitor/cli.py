@@ -186,6 +186,7 @@ def _serve(args):
     """Run the local server: Summarizer and its model, the rules, and the decision model."""
     from .daemon import Monitor
     from .decide import Decider
+    from .earlier import Shadow
     from .server import Front, InProcess, free, listen
 
     rules = _rules(args)
@@ -218,7 +219,7 @@ def _serve(args):
         args.at_once,
         mode=mode_of(args),
         made_with=runtime.identity(),
-        earlier=args.earlier_sessions == "shadow",
+        earlier=Shadow(args.max_chars) if args.earlier_sessions == "shadow" else None,
     )
     try:
         api, _ = listen(front, decider, args.port, monitor, args.model_api)

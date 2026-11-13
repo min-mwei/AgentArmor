@@ -1,31 +1,51 @@
-"""What earlier sessions hold for a proposed call, counted in shadow.
+"""What earlier sessions hold for a proposed call, counted in shadow and off the decision's path.
 
 The gate's packet for the decision model is the call's own session. This looks, beside it
 and for nobody's decision, at what Summarizer's lookup (summarizer.history) would add from
 the other sessions on this machine, and says how that went as counts: how the call would
-be routed, whether the history would be complete and why not, how much was found, how much
-found no room, how long it took. Nothing of a session's text is returned or recorded.
+be routed, whether the lookup's own history would be complete and why not, how much was
+found, how much found no room, how long it took, and how much of the other sessions it
+could read at all. Nothing of a session's text is returned or recorded.
 
 It is a measurement of the lookup on real sessions, wanted before any route policy or
-budget is fixed (the Model Reviewer's MR146). It changes no verdict, no request and no
-receipt field that a gate acts on, and a failure here is a count of one failure.
+budget is fixed (the Model Reviewer's MR146). A decision never waits for it (MR159-1): a
+decision hands over what it had read and goes on; one worker of its own does the counting,
+from a queue of fixed length, and writes a record of its own beside the session's
+detections. A queue that is full drops the offer and counts it. Its work holds no
+decision slot and reaches no verdict, request or receipt.
 
-Limits, said plainly. The other sessions are taken as their summaries stand now, with the
-entries logged after the call was proposed left out by their time: an entry's own fields
-(a call's status, say) can still say what was learned later. No session's namespace is
-known here, so every source is searched as "unresolved". Only the newest sessions are
-looked at, and how many were not is counted.
+What the counts cover is said with them (MR159-2). Every other session listed is in
+exactly one of: read, no summary or an unreadable one, a summary behind its log, nothing
+logged before the call, or beyond the cap. "complete" is the lookup's own account of the
+summaries it was given. "coverage_known" is whether every listed session could be read
+up to date: where it is false, nothing here says that earlier sessions hold nothing.
+
+LIMITS is recorded with every count, because the instrument is not a replay: the other
+sessions are taken as their summaries stand when the worker runs, with entries logged
+after the call left out by their time; no session's namespace is known; only the newest
+sessions are looked at.
 """
 
 import hashlib
+import json
+import queue
+import threading
 import time
 from pathlib import Path
 
-from summarizer.store import list_sessions, load_summary
+from summarizer.store import list_sessions, load_summary, private_dir, session_dir
 
 from summarizer import history
 
+SCHEMA = "agentarmor-earlier-sessions/v1"
+RECORDS = "earlier-sessions.jsonl"  # beside a session's detections; counts only
 NEWEST = 40  # other sessions looked at, the most recently written first
+WAITING = 32  # offers that can wait for the worker; one more is dropped and counted
+LIMITS = {
+    "other_sessions": "latest_summary_cut_at_the_calls_time",  # not a replay to the call
+    "namespaces": "unknown",
+    "newest_sessions_only": NEWEST,
+}
 
 
 def alias(agent, name):
@@ -47,12 +67,28 @@ def observed(agent, name, call_id, summary, max_chars, identity=None, newest=NEW
             return fields | {"agent": a, "session_id": n}
 
         listed = [(a, n) for a, n, _, _ in list_sessions() if (a, n) != (agent, name)]
+        sessions = {"listed": len(listed), "read": 0, "no_summary_or_unreadable": 0}
+        sessions |= {"summary_behind_its_log": 0, "nothing_before_the_call": 0}
+        sessions["beyond_the_cap"] = len(listed[newest:])
         others = []
         for a, n in listed[:newest]:
-            held = load_summary(a, n)
-            if held is None:
+            try:
+                held = load_summary(a, n)
+                entries = held["entries"] if held is not None else None
+            except Exception:
+                entries = None
+            if entries is None:
+                sessions["no_summary_or_unreadable"] += 1
                 continue
-            before = [e for e in held["entries"] if float(e.get("ts") or 0.0) <= cut]
+            before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
+            if not held.get("fresh"):
+                # What its log holds beyond the summary is not known, before the call or
+                # after: it is searched as far as it goes and counted as behind.
+                sessions["summary_behind_its_log"] += 1
+            elif not before:
+                sessions["nothing_before_the_call"] += 1
+            else:
+                sessions["read"] += 1
             if before:
                 first = min(float(e.get("ts") or 0.0) for e in before)
                 others.append((first, known(a, n, held | {"entries": before})))
@@ -61,15 +97,84 @@ def observed(agent, name, call_id, summary, max_chars, identity=None, newest=NEW
             known(agent, name, summary), call_id, others, str(Path.home()), max_chars, identity
         )
         account = view.get("history") or {}
+        unread = sessions["no_summary_or_unreadable"] + sessions["summary_behind_its_log"]
         told = {"route": view.get("route"), "route_reason": view.get("route_reason")}
         told |= {"complete": account.get("complete", True), "why": account.get("why", [])}
+        told |= {"coverage_known": unread + sessions["beyond_the_cap"] == 0}
         told |= {"sources": len(account.get("sources", ())), "lines": len(account.get("items", ()))}
         told |= {"bridges": len(account.get("bridges", ()))}
         told |= {"left_out": account.get("left_out", {})}
         told |= {"unsupported": account.get("unsupported", [])}
         told |= {"controls_not_applying": len(account.get("controls_not_applying", ()))}
-        told |= {"sessions_looked_at": len(others), "sessions_not_looked_at": len(listed[newest:])}
-        told |= {"chars": len(view["text"]), "max_chars": max_chars}
-    except Exception as error:  # a measurement beside a decision never stops the decision
+        told |= {"sessions": sessions, "chars": len(view["text"]), "max_chars": max_chars}
+    except Exception as error:  # a measurement never raises into whoever asked for it
         told = {"error": type(error).__name__}
-    return told | {"ms": round((time.monotonic() - began) * 1000)}
+    return told | {"limits": LIMITS, "ms": round((time.monotonic() - began) * 1000)}
+
+
+class Shadow:
+    """The worker that counts, and the queue a decision hands its call to without waiting."""
+
+    def __init__(self, max_chars, waiting=WAITING, newest=NEWEST):
+        self.max_chars, self.newest = max_chars, newest
+        self.offers = queue.Queue(maxsize=waiting)
+        self.counts = {"offered": 0, "dropped_queue_full": 0, "measured": 0, "failed": 0}
+        self.counts["not_measured"] = {}  # why a proposal never reached the lookup
+        self.lock = threading.Lock()
+        self.worker = threading.Thread(target=self._work, name="earlier-sessions", daemon=True)
+        self.worker.start()
+
+    def _count(self, name, why=None):
+        with self.lock:
+            if why is None:
+                self.counts[name] += 1
+            else:
+                self.counts[name][why] = self.counts[name].get(why, 0) + 1
+
+    def offer(self, agent, name, call_id, summary, identity):
+        """Hand a call over. Never waits: a full queue drops the offer and counts it."""
+        self._count("offered")
+        try:
+            self.offers.put_nowait((agent, name, call_id, summary, identity))
+        except queue.Full:
+            self._count("dropped_queue_full")
+
+    def unmeasured(self, why):
+        """A proposal that had no summary to start from: counted, so that it is not
+        taken for one about which nothing was found."""
+        self._count("not_measured", why)
+
+    def _work(self):
+        while True:
+            offered = self.offers.get()
+            if offered is None:
+                return
+            agent, name, call_id, summary, identity = offered
+            told = observed(agent, name, call_id, summary, self.max_chars, identity, self.newest)
+            self._count("failed" if "error" in told else "measured")
+            record = {"schema": SCHEMA, "ts": round(time.time(), 3), "agent": agent}
+            record |= {"session": name, "key": f"gate:{call_id}", "call_sha256": identity}
+            try:
+                directory = session_dir(agent, name)
+                private_dir(directory)
+                with open(directory / RECORDS, "a", encoding="utf-8") as out:
+                    out.write(json.dumps(record | told, separators=(",", ":")) + "\n")
+            except Exception:
+                self._count("failed")
+            finally:
+                self.offers.task_done()
+
+    def about(self):
+        with self.lock:
+            told = json.loads(json.dumps(self.counts))
+        return told | {"waiting": self.offers.qsize(), "queue": self.offers.maxsize}
+
+    def drain(self, timeout=10.0):
+        """Wait until what was offered has been counted. For tests and for an orderly stop."""
+        deadline = time.monotonic() + timeout
+        while self.offers.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return not self.offers.unfinished_tasks
+
+    def close(self):
+        self.offers.put(None)
