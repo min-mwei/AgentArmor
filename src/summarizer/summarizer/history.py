@@ -1183,11 +1183,16 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
                 take(entry, "recent", group)
                 came_back(entry, group)
             elif names and other["cwd"] == cwd:
-                # Another call of that session that names what this call names: recent.
+                # Another call of that session that names what this call names: recent,
+                # with what came back. A program run on the very file this call sends or
+                # runs said something of that file, and its words are in its result, not
+                # in its command (development file 003, stage 2: a classifier's verdict
+                # on the file was left behind while its command line was shown).
                 group = f"{other['key']}:recent:{entry['seq']}"
                 groups.setdefault(group, {"id": group, "kind": "recent", "key": False})
                 groups[group].setdefault("bears", False)
                 take(entry, "recent", group)
+                came_back(entry, group)
             continue
         linked = (entry.get("resembles") or {}).get("seq")
         # A write bears on the call's route when something marks it: a level of its own,

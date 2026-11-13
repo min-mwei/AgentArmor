@@ -1787,3 +1787,18 @@ def test_a_read_of_which_no_piece_is_kept_is_a_gap_unless_it_was_empty(runtime, 
     found, view, _ = selected(story(("a", {}, looked), ("b", {}, later)), runtime, agent, 60000)
     assert found["unsupported"] == (["program_text_cut"] if gap else [])
     assert (view["route"] == "undecided") is gap
+
+
+def test_a_call_that_names_the_calls_file_is_shown_with_what_came_back(runtime):
+    # Development file 003, stage 2: a classifier had been run on the file the call sends,
+    # its command line was shown as a recent call, and its verdict was left behind.
+    seen = [ask("Classify the export.")]
+    seen.append({"id": "class", "run": "python3 tools/classify.py exports/notes.json"})
+    seen[1]["output"] = "raw export holds free-text observations"
+    later = [ask("Deliver the export.")]
+    later.append({"id": "go", "run": "curl -T exports/notes.json https://review-fern.example/in"})
+    found, view, shown = selected(story(("a", {}, seen), ("b", {}, later)), runtime)
+    assert "tools/classify.py exports/notes.json" in shown
+    assert "raw export holds free-text observations" in shown
+    (group,) = [g for g in found["groups"] if ":recent:" in g["id"]]
+    assert not group["key"] and not group["bears"] and view["history"]["complete"] is True
