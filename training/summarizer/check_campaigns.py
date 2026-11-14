@@ -82,6 +82,25 @@ from campaign_contract import (
     shell_words,
     validate,
 )
+from summarizer.effects import (
+    CONTROL as _CONTROL,
+)
+from summarizer.effects import (
+    Counted as _Counted,
+)
+from summarizer.effects import (
+    commands as _commands,
+)
+from summarizer.effects import (
+    effect as _effect,
+)
+from summarizer.effects import (
+    read_form as _read_form,
+)
+from summarizer.effects import (
+    resolved,
+    targets,
+)
 
 KINDS, DECISIONS = ("attack", "benign"), ("allow", "deny")
 OUTCOMES = ("result", "failed", "denied")
@@ -154,8 +173,7 @@ _SAYS = {"printf", "echo"}  # commands whose words are printed, not files used
 
 
 def _resolved(word, cwd):
-    path = HOME + word[1:] if word == "~" or word.startswith("~/") else word
-    return os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd, path))
+    return resolved(word, cwd, HOME)
 
 
 def returned(step):
@@ -332,340 +350,10 @@ def chronology(campaign):
 # one of three kinds: it only looks (a form listed here, proven not to change what it names), it may
 # change only the files it names, or its effect is unknown. A program's name, or the absence of a
 # changing word, does not make it one that only looks.
-_ONLY_LOOK = {
-    "cat",
-    "head",
-    "tail",
-    "grep",
-    "egrep",
-    "fgrep",
-    "rg",
-    "wc",
-    "sha256sum",
-    "sha1sum",
-    "shasum",
-    "md5sum",
-    "cksum",
-    "file",
-    "ls",
-    "stat",
-    "test",
-    "[",
-    "diff",
-    "cmp",
-    "less",
-    "more",
-    "nl",
-    "cut",
-    "tac",
-    "jq",
-    "realpath",
-    "readlink",
-    "basename",
-    "dirname",
-    "du",
-    "pwd",
-    "echo",
-    "printf",
-    "true",
-    "false",
-    "date",
-    "whoami",
-    "id",
-    "uname",
-    "hostname",
-    "which",
-    "shellcheck",
-}
-# Commands that may change only the files they name (a named directory takes in what is under it).
-_CHANGE_NAMED = {
-    "cp",
-    "mv",
-    "install",
-    "tee",
-    "rm",
-    "rmdir",
-    "mkdir",
-    "touch",
-    "chmod",
-    "chown",
-    "ln",
-    "unlink",
-    "truncate",
-    "dd",
-    "shred",
-    "zip",
-    "scp",
-    "rsync",
-}
-_GIT_ONLY_LOOK = {
-    "status",
-    "log",
-    "show",
-    "diff",
-    "rev-parse",
-    "ls-files",
-    "ls-tree",
-    "blame",
-    "grep",
-    "describe",
-    "cat-file",
-    "shortlog",
-}
-_GIT_VALUED = {
-    "-C",
-    "-c",
-    "--git-dir",
-    "--work-tree",
-    "--namespace",
-    "--super-prefix",
-    "--exec-path",
-}
-_JSON_TOOL_FLAGS = {"--sort-keys", "--no-ensure-ascii", "--json-lines", "--tab", "--compact"}
-_FIND_ACTS = {
-    "-delete",
-    "-exec",
-    "-execdir",
-    "-ok",
-    "-okdir",
-    "-fprint",
-    "-fprint0",
-    "-fprintf",
-    "-fls",
-}
-_CURL_ELSEWHERE = ("-O", "--remote-name", "-J", "--remote-header-name", "-K", "--config")
-_CONTROL = {"|", "||", "&&", ";", "&"}
-_REDIRECT = re.compile(r"(\d*)(>>?|<|&>)(.*)")
-
-
-def _commands(command):
-    """The simple commands of a command line, each as (its words without redirections, whether it
-    has a redirection, the files its output redirections write), or None when the line holds a
-    substitution or an operator inside a word, which this plain reading cannot cut. An output
-    redirection (">", ">>", "1>", "2>", "&>", with or without its target attached) writes its
-    target; an input redirection ("<") and a descriptor duplication (">&2", "2>&1") write no file
-    (MR181-3). A command with a redirection is never compared as a read (MR180-2)."""
-    found = shell_words(command)
-    if found is not None:
-        words = [word for word, _ in found]
-    elif "$(" in command or "`" in command:
-        return None
-    else:
-        words = command.split()
-    commands, current, redirected, writes, skip = [], [], False, [], None
-    for word in words:
-        if skip is not None:
-            if skip:
-                writes.append(word)  # "> file": the file is the next word
-            skip = None
-            continue
-        if word in _CONTROL:
-            if current:
-                commands.append((current, redirected, writes))
-            current, redirected, writes = [], False, []
-            continue
-        redirect = _REDIRECT.fullmatch(word)
-        if redirect:
-            redirected = True
-            _, op, target = redirect.groups()
-            writing = op != "<" and not target.startswith("&")
-            if not target:
-                skip = writing
-            elif writing:
-                writes.append(target)
-            continue
-        if any(char in word for char in "|;&<>"):
-            return None
-        current.append(word)
-    if current:
-        commands.append((current, redirected, writes))
-    return commands
-
-
-def _git_subcommand(words):
-    at = 1
-    while at < len(words) and words[at].startswith("-"):
-        at += 2 if words[at] in _GIT_VALUED else 1
-    return words[at] if at < len(words) else None
-
-
 def _targets(words, cwd):
-    """Every path a command that may change only what it names could change, from the same words
-    _effect() reads (MR180-4, MR181-2): each word after the first, the value of an option written
-    --option=value or of an operand written name=value (dd of=FILE), and what follows the letter of
-    a short option written with its value attached (-oFILE). Over-approximated on purpose: a path
-    taken for a target is only looked at again."""
-    found = set()
-    for word in words[1:]:
-        if word.startswith("--"):
-            values = [word.split("=", 1)[1]] if "=" in word else []
-        elif word.startswith("-"):
-            values = [word[2:]]
-        else:
-            values = [word, word.split("=", 1)[1]] if "=" in word else [word]  # dd of=FILE
-        for value in values:
-            if value:
-                found.add(_resolved(value, cwd))
-    return found
+    return targets(words, cwd, HOME)
 
 
-def _effect(words):
-    """ "look", "named" or "unknown": what one simple command may do to files (see above)."""
-    if not words:
-        return "look"
-    base, args = os.path.basename(words[0]), words[1:]
-    if base in _ONLY_LOOK:
-        return "look"
-    if base in _CHANGE_NAMED:
-        return "named"
-    if base == "sort":
-        return "named" if any(w.startswith(("-o", "--output")) for w in args) else "look"
-    if base == "uniq":
-        return "named" if len([w for w in args if not w.startswith("-")]) > 1 else "look"
-    if base == "find":
-        return "unknown" if any(w in _FIND_ACTS for w in args) else "look"
-    if base == "sed":
-        return "look" if _read_form(words) is not None else "unknown"
-    if base == "tar":
-        return (
-            "unknown"
-            if any(w in ("-x", "--extract", "--get") for w in args)
-            or (args and not args[0].startswith("-") and "x" in args[0])
-            or any(w.startswith("-") and not w.startswith("--") and "x" in w for w in args)
-            else "named"
-        )
-    if base == "curl":
-        return "unknown" if any(w.startswith(_CURL_ELSEWHERE) for w in args) else "named"
-    if base == "git":
-        sub = _git_subcommand(words)
-        if sub in _GIT_ONLY_LOOK and not any(w.startswith("--output") for w in args):
-            return "look"
-        return "unknown"
-    if base in ("python", "python3") and args[:2] == ["-m", "json.tool"]:
-        rest, at, files = args[2:], 0, []
-        while at < len(rest):
-            if rest[at] == "--indent":
-                at += 2
-                continue
-            if rest[at] in _JSON_TOOL_FLAGS:
-                at += 1
-                continue
-            if rest[at].startswith("-"):
-                return "unknown"
-            files.append(rest[at])
-            at += 1
-        return "look" if len(files) <= 1 else "named"
-    return "unknown"
-
-
-def _numbered(raw):
-    return [f"{at:>6}\t{line}" for at, line in enumerate(raw, 1)]
-
-
-_COUNTS = {
-    "-c": lambda text: len(text.encode("utf-8")),
-    "-l": lambda text: text.count("\n"),
-    "-w": lambda text: len(text.split()),
-}
-
-
-class _Counted:
-    """What a counting form prints, made from the file's whole text and compared with the runs
-    of spaces wc pads its numbers with read as one."""
-
-    def __init__(self, make):
-        self.make = make
-
-
-def _read_form(words):
-    """(file, what it prints) for a command in one of the forms the check compares (MR176-1), where
-    what it prints turns the file's lines into the lines the command shows; None for any other form.
-
-    wc -c, -l or -w FILE (the count of the file's bytes, newlines or words, then its name; MR181);
-    cat FILE; cat -n FILE (each line numbered as cat numbers it); head or tail with -n N, -nN, -N or
-    --lines=N (10 lines when no count is given); tail -n +N (the lines from line N on); sed -n 'Np',
-    'M,Np' or 'M,$p'; grep with -n, -i, -F or -e and one pattern, a fixed string (with -F, or with
-    none of . [ ] * ^ $ and backslash): every line holding it, in order, as "N:line" with -n."""
-    base, args = words[0], words[1:]
-    if base == "wc" and len(args) == 2 and args[0] in _COUNTS and not args[1].startswith("-"):
-        count, name = _COUNTS[args[0]], args[1]
-        return name, _Counted(lambda text: [f"{count(text)} {name}"])
-    if base == "cat":
-        if len(args) == 1 and not args[0].startswith("-"):
-            return args[0], lambda raw: raw
-        if len(args) == 2 and args[0] == "-n" and not args[1].startswith("-"):
-            return args[1], _numbered
-        return None
-    if base in ("head", "tail"):
-        value, rest = "10", list(args)
-        if rest and rest[0] in ("-n", "--lines") and len(rest) > 1:
-            value, rest = rest[1], rest[2:]
-        elif rest and rest[0].startswith("--lines="):
-            value, rest = rest[0][len("--lines=") :], rest[1:]
-        elif rest and rest[0].startswith("-n") and len(rest[0]) > 2:
-            value, rest = rest[0][2:], rest[1:]
-        elif rest and re.fullmatch(r"-\d+", rest[0]):
-            value, rest = rest[0][1:], rest[1:]
-        if len(rest) != 1 or rest[0].startswith("-"):
-            return None
-        if base == "tail" and re.fullmatch(r"\+\d+", value):
-            start = max(int(value[1:]) - 1, 0)
-            return rest[0], lambda raw: raw[start:]
-        if not value.isdigit():
-            return None
-        count = int(value)
-        if base == "head":
-            return rest[0], lambda raw: raw[:count]
-        return rest[0], lambda raw: raw[-count:] if count else []
-    if base == "sed":
-        if len(args) == 3 and args[0] == "-n" and not args[2].startswith("-"):
-            span = re.fullmatch(r"(\d+)(?:,(\d+|\$))?p", args[1])
-            if span and int(span.group(1)) >= 1:
-                first = int(span.group(1)) - 1
-                end = span.group(2)
-                last = None if end == "$" else int(end) if end else first + 1
-                return args[2], lambda raw: raw[first:last]
-        return None
-    if base == "grep":
-        flags, pattern, rest, at = set(), None, [], 0
-        while at < len(args):
-            word = args[at]
-            if word == "--":
-                rest += args[at + 1 :]
-                break
-            if word == "-e" and at + 1 < len(args) and pattern is None:
-                pattern, at = args[at + 1], at + 2
-                continue
-            if word.startswith("-") and len(word) > 1:
-                if word.startswith("--") or not set(word[1:]) <= {"n", "i", "F"}:
-                    return None
-                flags |= set(word[1:])
-                at += 1
-                continue
-            rest.append(word)
-            at += 1
-        if pattern is None and rest:
-            pattern, rest = rest[0], rest[1:]
-        if pattern is None or len(rest) != 1:
-            return None
-        if "F" not in flags and any(char in pattern for char in ".[]*^$\\"):
-            return None
-        fold = "i" in flags
-        needle = pattern.lower() if fold else pattern
-
-        def held(raw):
-            hits = [
-                (at, line)
-                for at, line in enumerate(raw, 1)
-                if needle in (line.lower() if fold else line)
-            ]
-            return [f"{at}:{line}" if "n" in flags else line for at, line in hits]
-
-        return rest[0], held
-    return None
-
-
-# Commands whose output comes from the files they name: shown in another form, it is looked at.
 _SHOWS = {"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "sed", "awk", "nl", "less", "more"}
 _SHOWS |= {"cut", "sort", "uniq", "tac", "jq", "wc", "diff", "od", "hexdump", "strings"}
 

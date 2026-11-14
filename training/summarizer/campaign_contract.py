@@ -110,6 +110,7 @@ from common import read_jsonl
 from context_eval import AGENTS, CWD, HOME, held
 from score_eval import code_version
 from summarizer.daemon import Daemon
+from summarizer.effects import shell_words  # noqa: F401  (read here and re-exported)
 from summarizer.hook import Scripted, handle
 from summarizer.store import EVENTS, load_summary, session_dir
 from summarizer.text import digest, entry_lines
@@ -623,84 +624,7 @@ def call_uses(call, cwd):
     return None
 
 
-def shell_words(command):
-    """The words of one command line as a shell cuts them, each as (the word with its quotes
-    and backslashes taken off, whether it begins with a tilde the shell expands to the home
-    directory). None when the line is outside what this reads.
-
-    Written for this harness and apart from the builder's reader. Whether a tilde is
-    expanded is a fact about one place in the command and is kept with the word it is in:
-    it is never worked out afterwards from how the word reads once its quotes are gone,
-    since two words can then read alike and differ in this.
-
-    A tilde is expanded when it is the first character of a word and neither it nor the
-    slash after it is quoted or escaped ("~" alone, "~/x", and "~/'x y'"). A tilde with a
-    quote or a backslash before its first slash ("'~/x'", "~'/x'", "\\~/x") stays a
-    tilde. "~name" is another user's home, which is not read here. Outside what this
-    reads: an unclosed quote; a $ or a backquote outside single quotes; an unquoted ; | &
-    < > ( ) other than one "&&", which is returned as a word; and a # that begins a word,
-    where a comment starts.
-    """
-    words, word, state, quote, at = [], None, "", "", 0
-
-    def close():
-        nonlocal word, state
-        if word is not None:
-            words.append(("".join(word), state in ("open", "home")))
-        word, state = None, ""
-
-    def begin():
-        nonlocal word, state
-        if word is None:
-            word, state = [], "plain"
-
-    while at < len(command):
-        char = command[at]
-        if quote == "'":
-            if char == "'":
-                quote = ""
-            else:
-                word.append(char)
-        elif quote == '"':
-            if char == '"':
-                quote = ""
-            elif char == "\\" and command[at + 1 : at + 2] in ('"', "\\", "$", "`"):
-                at += 1
-                word.append(command[at])
-            elif char in "$`":
-                return None
-            else:
-                word.append(char)
-        elif char in "'\"" or (char == "\\" and at + 1 < len(command)):
-            begin()
-            if state == "open":  # quoted or escaped before the first slash: no expansion
-                state = "plain"
-            if char == "\\":
-                at += 1
-                word.append(command[at])
-            else:
-                quote = char
-        elif char.isspace():
-            close()
-        elif command[at : at + 2] == "&&":
-            close()
-            words.append(("&&", False))
-            at += 1
-        elif char in ";|&<>()`$" or (char == "#" and word is None):
-            return None
-        elif word is None:
-            word, state = [char], "open" if char == "~" else "plain"
-        else:
-            if state == "open":
-                if char != "/":
-                    return None  # "~name": another user's home
-                state = "home"
-            word.append(char)
-        at += 1
-    if quote:
-        return None
-    close()
-    return words
+# shell_words lives in the runtime now (summarizer.effects), one reading for every caller.
 
 
 def bridge_problem(laid, part, bridge, rules=9):
