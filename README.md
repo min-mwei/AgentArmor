@@ -24,7 +24,8 @@ experimental.
 
 ## Run Kai
 
-Use Python 3.11–3.13 on a Linux GPU host supported by [vLLM](https://docs.vllm.ai/en/v0.33.0/).
+The existing vLLM backend uses Python 3.11–3.13 on a Linux GPU host supported by
+[vLLM](https://docs.vllm.ai/en/v0.33.0/).
 From the repository root:
 
 ```sh
@@ -45,7 +46,10 @@ curl --fail http://127.0.0.1:8009/health
 
 The health response identifies Kai, the loaded revision, and its readiness. See the
 [serving guide](src/vllm/README.md) for local exports, offline startup, request limits, and the model contract.
-vLLM is the serving backend; Apple silicon is supported for development and separate MLX training, not GPU serving.
+Local Apple Silicon serving through MLX or vLLM Metal is the user-selected direction as of
+2026-11-14. Its adapter and numerical qualification are still pending; the command above
+describes the existing Linux backend. The [whole-stack plan](docs/stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
+keeps the same Kai pointer head, verified export, request format and monitor for the local backend.
 
 ## Evaluate a document
 

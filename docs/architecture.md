@@ -49,6 +49,15 @@ must keep what the model already does on single tool calls and on injected conte
 | Serving | `src/vllm` (`agentarmor_vllm`) | Serves Kai-4B | Sees a session except through a request |
 | Host facts | `src/hostfacts` | Deterministic facts shared with Kai's training | |
 
+The user selected local Apple Silicon serving through vLLM Metal or MLX on 2026-11-14,
+superseding the earlier vLLM-only restriction. This changes the serving backend, not the
+component boundaries. Add the local backbone behind the existing verified export loader,
+request encoder, trained pointer head and API; do not create another hook, session store
+or decision format. Preserve independent question rows, recurrent-state isolation,
+temperature, escaping, evidence offsets and whole-input admission. The local adapter and
+its numerical qualification are pending; [the qualification plan](stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
+sets the bounded implementation and actual-model checks.
+
 ## 2. Rules the design is held to
 
 1. **The hook is an observer.** It appends to its session's journal and returns. It uses

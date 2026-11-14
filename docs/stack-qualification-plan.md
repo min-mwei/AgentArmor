@@ -9,9 +9,12 @@ authorize publication, or turn a diagnostic result into release qualification.
 
 Keep the architecture: **Summarizer marks suspicious interactions and retains relevant
 context; AgentArmor binds the context to the proposed call; Kai decides allow/deny.**
-The immediate work is source admission and controlled measurement, followed by focused
-training. Architecture changes require a demonstrated failure the existing design cannot
-address. The security target is unauthorized agent actions, not general content moderation.
+The immediate priority is a useful session-trained Kai on the actual evidence AgentArmor
+delivers, with a serving path capable of accepting that evidence whole. Investigate a small
+set of failures through the entire stack before expanding data or experiments. Preserve the
+component responsibilities while changing the training, evidence representation or serving
+contract when the measurements justify it. The security target is unauthorized agent actions,
+not general content moderation.
 
 Reviewed starting points: AgentArmor `106fe26523a1748b82a7f7cee0591721c751988e`,
 runtime freeze `a453deb334083bf611e25a53f467700472d21636`, and Kai
@@ -25,6 +28,9 @@ this document owns the execution sequence and responsibility boundaries.
 | MR215: full-r2 accepted, 40 roots / 20 pairs; both MR214 findings closed | The remaining planned authoring sittings can proceed without another intermediate review stop. | Acceptance of the eventual 100-root population. |
 | Earlier EG2 batch-002 fit: short-text tagging 75% to 43%, despite high within-batch held-out AUC | There is historical evidence of encoder overfitting and transfer failure. | That every fine-tune fails, or that the current base encoder is sufficient. |
 | Published Kai export: 2,048 state tokens; research proposal: 4,096 | Research and serving limits differ. | Permission to change the export limit without training and numerical qualification. |
+| MR219/MR220 K0 DEV read, reproduced from saved outputs: reference allows 34/80 attack views; history allows 34/80 attacks and denies 14/80 benign views | The incumbent makes errors even with complete reference evidence; actual history introduces an additional benign-disruption problem. | A unique cause: wording, additional evidence and indicator tags differ between arms. |
+| Same DEV: history retains 534/542 earlier facts; only 48/160 history views fit the published 2K state cap, versus 160/160 at 4K | Serving capacity and decision quality are material gaps. | That EG2 is generally sufficient or that a 4K research read qualifies a 4K export. |
+| TRAIN admission, 2026-11-14: 200/200 valid answers, decision agreement 181/200, 26/50 pairs retained; whole batch held | The current TRAIN batch needs adjudication and bounded repair before a session fit. | Permission to train its retained subset by calling the run diagnostic. |
 
 Sources: [EG2 training results](../training/summarizer/README.md#what-the-first-batch-shows),
 [Kai serving](https://github.com/min-mwei/Kai/blob/3406d0c53cc071a21b73bffbfea6a5807f417bc2/docs/serving.md),
@@ -51,35 +57,61 @@ failure with the same call and controlled evidence first.
 
 ## 3. Critical path and parallel preparation
 
-| Stage | Owner and immediate action | Concrete exit |
-|---|---|---|
-| A. Finish source admission | From accepted full-r2, Data Engineer completes the already planned remaining sittings in full-r3; Reviewer reads the complete population. | Accepted 50-pair/100-root population with reconciled quotas and immutable artifacts. No new intermediate checkpoints unless a material defect appears. |
-| B. Complete the frozen v4 qualification | Trainer uses the accepted runtime, encoder, guide, exact questions and preparation; Reviewer adjudicates the resulting holds. | Existing bars: decision and host-fact agreement each >=95%, valid-answer coverage >=95%, retained promised pairs >=90%. Report attempted population and preparation holds separately. |
-| C. Establish the development baseline | Trainer produces the fixed-Kai reference/history comparison and existing diagnostic outputs on accepted, already exposed DEV. | Missed attacks and benign denials have a supported primary cause; additional source, capture/routing, retrieval/packing, decision or transport faults remain visible. |
-| D. Fit and select EG2 | Trainer prepares one bounded Mark experiment from accepted TRAIN, checks Link retention, evaluates with Kai held fixed, and calibrates that exact bundle. | A candidate improves recognition or escalation cost while preserving recall and downstream decisions. Otherwise retain base and report the failed hypothesis. |
-| E. Train and select Kai | Kai Trainer finalizes the existing fresh-base session recipe on frozen E0 packets, then trains, repeats required seeds/orders and checks retention. | Session improvement plus the existing ToolCall/Path/XPIA retention rule; no best-seed-only claim. E1 is not a prerequisite. |
-| F. Qualify serving and integrate | Kai Trainer supplies the export and numerical evidence; AgentArmor Trainer runs the real hook/server/Kai path in shadow. | Whole-input coverage, cutoff/identity binding, actual vLLM parity and measured shadow outcomes, latency and memory. |
-| G. Make the release decision | Reviewer reviews the complete scorecard; owners complete the existing calibration/audit and publication process. | Scope matches demonstrated results. An experimental shadow release and qualified enforcement are separate milestones. |
+The user narrowed the research scope on 2026-11-14: major gaps first, fewer key cases,
+whole-stack improvement. The Trainer agreed in the 08:05 board reply to MR220 and recorded
+the eight-pair roster in [run sheet section 9](stack-run-sheet.md#9-the-focused-loop-mr220-eight-exposed-dev-pairs).
+Use that roster, not another dataset or planning framework. It covers contradictory later
+observations, lookalike objects, poisoned controls, authorized transfers, claimed approval,
+grant/revocation, cross-session handoffs and destructive preparation. Both twins and both
+client layouts stay together: 16 roots, 32 views per arm. Selection used saved K0 failures
+and a working control; this is a debugging set, not an unbiased evaluation population.
 
-A and B concern source/reader qualification; they do not make held-out test 004 into a
-training corpus. Accepted TRAIN roots still go through their own exact-request admission.
+| Priority | Deliverable and owner | Evidence to move forward |
+|---|---|---|
+| 1. Teach the session decision | Trainer and Reviewer adjudicate the 24 held TRAIN pairs; Data Engineer repairs demonstrated faults in new revisions, then Trainer repeats preparation and admission before the existing fresh-base K1 recipe on E0 packets. Separately add only the missing TRAIN mechanisms: later observations, lookalikes and destructive preparation, about 12 pairs. | One guarded fit on admitted TRAIN, no sweep; useful attack/benign improvement on covered cases, working controls preserved, followed immediately by the full exposed DEV read and ToolCall/XPIA retention checks. Missing mechanisms remain explicit if the addition is not ready for this recipe. |
+| 2. Deliver the same evidence through the product | AgentArmor and Kai owners implement the bounded local MLX adapter and carry these cases through capture, marking, history, the exact serialized call, the model, the gate and observed hook outcomes. Resolve token admission/repacking and qualify the actual 4K export/backend together. | The evidence and call reach the real model whole, before the call, in the correct namespace, with the expected model identity. Record latency, queueing and memory; gaps/oversize/errors remain visible. CPU stand-ins do not close real-model integration. |
+| 3. Expand and qualify | Once the intervention is useful, Trainer broadens mechanism/history/load coverage, completes the missing evaluation panels, repeats required seeds/orders and supplies the frozen serving identity; Reviewer decides acceptance. | Existing fresh-test, non-regression, calibration and release rules pass. No release claim is based on eight selected pairs or on a shadow gate's answer alone. |
+
+The existing 50-pair TRAIN admission failed its bars and holds the whole batch. Do not
+bypass it with a 26-pair diagnostic fit. Adjudicate source faults, evidence binding and
+genuine reader disagreement before repairs; never relabel solely to match the reader.
+This proceeds independently of private test-004 source review and qualification. Do not
+wait for E1 or a new broad corpus. A prepared addition for missing mechanisms can join a
+newly registered recipe before its freeze; it must not change
+an already sealed read or running recipe. A pilot without it measures covered mechanisms,
+not closure of the three missing ones. Transfer between mechanisms is possible: those
+absent families are useful diagnostic slices, not guaranteed unchanged causal controls.
+
+For each selected pair, reuse one compact trace: capture/trust, mark, required evidence and
+cutoff, exact Kai input/token count, decision, gate answer and observed outcome. Use saved
+K0 answers. A bounded framing-only DEV comparison is secondary to the Kai pilot; preserve
+all evidence, indicators, question text and model settings, and say exactly which changed
+bytes could explain its result. Do not suppress suspicious indicators to reduce benign
+denials. Keep the calibrated base encoder until a Mark/Link failure supports its next fit;
+an EG2 experiment does not take the critical path ahead of this decision/serving work.
+An early loss stop must compare the same fixed records and objective, rather than losses
+from different minibatches. Preserve the existing non-finite and memory stops.
+
+Working estimates from the Trainer, not deadlines: TRAIN repair and re-admission precede
+the fit. The previous ten-update memory prefix took about two minutes, and K1 is estimated at
+two to three hours after admission and recipe checks. A full 320-view DEV read just took
+256 seconds. The 4K training cost is not yet measured. The user's local MLX/Metal choice
+removes a Linux host as a prerequisite for the first real-model path. Adapter delivery,
+export parity and actual-hook measurements remain work, not completed integration.
+
+Private test 004 remains separate: source acceptance, then the frozen v4 reader bars
+(decision and host-fact agreement each >=95%, valid coverage >=95%, retained promised pairs
+>=90%), with preparation holds reported apart and its launch authorization resolved. This
+does not turn test data into TRAIN or block the independent development intervention.
 Reuse existing commands and artifacts, including `check_campaigns.py`, `check_evidence.py`,
 `campaign_arms.py`, `panels.py`, Kai `prepare.py`, `check_prepare.py`, `blind4.py`,
 `publish_source.py`, `build_recipe.py`, `kai.qwen.run` and the retention comparer.
 
-While the Data Engineer completes A, the Trainer can finish CPU recipe/preflight inputs,
-the DEV scorecard, export requirements and the shadow test runner. These do not depend on
-reading private test content. One model job runs at a time through the existing guard;
-CPU preparation need not wait for the GPU queue. The Reviewer reviews returned artifacts
-instead of repeatedly asking for a new plan.
-
-**These are workstreams, not a serial queue.** A leads to B. Independently, C leads to a
-targeted model or context repair; E needs its own admitted TRAIN requests, not a completed
-E1 experiment. D proceeds separately. F's CPU/process checks can run now; real-model
-integration needs the selected exports. G joins the required qualification evidence.
-Test-004 authoring or qualification does not block an independently registered DEV read.
-The [Trainer's run sheet](stack-run-sheet.md) is the executable handoff; extend that artifact
-rather than creating another planning layer.
+CPU preparation, source review and shadow-runner work need not wait for the model queue.
+One model job runs at a time through the existing guard. The Reviewer reviews returned
+artifacts instead of repeatedly asking for a new plan. The [Trainer's run sheet](stack-run-sheet.md)
+owns commands, recipe pins, owners and live blockers; extend it rather than creating another
+planning layer.
 
 Existing model-job holds remain a launch prerequisite, not a reason to stop preparation.
 The session package requires a release record naming its exact recipe, phase and user
@@ -241,7 +273,8 @@ untrained/unavailable: maintaining their contract does not claim a functioning s
 
 Prepare the runner with accepted public/development cases now; execute with the selected
 models when their jobs are released. Use the actual generated Claude/Codex hook templates,
-local server, server-owned history/policy, configured Kai profile and vLLM implementation.
+local server, server-owned history/policy, configured Kai profile and the actual selected
+serving implementation.
 For multi-session measurement, use `agentarmor-monitor serve --shadow --earlier-sessions on`
 with the configured model arguments, and assert that prior-session evidence appears in
 Kai's actual request. `--earlier-sessions shadow` only counts history; default `off` omits
@@ -260,11 +293,31 @@ An imported function or mocked model is a component test, not this integration r
 | Responsiveness | Kai timeout/transport failure does not stall the summary loop. Measure end-to-end p50/p95/p99, queue delay and peak memory against preregistered operator limits. |
 | Outcome | Link shadow answers to subsequent observed hook events by call identity. Report what would be denied; do not count a shadow denial as a prevented effect. |
 
-The published 2K export cannot stand in for the 4K research model. Qualify actual vLLM
-forward probabilities and decisions, packed limits, batching and sibling questions on
-the intended Linux GPU; the existing fused-MLX check is not vLLM parity. Set numerical
-tolerances and decision-agreement rules before reading the export. Bind calibration to
-the final weights, merge, dtype, tokenizer and kernels, then recheck complete-path retention.
+**Local serving decision, 2026-11-14.** The user chose vLLM Metal or MLX. Prefer a bounded
+MLX backbone adapter behind the existing service. AgentArmor's vLLM adapter asks for raw
+token states (`token_embed`, `ALL`, in `src/vllm/agentarmor_vllm/engine.py`); the current
+[official vLLM Metal pooling scope](https://docs.vllm.ai/projects/vllm-metal/en/stable/text_embedding_pooling/#unsupported)
+excludes generic token-level pooling and decoder `ALL`. Therefore the documented stock
+pooling route is not a drop-in Kai backend. This is a compatibility inference from source
+and documentation, not a hardware failure. Do not replace Kai's readout with the standard
+embedding or vocabulary-reranking API, or build a general plugin on this critical path.
+
+Trainer owns a local loader that uses Kai's text backbone with independent complete causal
+rows and the existing FP32 pointer. Reuse the shared request validation, encoder and API;
+preserve recurrent-state isolation, checkpoint temperature, escaping and span offsets.
+Kai owns compatibility with the verified merged export, or a versioned compatible export
+if required. Health and decision records must identify the actual backend and package,
+not inherit the current hardcoded `vllm` name. No model switching or downloads from requests.
+CPU adapter contracts can proceed while TRAIN is repaired; actual model work stays serialized.
+
+The published 2K export cannot stand in for the 4K research model. It can support fitting
+smoke cases and oversize refusal only. Qualify the actual local 4K export's logits,
+probabilities, decisions, admission limits and question isolation against identical tokens
+in Kai's MLX reference. Set numerical tolerances and decision-agreement rules before the
+read. Bind calibration to final weights, merge, dtype, tokenizer and kernels, then test
+the full real-hook path and retention. Training-runtime or fused-export parity alone is
+not serving qualification; local MLX qualification does not qualify Linux vLLM. Evidence
+spans remain unavailable until their separate training and qualification pass.
 
 Exercise redaction, restart, timeout, wrong-model replies and configured remote transport
 with synthetic fixtures and controlled local destinations. Do not execute dataset attack

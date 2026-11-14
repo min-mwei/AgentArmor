@@ -1,9 +1,13 @@
 # Working on AgentArmor
 
-The user requested vLLM-only serving on 2026-11-08. Native C++/Metal and MLX
-implementations, build tools, tests, and runtime guides have been removed.
-Serving and the lightweight Python hook CLI live in `src/vllm`. Optional
-Transformers and MLX training extras are allowed; they do not restore MLX serving.
+On 2026-11-14 the user chose **"Use vLLM Metal or MLX"** for local Apple Silicon
+serving. This supersedes the 2026-11-08 vLLM-only restriction. The current serving
+implementation and lightweight Python hook CLI live in `src/vllm`; a local backend
+must use the same verified Kai artifacts, request encoder, pointer head and API.
+The local backend is not yet implemented or qualified. Do not restore the removed
+native C++ stack or substitute a generative/vocabulary readout to obtain Metal support.
+The bounded implementation and qualification path is in
+[docs/stack-qualification-plan.md](docs/stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run).
 
 - Work on `dev`: commit and push there. `main` receives a change only when the user
   asks for it. The user set this on 2026-11-10, when the monitor's commit was moved
@@ -25,6 +29,10 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
 - Kai loads a trainer-published `vllm/` export from `min-h-wei/Kai-4B` at an explicit
   HF commit. Verify every artifact before allocating the model and refuse absent
   or incompatible exports. Load only the text backbone and trained pointer head.
+  A local MLX/Metal backend must establish compatibility with that export or use a
+  versioned, hash-pinned compatible export published by Kai. Its backend, numerical
+  profile and context limit require their own qualification; a training-runtime
+  result is not a serving result.
 - Do not commit model weights, chat logs, secrets, or `.env`.
 - Synchronous checks must emit an explicit denial on errors. An allowed check
   abstains from the agent's existing permission flow. Background scans are
@@ -100,7 +108,7 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
   synchronous hook denials until trainer-owned qualification passes. Do not
   describe this build as production attack prevention.
 - Keep the published benchset and hash-pinned host-fact reference modules intact.
-  Their historical implementation comments do not change the vLLM-only direction.
+  Their historical implementation comments do not change the current serving direction.
 
 ## Summarizer: its rules, moved here from the retired Summarizer repository
 
