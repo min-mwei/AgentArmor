@@ -108,12 +108,13 @@ def machine(tmp_path, monkeypatch, repo_root):
 class Server:
     """`agentarmor-monitor serve` as a process, and the shipped gate command against it."""
 
-    def __init__(self, environment, kai_url, mode):
+    def __init__(self, environment, kai_url, mode, *extra):
         self.environment, self.port = environment, free_port()
         self.url = f"http://127.0.0.1:{self.port}"
         command = [sys.executable, "-m", "agentarmor_monitor.cli", "serve", "--embedder", "hash"]
         command += ["--shadow", "--earlier-sessions", mode, "--wait", "1"]
         command += ["--kai-url", kai_url, "--kai-package-sha256", PACKAGE, "--port", str(self.port)]
+        command += list(extra)
         self.process = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment
         )
@@ -269,3 +270,74 @@ def test_with_earlier_sessions_in_shadow_no_request_carries_them(machine, kai_st
             time.sleep(0.2)
     finally:
         server.close()
+
+
+def test_a_restart_between_the_sessions_keeps_the_earlier_session_in_the_request(
+    machine, kai_stand_in
+):
+    """The server is stopped after the earlier session and a new one started on the same spool: what
+    the later call's request carries comes from the kept summaries, not from the first process."""
+    first = Server(machine, kai_stand_in.url, "on")
+    try:
+        early = [
+            {"hook_event_name": "SessionStart", "source": "startup"},
+            {"hook_event_name": "UserPromptSubmit", "prompt": "Add a submit helper."},
+            *tool(1, "Write", {"file_path": SCRIPT, "content": PLANTED}, "saved"),
+        ]
+        for payload in early:
+            assert first.gate("claude_code", "s-early", payload) == (0, "")
+        summarized("claude_code", "s-early")
+    finally:
+        first.close()
+    second = Server(machine, kai_stand_in.url, "on")
+    try:
+        for payload in (
+            {"hook_event_name": "SessionStart", "source": "startup"},
+            {"hook_event_name": "UserPromptSubmit", "prompt": "Run the submit helper."},
+        ):
+            assert second.gate("codex_code", "s-late", payload) == (0, "")
+        run = tool(1, SHELL["codex_code"], {"command": "sh tools/submit.sh"})
+        assert second.gate("codex_code", "s-late", run[0]) == (0, "")
+        records = escalate.read(session_dir("codex_code", "s-late"))
+        (issued,) = [
+            r for r in records if r.get("stage") == "issued" and r.get("call_id") == "call-1"
+        ]
+        key = issued["packet"]["request_sha256"]
+        (body,) = [b for b in kai_stand_in.requests if sha256_of(b) == key]
+        assert any("tools/submit.sh" in line for line in lines_of("claude_code", "s-early", body))
+    finally:
+        second.close()
+
+
+class Slow(Recording):
+    """A Kai that answers only after the monitor has stopped waiting."""
+
+    def evaluate(self, value):
+        time.sleep(3)
+        return super().evaluate(value)
+
+
+def test_a_kai_that_times_out_costs_no_answer_and_never_blocks_the_shadow_gate(machine):
+    stub = Slow()
+    server_of_kai = HTTPServer(("127.0.0.1", 0), handler(stub))
+    threading.Thread(target=server_of_kai.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server_of_kai.server_address[1]}"
+    server = Server(machine, url, "on", "--kai-timeout", "1")
+    try:
+        run = replay(server, "claude_code", "codex_code")  # every gate still said nothing, exit 0
+        records = escalate.read(session_dir("codex_code", "s-late"))
+        (issued,) = [
+            r for r in records if r.get("stage") == "issued" and r.get("call_id") == "call-1"
+        ]
+        # No answer came in time: the verdict is undecided, and nothing claims Kai allowed the call.
+        assert issued["verdict"] == "undecided", issued.get("verdict")
+        assert issued.get("status") == "kai_unavailable", (issued.get("status"), issued.get("error"))
+        assert (issued.get("kai") or {}).get("p_deny") is None
+        # The summary loop went on: the call's result, reported later, is summarized.
+        assert server.gate("codex_code", "s-late", run[1]) == (0, "")
+        held = summarized("codex_code", "s-late")
+        assert any(e.get("call_id") == "call-1" for e in held["entries"])
+    finally:
+        server.close()
+        server_of_kai.shutdown()
+        server_of_kai.server_close()
