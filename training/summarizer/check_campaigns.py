@@ -388,9 +388,10 @@ _REDIRECT = re.compile(r"\d*(?:>>?|<|&>)(.*)")
 
 
 def _commands(command):
-    """The simple commands of a command line, each as its words without redirections (their
-    targets are counted as written by file_uses), or None when the line holds a substitution or an
-    operator inside a word, which this plain reading cannot cut."""
+    """The simple commands of a command line, each as (its words without redirections, whether it
+    has a redirection), or None when the line holds a substitution or an operator inside a word,
+    which this plain reading cannot cut. A redirection's target is counted as written by file_uses;
+    a command with a redirection is never compared as a read (MR180-2)."""
     found = shell_words(command)
     if found is not None:
         words = [word for word, _ in found]
@@ -398,22 +399,27 @@ def _commands(command):
         return None
     else:
         words = command.split()
-    commands, current, skip = [], [], False
+    commands, current, redirected, skip = [], [], False, False
     for word in words:
         if skip:
             skip = False
             continue
         if word in _CONTROL:
-            commands, current = commands + [current] if current else commands, []
+            if current:
+                commands.append((current, redirected))
+            current, redirected = [], False
             continue
         redirect = _REDIRECT.fullmatch(word)
         if redirect:
+            redirected = True
             skip = not redirect.group(1)  # "> file": the file is the next word
             continue
         if any(char in word for char in "|;&<>"):
             return None
         current.append(word)
-    return commands + [current] if current else commands
+    if current:
+        commands.append((current, redirected))
+    return commands
 
 
 def _git_subcommand(words):
@@ -421,6 +427,24 @@ def _git_subcommand(words):
     while at < len(words) and words[at].startswith("-"):
         at += 2 if words[at] in _GIT_VALUED else 1
     return words[at] if at < len(words) else None
+
+
+def _targets(words, cwd):
+    """Every path a command that may change only what it names could change, from the same words
+    _effect() reads (MR180-4): each word after the first, the value of an option written
+    --option=value, and what follows the letter of a short option written with its value attached
+    (-oFILE). Over-approximated on purpose: a path taken for a target is only looked at again."""
+    found = set()
+    for word in words[1:]:
+        if word.startswith("--"):
+            value = word.split("=", 1)[1] if "=" in word else ""
+        elif word.startswith("-"):
+            value = word[2:]
+        else:
+            value = word
+        if value:
+            found.add(_resolved(value, cwd))
+    return found
 
 
 def _effect(words):
@@ -602,13 +626,15 @@ def _read_checks(campaign):
             target, form, how = os.path.normpath(step["read"]), "the read", lambda raw: raw
         elif isinstance(step.get("run"), str):
             commands = _commands(step["run"])
-            read = _read_form(commands[0]) if commands and len(commands) == 1 else None
+            alone = commands is not None and len(commands) == 1 and not commands[0][1]
+            read = _read_form(commands[0][0]) if alone else None
+            shows = commands is None or any(
+                os.path.basename(words[0]) in _SHOWS for words, _ in commands
+            )
             if read is not None:
                 target, how = _resolved(read[0], cwd), read[1]
-                form = f"`{' '.join(commands[0])}`"
-            elif (
-                shown not in (None, "") and commands and os.path.basename(commands[0][0]) in _SHOWS
-            ):
+                form = f"`{' '.join(commands[0][0])}`"
+            elif shown not in (None, "") and shows:
                 _, named = file_uses(step, cwd)
                 for path in sorted(p for p in named if p in last):
                     unchecked.append(
@@ -635,16 +661,17 @@ def _read_checks(campaign):
                 )
         if "run" not in step or not isinstance(step.get("run"), str):
             continue
-        made, named = file_uses(step, cwd)
+        made, _ = file_uses(step, cwd)
         for path in made:
             last[path] = (where, None, None)
-        kinds = {_effect(words) for words in commands} if commands is not None else {"unknown"}
+        kinds = [_effect(words) for words, _ in commands] if commands is not None else ["unknown"]
         if "unknown" in kinds:
             changed = list(last)
-        elif "named" in kinds:
-            changed = [p for p in last if any(p == n or p.startswith(n + os.sep) for n in named)]
         else:
-            changed = []
+            targets = set()
+            for (words, _), kind in zip(commands, kinds, strict=True):
+                targets |= _targets(words, cwd) if kind == "named" else set()
+            changed = [p for p in last if any(p == t or p.startswith(t + os.sep) for t in targets)]
         for path in changed:
             if path not in made:
                 last[path] = (last[path][0], last[path][1], where)

@@ -732,3 +732,38 @@ def test_the_comparison_ignores_line_ends_but_not_indentation(pair):
         step = {"id": "look", "read": "{cwd}/notes/f.txt", "output": output}
         found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
         assert bool(found) is refused
+
+
+def test_a_redirected_or_compound_read_is_looked_at_not_compared(pair):
+    """MR180-2, MR180-3: a redirection changes what a command prints, and a compound line is
+    looked at whole, never compared as its first plain read."""
+    quiet = {"id": "copy", "run": "cat notes/f.txt > notes/copy.txt", "output": ""}
+    assert checker.read_consistency(_plant_then(pair, _TWO, quiet)) == ([], [])
+    for command, output in (
+        ("cat notes/f.txt > notes/copy.txt", "alpha\nbeta"),
+        ("true && cat notes/f.txt", "invented"),
+        ("true && cat notes/f.txt", "alpha\nbeta"),
+    ):
+        step = {"id": "look", "run": command, "output": output}
+        found, look = checker.read_consistency(_plant_then(pair, _TWO, step))
+        assert found == [] and look and "does not compare" in look[0], command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sort -onotes/f.txt notes/in.txt",
+        "sort -o notes/f.txt notes/in.txt",
+        "sort --output=notes/f.txt notes/in.txt",
+        "cp -tnotes other.txt",
+    ],
+)
+def test_an_attached_target_may_have_changed(pair, command):
+    """MR180-4: the target of -oFILE, -o FILE, --output=FILE or -tDIR is not a certain version."""
+    write = {"id": "sort", "run": command, "output": ""}
+    later = {"id": "look", "read": "{cwd}/notes/f.txt", "output": "charlie\nzulu"}
+    found, look = checker.read_consistency(_plant_then(pair, _TWO, write, later))
+    assert found == [] and look and "may have changed it" in look[0]
+    plain = {"id": "sort", "run": "sort notes/in.txt", "output": "charlie\nzulu"}
+    found, _ = checker.read_consistency(_plant_then(pair, _TWO, plain, later))
+    assert found
