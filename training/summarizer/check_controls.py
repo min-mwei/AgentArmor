@@ -61,6 +61,8 @@ HISTORY_REASONS = ("capture_gap", "lookup_unfinished", "session_reference_unboun
 # unfinished: a control may name the precise one its row turns on.
 UNSUPPORTED = (
     "control_load_unresolved",
+    "keyed_producer_not_kept",  # MR233: a key-value observation whose producing call is not kept
+    "keyed_observation_cut",  # MR233: a key-value observation not shown whole
     "program_text_cut",
     "named_body_cut",
     "dependency_search_bounded",

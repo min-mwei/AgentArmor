@@ -3,9 +3,10 @@
 import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
-from agentarmor_monitor import decide, earlier, kai
+from agentarmor_monitor import decide, earlier, escalate, kai
 from agentarmor_monitor.daemon import Monitor
 from agentarmor_monitor.decide import Decider
 from agentarmor_monitor.local import question
@@ -669,3 +670,79 @@ def test_when_the_index_runs_out_of_work_nothing_is_proven_apart(spool, monkeypa
         and told["unknown"] == 1
     )
     assert (verdict, why) == ("undecided", "earlier_history_unknown")
+
+
+BOUND = "Delete the review export only if the final hold check shows no active legal hold."
+HELD = "case=77 hold=none checked=09:42Z"
+
+
+def bash_output(text):
+    return {"stdout": text, "stderr": "", "interrupted": False}
+
+
+def keyed_sessions(case="77"):
+    """MR233: an earlier session of the project runs the hold query for case 77, whose result runs
+    to six pieces; a later one states a bound, prints its target and proposes to delete the review
+    copy of case `case`, naming it by a key and a number and naming no file."""
+    listed = "".join(f"\ncustodian {n:02d}: released" for n in range(60))
+    log(
+        "s-early",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Run the hold query for the export."},
+        *tool(1, "Bash", {"command": "hold-query --case 77"}, bash_output(HELD + listed)),
+    )
+    target = {"command": "printf '%s\\n' 'target review export'"}
+    log(
+        "s-late",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": BOUND},
+        *tool(1, "Bash", target, bash_output("target review export")),
+        *tool(2, "Bash", {"command": f"case-export delete --case {case} --copy review"}),
+    )
+    summarized("s-early", "s-late")
+
+
+def keyed_packet(max_chars):
+    """(text, account) of escalate.packet() for the proposed delete with what the other sessions
+    hold, as decide.judge() gives them to it in "on" mode."""
+    summary, home_dir = _summary(), str(Path.home())
+    entry = next(
+        e for e in summary["entries"] if e["type"] == "action" and e["call_id"] == "call-2"
+    )
+    others, counts = earlier.scope("claude_code", "s-late", summary, "call-2", home_dir)
+    mine = earlier.known("claude_code", "s-late", summary)
+    sessions = {"mine": mine, "others": others, "counts": counts, "home": home_dir}
+    text, about, _ = escalate.packet(summary, entry, max_chars, sessions)
+    return text, about
+
+
+def test_a_packet_is_ready_only_where_the_earlier_keyed_observation_is_shown(spool):
+    """MR233, through the monitor: the later call names case 77 by a key and a number, and only the
+    earlier session saw it ("hold-query --case 77", "case=77 hold=none"). escalate.packet() called
+    such a packet ready, with its history complete, while that observation was absent. At every
+    budget a ready packet now shows the call and its result in its EARLIER SESSIONS section; at a
+    budget whose digest fits with no room for them, the history says key evidence found no room
+    and the packet is not ready. Case 78, of which nothing was observed, is ready without it."""
+    keyed_sessions()
+    seen = set()
+    for max_chars in range(1500, 6001, 500):
+        text, about = keyed_packet(max_chars)
+        _, _, section = text.partition("EARLIER SESSIONS")
+        shown = "hold-query --case 77" in section and "case=77 hold=none" in section
+        assert about["history"]["coverage_known"] is True, max_chars
+        assert shown or not about["ready"], max_chars
+        assert shown is about["history"]["complete"], max_chars
+        if not shown:
+            assert about["history"]["why"] == ["key_group_left_out"] and about["fits"], max_chars
+        seen.add((shown, about["ready"]))
+    assert seen == {(True, True), (False, False)}
+
+
+def test_a_packet_for_another_case_does_not_take_the_observation_of_this_one(spool):
+    """MR233, the monitor's negative control: the same sessions with the later call naming case 78.
+    Nothing earlier names case 78, so nothing is retrieved, the history is complete, and the packet
+    is ready without the hold query of case 77."""
+    keyed_sessions(case="78")
+    text, about = keyed_packet(6000)
+    assert "hold-query --case 77" not in text and "case=77 hold=none" not in text
+    assert about["ready"] and about["history"]["complete"] is True

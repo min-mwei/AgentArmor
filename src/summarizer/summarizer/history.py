@@ -74,6 +74,15 @@ and says so by asking: nothing here decides whether the call keeps to what was s
 such a statement names a thing by an identifier ("until ticket RV-44 is closed"), what a
 session of the project observed of that identifier is kept as evidence of the condition.
 
+A call that names a thing by a key and a number ("--case 77", "--case=77", "case=77") is held
+against what a session of the project observed of that very key and number: a call of that
+session whose words, or whose result, give the same key with the same value, with all that came
+back for it (MR233). It is key evidence, and it bears on nothing: that two calls name one thing
+says nothing of whether a condition passed or anything was allowed. A number alone is no
+identity, nor is a key with another number. An observation the summary does not keep whole (its
+call left out, its words or its result cut), or one cut on its line in the packet, leaves the
+search unfinished.
+
 A write of an earlier session bears on the route when something marks it: a level of its
 own, a level on the lower-trust content it is nearest to, or lower-trust content shown
 before it that names the file it writes or a place its text names.
@@ -293,6 +302,16 @@ _COMMAND_KINDS = (
 # A name that identifies one thing: letters and digits together ("RV-44", "Q7"). A condition
 # the user states often names one, and what was observed of it elsewhere is its evidence.
 _TOKEN = re.compile(r"(?<![\w.-])(?=[\w-]*[A-Za-z])(?=[\w-]*\d)\w[\w-]*(?![\w-])")
+# A thing named by a key and a number: "--case 77", "--case=77" and "case=77" are the key "case"
+# with the value "77" (MR233). A number alone names nothing (_TOKEN asks for a letter as well, and
+# "77 files" or "checked=09:42Z" is a count or a time), so a number is read as an identity only
+# beside the key that says what it is of, and a pair matches only the same key with the same value.
+# Only an option of two dashes, or a key with "=", gives a key: "-n 77" and "case 77" give none.
+_KEYED = re.compile(
+    r"(?:(?<!\S)--(?P<option>[A-Za-z][A-Za-z0-9_-]*)(?:=|[ \t]+)"
+    r"|(?<![\w.:/@$-])(?P<key>[A-Za-z][A-Za-z0-9_-]*)=)"
+    r"(?P<quote>[\"']?)(?P<value>[0-9]+)(?P=quote)(?![\w:/@%-]|\.\w)"
+)
 _PATH_RUN = re.compile(r"[\w.~{}/-]+")
 
 
@@ -867,6 +886,15 @@ def _tokens(entry):
     return set(_TOKEN.findall(str(entry.get("text") or "")))
 
 
+def _keyed(text):
+    """The things a text names by a key and a number (_KEYED), as {(key, value)}: the key in lower
+    case, the number as it is written."""
+    return {
+        ((found["option"] or found["key"]).lower(), found["value"])
+        for found in _KEYED.finditer(str(text or ""))
+    }
+
+
 def _bears(prompt, call_text, named, cwd, home, kinds=()):
     """Whether a statement of the user states a bound and is tied to the call: it names one
     of the call's paths, a word of its command, or a kind of action the call is. A
@@ -1179,6 +1207,39 @@ def select(mine, call_id, others, home):
                     items.append(taken[at])
                 if group not in taken[at]["groups"]:
                     taken[at]["groups"].append(group)
+    # What this project's earlier sessions observed of a thing the call names by a key and a number
+    # (MR233): "case-export delete --case 77" is held against what "hold-query --case 77" brought
+    # back, "case=77 hold=none". The same key with the same value, in an earlier call's own words or
+    # in what came back for it, retrieves that observation with the call that made it, its status
+    # and its event, as key evidence: shown whole or left out and said to be, the newest first by
+    # the host's clock. It is retrieved and no more: whether a condition passed, or anything was
+    # allowed, is for whoever decides, so it never bears on the route. An observation the summary
+    # does not keep whole leaves the search unfinished (_keyed_observations), and so does one cut on
+    # its line (packet()). Each line stands once, in however many groups (as above).
+    pairs, until, observed = _keyed(spoken), float(call.get("ts") or 0), []
+    for other in (o for o in others if pairs and o["key"] in shown_in and o["cwd"] == cwd):
+        found_there, gaps = _keyed_observations(other, pairs, until)
+        unsupported += [gap for gap in sorted(gaps) if gap not in unsupported]
+        # One with no line to show (a call kept only in the catalogue, with nothing kept of what
+        # came back) is in the gaps alone.
+        observed += [(other, *one) for one in found_there if one[0] or one[1]]
+    observed.sort(key=lambda one: -max(float(e.get("ts") or 0) for e in [one[1] or {}, *one[2]]))
+    for other, made, back, producers in observed:
+        taken = shown_in[other["key"]]
+        anchor = f"{made['seq']}" if made is not None else f"result:{back[0]['seq']}"
+        group = f"{other['key']}:keyed:{anchor}"
+        if not any(one["id"] == group for one in groups):
+            groups.append({"id": group, "kind": "named", "key": True, "bears": False})
+            groups[-1]["whole"] = True  # a line of it cut leaves the search unfinished (packet())
+        calls = [made] if made is not None else []
+        shown_with = [(one, "recent") for one in calls + producers] + [(e, "shown") for e in back]
+        for one, relation in shown_with:
+            at = (one["seq"], one["type"])
+            if at not in taken:
+                taken[at] = _item(other, one, relation)
+                items.append(taken[at])
+            if group not in taken[at]["groups"]:
+                taken[at]["groups"].append(group)
     # Lower-trust results of this project's earlier sessions tied to the call or to a bound the
     # user stated (MR180-1): what a session was told below the user that names the call's
     # object, place or identifier, or two of its words, and what came back when a session
@@ -1746,6 +1807,101 @@ def _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses,
     return [(other, content, action) for _, other, content, action in found]
 
 
+def _arrived(content):
+    """[(call id, event, aside)]: each time a piece of lower-trust content came back, and for which
+    call. A piece the session had been given before is kept once, on the entry it first came as,
+    and each later arrival is a sighting of that entry (summarize.py): a piece that came back again
+    for another call is that entry, sighted for it. aside says it came as schema, which is no piece
+    of a result (result_pieces does not count it)."""
+    found = [(content.get("call_id"), content["seq"], bool(content.get("aside")))]
+    for one in content.get("seen_again") or ():
+        found.append((one.get("call_id"), one.get("seq") or 0, bool(one.get("aside"))))
+    return [(made, seq, aside) for made, seq, aside in found if made]
+
+
+def _keyed_observations(other, pairs, until):
+    """(observations, gaps): what one earlier session observed of a thing the call names by a key
+    and a number (pairs, _KEYED), and why any of it is not whole (MR233).
+
+    An observation is a call of that session whose own words, or what came back for it, give one
+    of those pairs, with all that came back for it, each entry once (_arrived): [(call, results,
+    producers)], in the order of the session. The call is None for a result whose call the summary
+    does not keep as an entry. producers are the calls that first brought a piece back where it
+    came again for this call (a sighting): a result keeps the call that produced it in every group
+    it stands in (MR192-3), and that entry's line names that call's words.
+
+    An observation is whole when its call is kept with its words not cut by the summary or by the
+    hook, and every piece of its result is here (result_pieces); a call that came back with nothing
+    known (refused, failed, still proposed) has no piece to miss. gaps says what is not whole:
+    "keyed_producer_not_kept" for a call kept only in the catalogue of calls the summary left out,
+    or for a result whose call is not kept at all, and "keyed_observation_cut" for words or a
+    result cut. until is the proposed call's time on the host's clock, 0 when not known: what was
+    logged after it is no observation, and the sessions a lookup is given are cut there already. A
+    match is no judgement: the same key and number say that two calls name one thing, never that a
+    condition passed or that anything was allowed."""
+    summary = other["summary"]
+    entries = summary["entries"]
+
+    def later(one):
+        return bool(until) and float(one.get("ts") or 0) > until
+
+    # Every arrival of what came back, by call, and whether each piece gives a pair: read once.
+    arrivals, naming = {}, {}
+    for content in _lower(entries):
+        if not later(content):
+            naming[id(content)] = bool(_keyed(content.get("text")) & pairs)
+            for made, seq, aside in _arrived(content):
+                arrivals.setdefault(made, []).append((content, seq, aside))
+    calls = [(e, True) for e in entries if e["type"] == "action"]
+    by_id = {made.get("call_id"): made for made, _ in calls if made.get("call_id")}
+
+    def producers(back, made):
+        found = [by_id.get(content.get("call_id")) for content in back]
+        return [
+            one
+            for one, content in zip(found, back, strict=True)
+            if one is not None and one is not made and one["seq"] < content["seq"]
+        ]
+
+    left_out = summary["session"].get("dropped_calls") or ()
+    calls += [({"type": "action"} | e, False) for e in left_out]
+    known = {made.get("call_id") for made, _ in calls if made.get("call_id")}
+    observations, gaps, held = [], set(), set()
+    for made, kept in sorted(calls, key=lambda one: one[0]["seq"]):
+        if later(made):
+            continue
+        came = [
+            (content, aside)
+            for content, seq, aside in arrivals.get(made.get("call_id"), ())
+            if seq > made["seq"]
+        ]
+        back = list({id(content): content for content, _ in came}.values())
+        said = _keyed(f"{made.get('target') or ''} {made.get('text') or ''}")
+        if not (said & pairs or any(naming[id(content)] for content in back)):
+            continue
+        held |= {id(content) for content in back}
+        observations.append((made if kept else None, back, producers(back, made)))
+        pieces = sum(not aside for _, aside in came)
+        expected = made.get("result_pieces", None if made.get("status") == "returned" else 0)
+        if not kept:
+            gaps.add("keyed_producer_not_kept")
+        elif "text_chars" in made or made.get("input_clipped") or expected != pieces:
+            gaps.add("keyed_observation_cut")
+    # A result that gives a pair, of a call the summary keeps neither as an entry nor in its
+    # catalogue: what came back is here, and which call brought it, with which words and which
+    # status, is not (MR192-3).
+    for content in _lower(entries):
+        if not naming.get(id(content)):
+            continue
+        if not any(made not in known for made, _, _ in _arrived(content)):
+            continue
+        gaps.add("keyed_producer_not_kept")
+        if id(content) not in held:
+            held.add(id(content))
+            observations.append((None, [content], producers([content], None)))
+    return observations, gaps
+
+
 def _item(other, entry, relation, use=None, of=None, bears=False, groups=()):
     found = {"key": other["key"], "seq": entry["seq"], "type": entry["type"]}
     found |= {"relation": relation, "use": use, "of": of, "bears": bears}
@@ -2309,6 +2465,19 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
             again = placed(shorter)
             if lacks(again[2]) < lacks(why):
                 view, (chosen, left, why) = shorter, again
+    # An observation retrieved by a key and a number is evidence only whole (MR233): a group of one
+    # that found room but has a line quoting less of its entry than there is (a call longer than a
+    # history line quotes, or one the summary cut) leaves the search unfinished, as an observation
+    # the summary does not keep whole does (select()). It is shown as far as it goes.
+    unsupported = list(found["unsupported"])
+    for group in (g for g in found["groups"] if g.get("whole")):
+        inside = members(group)
+        lines = [about for index in inside for *_, about in rendered[index]]
+        if set(inside) <= chosen and any(about["shown"] != about["of"] for about in lines):
+            if "keyed_observation_cut" not in unsupported:
+                unsupported.append("keyed_observation_cut")
+            if "lookup_unfinished" not in why:
+                why.append("lookup_unfinished")
     items = [line for index in sorted(chosen) for line in rendered[index]]
     used = {(found["items"][index]["key"], found["items"][index]["seq"]) for index in chosen}
     bridges = [
@@ -2368,7 +2537,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     text = "\n".join([body, TITLE, header(account), *shown, *told_of, footer])
     # What the account says beyond the section's own lines: what was found and not shown,
     # why what the call uses could not be told, and which sources may be another place.
-    for name, value in (("left_out", left), ("unsupported", found["unsupported"])):
+    for name, value in (("left_out", left), ("unsupported", unsupported)):
         if value:
             account[name] = value
     if found["by_name"]:
