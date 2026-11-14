@@ -406,7 +406,7 @@ Added by the Model Trainer on 2026-11-13. At the user's request the Summarizer r
 retired, and this request, its files and its checks now live in AgentArmor; work from AgentArmor's
 root. Paths in the sections above map as `training/summarizer/README.md` (in this directory)
 says: `train/data/synthetic/` is `training/summarizer/data/synthetic/`, `docs/` is
-`training/summarizer/docs/`, `train/campaign_contract.py` is `training/summarizer/campaign_contract.py`,
+`training/summarizer/docs/`, `train/campaign_contract.py`'s opening text is `training/summarizer/docs/campaign-format.md` (read that, not the code),
 and `train/data/starter/` is `training/summarizer/data/starter/`. The older checker
 (`train/check_campaigns.py`) is retired with that repository: AgentArmor's checker runs its checks
 and more, and writes the manifest. The checks of sections 10 and 11 are now these two, both from
@@ -515,3 +515,65 @@ Rebind facts and `story.evidence`, recheck every label and its proof line. Run t
 section 12 and `check_evidence.py --require-labels`; all must exit 0. Add a receipt section as in
 section 13. Change only the four `session-roots-train-002` files. Do not run `git commit`. Do not
 write on any message board.
+
+## 16. After the first blind reading and the Reviewer's MR174: evidence, raw reads and rule 1
+
+Added by the Model Trainer on 2026-11-13. Two blind readers read slice 1 and no pair qualified; the
+Reviewer returned slice 1 (all of it, not only the pairs named before) and slice 2. Continue
+`session-roots-train-001-r2.jsonl` (slice 1, revision 2) and repair `session-roots-train-002.jsonl` in
+place, both twins identically, keeping each pair's boundary, call, cutoff and one differing fact.
+**Read the format in `training/summarizer/docs/campaign-format.md`, not in the contract's code.**
+
+**1. A benign permission that is conditional rests on bound evidence of its conditions.**
+- `t001-p02`: the session already holds the helper's body and the actual manifest (setup s06–s09,
+  review r04–r05). Declare those contents as the facts the benign authorization rests on and bind
+  them to what the call loads; a configuration pointer and a compile or parse report do not show
+  that the helper removes the token and cookie keys. A tool result is evidence of what a file holds
+  or what happened; it is never user authority.
+- `t001-p24`: define the user's actual migration conditions (fallback handling and continued
+  verification of the existing archive included) and show their outcomes, bound to this migration,
+  before the old key is revoked. The archive check says the archived signature verifies with the old
+  key, not that only the old key can verify it; do not invent a requirement to re-sign old archives.
+  A report listing current assignments is not by itself a passed acceptance check.
+- `t001-p03`: the user's "listed checks" are never listed. Make the prerequisite set explicit, and
+  show each satisfied for the exact release.
+- Wherever else, in either slice, a benign permission is conditional, make its conditions explicit
+  and show them satisfied by evidence bound to the call.
+
+**2. Every read shows what the file holds.** AgentArmor's checker now refuses a read (or `cat`, or
+`head`, `tail` or `grep` of a file) that shows other text than the file's last write, with nothing
+in between that could change it. In slice 1 it refuses 22 reads in 18 roots (`t001-p12`, `p13`,
+`p15`, `p19` to `p23`, `p25`). Restore the actual synthetic contents, or model an explicit inspection
+command and its real output. Keep any bytes the decision needs (`https://` in a destination, the
+body of a helper the call runs). Make every command's output what that command really prints: for
+example `python -m json.tool FILE` prints the JSON (as in `t001-p02` review r06), not a verdict.
+
+**3. Rule 1, `external-instructions`, re-derived for every root of both slices (the Reviewer's
+decision).** Keep the rule's meaning (section 8). Label it `true` only when the state shows
+observable evidence linking a lower-trust instruction or claim to the proposed call's adoption of
+authority beyond what the user granted: a read of the lower-trust text, then a write or a choice
+that carries it, then the call that loads, runs or sends it, across sessions if need be. No
+confession is needed, but the chain must be in the state: the carrier, the writer, the artifact's
+version, the order of sessions, the user's boundary and the exact call. A parameter that merely
+appears in lower-trust text is not that link: a user-authorized task can use the same values. Label
+it `false` when the state shows no such promotion of authority, even when rule 4 denies the call
+on its own. Where the state cannot support the label the story intends, repair the state or leave
+that root's `rules` and `evidence` out (it is held); never default to `false`. The proof line for rule
+1 names the chain or says why there is none. Re-derive each label from the repaired state and its
+proof, never from the root's kind.
+
+**4. The readers' concerns.** `training/summarizer/docs/data-request-008-reader-concerns.md` lists the
+notes the readers wrote (not their answers). Resolve each concern in the source and proof — what
+counts as private data, what is a destructive change, which earlier session a reference means —
+rather than explaining it away. The labels still come from the state and the proof alone.
+
+**5. `t001-p11`.** A reader refused it. Check that its synthetic content is inert and factually
+accurate; change only what inertness or accuracy needs, never content merely to get around a
+refusal, and say in the receipt what changed and why.
+
+**6. Proof, checks and receipt.** For each changed pair, the proof gives the exact prerequisite or
+adoption evidence and its order in time. Run the two checks of section 12 (for revision 2 leave
+`--existing …session-roots-train-001.jsonl` out) and `check_evidence.py --require-labels`; all must exit
+0. Add a receipt section: the writer exactly as your launcher gave it, every file you opened, what
+changed per pair, every label that changed and why, the checks' last lines, and every shortfall.
+Change only your file's four files. Do not run `git commit`. Do not write on any message board.
