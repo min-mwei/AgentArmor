@@ -1509,6 +1509,130 @@ def test_a_trigger_is_never_linked_to_itself_by_its_own_refused_attempts(
     assert {r["packet"]["request_sha256"] for r in rest} == {first["packet"]["request_sha256"]}
 
 
+def test_one_decision_never_sends_a_refused_request_again(spool, monkeypatch, capsys):
+    """A gate's decision keeps no record of earlier requests (detect() without asked). A halved
+    budget that rebuilt the very same request sent it again after its refusal, once for every
+    halving that did not shrink it: the shadow runner saw one request refused three times. Now
+    one decision halves on without sending until the request changes."""
+    name = summarized(twice_poisoned("s-once"))
+    whole = scanned(monkeypatch, capsys, Scripted(100_000), summarized(twice_poisoned("s-ample")))
+    full = whole[0]["packet"]["state_chars"]
+    summary = load_summary("claude_code", name)
+    entry = next(e for e in summary["entries"] if e["level"] in ("medium", "high"))
+    client = Scripted(limit=full - 200)
+    record = escalate.detect(client, summary, entry, max_chars=12000)  # no asked: a gate's decision
+    assert client.sends[0] == full and client.sends[1] < full and len(client.sends) == 2
+    assert (record["status"], record["requests_sent"]) == ("scored", 2)
+    # Three halvings, two of which rebuilt the refused request: counted, and not sent (MR251).
+    assert record["refusal_retries"] == {"budget_reductions": 3, "repeats_not_sent": 2}
+
+
+def test_when_no_smaller_request_passes_none_is_sent_twice(spool):
+    """A Kai that refuses every request: the decision ends refused at the floor, having sent
+    each distinct request once, and counts the halvings that rebuilt one refused before."""
+    summary = load_summary("claude_code", summarized(twice_poisoned("s-floor")))
+    entry = next(e for e in summary["entries"] if e["level"] in ("medium", "high"))
+    client = Scripted(limit=0)
+    record = escalate.detect(client, summary, entry, max_chars=12000)
+    assert record["status"] == "kai_rejected"
+    assert len(client.sends) == len(set(client.sends)) == record["requests_sent"] >= 2
+    retries = record["refusal_retries"]
+    assert retries["repeats_not_sent"] >= 1
+    assert retries["budget_reductions"] == record["requests_sent"] + retries["repeats_not_sent"] - 1
+
+
+class _Silent(BaseHTTPRequestHandler):
+    """A service that answers 200 with a body that is no JSON."""
+
+    def do_POST(self):  # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"not json")
+
+    def log_message(self, *args):
+        pass
+
+
+class _Status(BaseHTTPRequestHandler):
+    """A service that answers every request with one HTTP status and no body."""
+
+    status = 503
+
+    def do_POST(self):  # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.send_response(type(self).status)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class _Relayed:
+    """This server's front, reduced to its relay: what InProcess asks a model at another address."""
+
+    expected = None
+
+    def __init__(self, client):
+        self.relay = serving.Relay(client)
+
+    def evaluate(self, body):
+        return self.relay.evaluate(body)
+
+    def decision_model(self):
+        return {}
+
+
+@pytest.mark.parametrize(
+    "code, kind", [(400, kai.KaiRejected), (413, kai.KaiRejected), (503, kai.KaiUnavailable)]
+)
+def test_an_http_status_is_kept_by_the_client_and_through_the_relay(code, kind):
+    """A refusal (400, 413) and a failure (503) are named by their status, directly and through
+    the server's relay, which once said "ValueError" and "RuntimeError" for all of them (MR251)."""
+    service = HTTPServer(("127.0.0.1", 0), type("Answering", (_Status,), {"status": code}))
+    threading.Thread(target=service.serve_forever, daemon=True).start()
+    try:
+        client = kai.KaiClient(f"http://127.0.0.1:{service.server_address[1]}", timeout=2)
+        for asked in (client, serving.InProcess(_Relayed(client))):
+            with pytest.raises(kind, match=f"^HTTP {code}$") as caught:
+                asked._call("/x", {"a": 1})
+            assert (caught.value.attempts, caught.value.responded) == (1, True)
+    finally:
+        service.shutdown()
+
+
+def test_a_request_nothing_usable_came_back_for_says_what_became_of_it():
+    """The record of an unavailable Kai said only the error's type ("URLError", and from the
+    server's relay "RuntimeError"), so a timeout could not be told from a refused connection."""
+    listening = socket.socket()
+    listening.bind(("127.0.0.1", 0))
+    listening.listen(8)  # queues every connection, and never answers
+    port = listening.getsockname()[1]
+    try:
+        client = kai.KaiClient(f"http://127.0.0.1:{port}", timeout=0.3)
+        for asked in (client, serving.InProcess(_Relayed(client))):  # directly, and relayed
+            with pytest.raises(kai.KaiUnavailable, match="^timeout$") as caught:
+                asked._call("/x", {"a": 1})
+            assert (caught.value.attempts, caught.value.responded) == (1, False)
+    finally:
+        listening.close()
+    client = kai.KaiClient(f"http://127.0.0.1:{port}", timeout=0.3)
+    for asked in (client, serving.InProcess(_Relayed(client))):
+        with pytest.raises(kai.KaiUnavailable, match="^connection_refused$"):
+            asked._call("/x", {"a": 1})
+    garbled = HTTPServer(("127.0.0.1", 0), _Silent)
+    threading.Thread(target=garbled.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{garbled.server_address[1]}"
+        client = kai.KaiClient(url, timeout=2)
+        for asked in (client, serving.InProcess(_Relayed(client))):
+            with pytest.raises(kai.KaiUnavailable, match="^malformed_answer$") as caught:
+                asked._call("/x", {"a": 1})
+            assert (caught.value.attempts, caught.value.responded) == (1, True)
+    finally:
+        garbled.shutdown()
+
+
 def test_a_request_is_named_by_its_canonical_json_not_by_its_wire_bytes():
     state = "Conversation so far:\n#1 user said \u201cr\u00e9sum\u00e9\u201d"
     body = kai.request(state, (kai.XPIA,))

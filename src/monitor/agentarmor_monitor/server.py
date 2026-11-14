@@ -37,6 +37,7 @@ probability into a permission: every reply of this server says policy_ready fals
 
 import contextlib
 import json
+import re
 import socket
 import threading
 import time
@@ -107,6 +108,14 @@ class Relay:
             raise refused from None
         except KaiUnavailable as error:
             raise marked(RuntimeError(str(error)), error.attempts, error.responded) from None
+
+
+# The words a relayed failure may keep (kai.transport_failure, KaiClient._call): fixed categories
+# and a status code, never text a service sent or any part of a packet.
+FAILURE = re.compile(
+    r"timeout|connection_refused|malformed_answer|request too large to send|HTTP [1-5]\d\d"
+    r"|[A-Z][A-Za-z]*Error"
+)
 
 
 class Front:
@@ -200,10 +209,16 @@ class InProcess(KaiClient):
             # another address may have been given nothing: its relay says which.
             refusal = KaiUnsent if getattr(error, "unsent", False) else KaiRejected
             tried = getattr(error, "attempts", 1), getattr(error, "responded", True)
-            raise marked(refusal(type(error).__name__), *tried) from None
+            # A relayed refusal keeps its status ("HTTP 400", "HTTP 413"), as a failure does.
+            said = str(error) if FAILURE.fullmatch(str(error)) else type(error).__name__
+            raise marked(refusal(said), *tried) from None
         except Exception as error:
             tried = getattr(error, "attempts", 1), getattr(error, "responded", False)
-            raise marked(KaiUnavailable(type(error).__name__), *tried) from None
+            # The relay's own unavailability keeps the client's word for it ("timeout",
+            # "connection_refused", "HTTP 503"); anything else is named by its type alone.
+            relayed = isinstance(error, RuntimeError) and hasattr(error, "attempts")
+            said = str(error) if relayed and FAILURE.fullmatch(str(error)) else type(error).__name__
+            raise marked(KaiUnavailable(said), *tried) from None
 
 
 def read_json(data):

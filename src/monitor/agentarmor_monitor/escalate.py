@@ -399,6 +399,13 @@ def detect(
     size = max_chars - len(state(rules, "", call))  # what the rules and the call leave
     counts = dict.fromkeys(COUNTED, 0)
     record |= {"requests_sent": 0, "requests": counts}
+    # The requests this one decision had refused, when no record of earlier ones is given (a
+    # gate's decision): a smaller budget that rebuilds the very same request is never sent again,
+    # and the budget is halved on until the request changes or the floor is reached.
+    refused_here = {}
+    # How the budget came down after refusals, apart from what was sent: each halving, and each
+    # rebuilt request that had been refused before and so was not sent again (MR251).
+    retries = record["refusal_retries"] = {"budget_reductions": 0, "repeats_not_sent": 0}
     while True:
         text, about, emitted = packet(summary, entry, max(size, MIN_CHARS), sessions)
         if explain:
@@ -420,11 +427,12 @@ def detect(
         # answered with a refusal says nothing about whether this one reached anything.
         last = {"request_sha256": key, "transport_attempts": 0, "responded": False}
         record["last_request"] = last | {"admitted": False}
-        earlier = asked.get(key) if asked is not None else None
+        earlier = asked.get(key) if asked is not None else refused_here.get(key)
         try:
             if earlier is None:
                 reply = put(client, body, questions, counts, record["last_request"])
             elif earlier["reply"] is None:  # refused before, and how: nothing is sent again
+                retries["repeats_not_sent"] += 1
                 raise (KaiUnsent if earlier.get("unsent") else KaiRejected)("refused before")
             else:
                 reply = earlier["reply"]
@@ -432,8 +440,8 @@ def detect(
             here = isinstance(error, KaiUnsent)  # refused here, with nothing sent
             if earlier is None:
                 record["requests_sent"] = counts["transport_attempts"]
-                if asked is not None:
-                    asked[key] = {"key": record["key"], "reply": None, "unsent": here}
+                refusal = {"key": record["key"], "reply": None, "unsent": here}
+                (asked if asked is not None else refused_here)[key] = refusal
             status = "too_large_to_send" if here else "kai_rejected"
             # What must be sent whole (the rules and the call) may alone be too many bytes:
             # then no smaller packet will pass either, and none is tried.
@@ -441,6 +449,7 @@ def detect(
             if size <= MIN_CHARS or alone:
                 return record | {"status": status}
             size = max(MIN_CHARS, size // 2)
+            retries["budget_reductions"] += 1
             continue
         except KaiUnavailable as error:
             record["requests_sent"] = counts["transport_attempts"]

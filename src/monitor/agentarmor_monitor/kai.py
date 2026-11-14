@@ -186,6 +186,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def transport_failure(error):
+    """What became of a request that brought nothing back, in a word a record can be counted by:
+    "timeout", "connection_refused", or the type of the error. urllib wraps the socket's own error
+    in a URLError (its reason)."""
+    reason = getattr(error, "reason", None)
+    for cause in (error, reason):
+        if isinstance(cause, TimeoutError):  # socket.timeout is TimeoutError
+            return "timeout"
+        if isinstance(cause, ConnectionRefusedError):
+            return "connection_refused"
+    return type(reason if isinstance(reason, BaseException) else error).__name__
+
+
 class KaiClient:
     """A client for one Kai service. Session text leaves this process only to that service.
 
@@ -241,11 +254,11 @@ class KaiClient:
             refusal = KaiRejected if error.code in (400, 413) else KaiUnavailable
             raise marked(refusal(f"HTTP {error.code}"), 1, True) from None
         except (OSError, ValueError) as error:  # refused, timed out: nothing came back
-            raise marked(KaiUnavailable(type(error).__name__), 1, False) from None
+            raise marked(KaiUnavailable(transport_failure(error)), 1, False) from None
         try:
             return json.loads(raw.decode("utf-8"))
-        except ValueError as error:  # something came back, and it is not JSON
-            raise marked(KaiUnavailable(type(error).__name__), 1, True) from None
+        except ValueError:  # something came back, and it is not JSON
+            raise marked(KaiUnavailable("malformed_answer"), 1, True) from None
 
     def health(self):
         return self._call("/health")

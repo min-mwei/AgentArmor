@@ -302,7 +302,11 @@ def test_an_oversize_answer_is_recorded_with_the_monitors_halving(ran, written, 
     (issued,) = record["issued"]
     counts = issued["routing"]["requests"]
     assert counts["built"] >= 2 and counts["responses"] == counts["built"]
-    assert record["kai"]["halvings"] == counts["built"] - 1 >= 1
+    # Each halving either built a new request or rebuilt one refused before, which is counted
+    # and not sent again (MR251): the requests built no longer count the halvings.
+    retries = issued["routing"]["refusal_retries"]
+    assert record["kai"]["halvings"] == retries["budget_reductions"] >= 1
+    assert retries["budget_reductions"] == counts["built"] - 1 + retries["repeats_not_sent"]
     # The requests refused for their size came first; the smaller one the record names was
     # answered.
     window, key = record["kai"]["window"], record["kai"]["issued_request_sha256"]
@@ -320,6 +324,7 @@ def test_a_stand_in_that_times_out_gives_kai_unavailable(written, tmp_path):
     record, summary = one_run(written, tmp_path / "out", *slow, "--settle", "1")
     (issued,) = record["issued"]
     assert issued["status"] == "kai_unavailable" and issued["verdict"] == "undecided"
+    assert issued.get("error") == "timeout"  # the server's relay keeps the client's word for it
     assert (issued.get("kai") or {}).get("p_deny") is None  # nothing claims Kai allowed it
     (answered,) = record["answered"]
     assert (answered["verdict"], answered["why"]) == ("undecided", "kai_unavailable")

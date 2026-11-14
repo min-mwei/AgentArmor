@@ -302,6 +302,7 @@ def judge(
     reason = "marked" if sent else "marked_and_not_sent"  # too large to put to the model
     record |= {"evidence": read_to, "applicable": applicable, "host_facts": host}
     record["routing"] = routing | {"requests_sent": sent, "requests": counts, "reason": reason}
+    record["routing"]["refusal_retries"] = record.get("refusal_retries")
     if record["status"] != "scored":
         return "undecided", record, record["status"]
     if record["decision"] == "deny":

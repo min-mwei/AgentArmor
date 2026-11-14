@@ -679,7 +679,12 @@ def error_lines(spool):
 
 
 def halvings(record):
-    """The monitor's own count of the smaller requests it made after a refusal (escalate.detect)."""
+    """The monitor's own count of the budget reductions it made after refusals (escalate.detect,
+    refusal_retries). A reduction that rebuilds a request refused before sends nothing, so the
+    requests built no longer count them (MR251); a record from before that count says built - 1."""
+    told = (record.get("routing") or {}).get("refusal_retries") or record.get("refusal_retries")
+    if isinstance(told, dict) and isinstance(told.get("budget_reductions"), int):
+        return told["budget_reductions"]
     counts = (record.get("routing") or {}).get("requests") or record.get("requests") or {}
     built = counts.get("built")
     return max(0, built - 1) if isinstance(built, int) else 0
