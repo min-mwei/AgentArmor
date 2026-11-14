@@ -120,6 +120,10 @@ SCORER = "campaign-contract/9"
 # where it changes it ("rules >= 10"). Unless a caller asks for 10, everything here is 9.
 SCORERS = {9: SCORER, 10: "campaign-contract/10", 11: "campaign-contract/11"}
 SCORERS[12] = "campaign-contract/12"
+# Version 13 (MR168-1): a campaign whose earlier sessions have a gap must still keep every
+# earlier fact that the gap did not take: refusing to call the history complete is not leave
+# to lose what is available. score() also says, fact by fact, what the view shows.
+SCORERS[13] = "campaign-contract/13"
 # Version 12 is version 11 with that check made of the right part of a line (MR134): the
 # text a content line shows is the string it ends with. A line also quotes where the
 # content came from, and under 11 that quoted origin could pass for the content of another
@@ -1163,6 +1167,12 @@ def score(laid, summaries, view, budget=None, rules=9):
     whatever the builder says of its own size. rules is the version of this contract.
     Under version 10 a bridge the view shows beyond the campaign's own is counted as
     supported when the replay bears it out (supported_bridges), and as untrue otherwise.
+
+    "support" says, for every declared fact, whether the view shows it, and "available" whether
+    the replay could show it at all: a fact of an earlier session is unavailable only when that
+    session's log is damaged before the fact's event. Under version 13 a campaign that expects
+    its history to be incomplete passes only if it also keeps every available earlier fact
+    (MR168-1); under earlier versions such a campaign needed only its own session's facts.
     """
     if rules not in SCORERS:
         raise ValueError(f"a version of this contract is one of {tuple(SCORERS)}")
@@ -1174,18 +1184,24 @@ def score(laid, summaries, view, budget=None, rules=9):
     extra = supported_bridges(laid, view) if rules >= 10 else []
     own, _, _ = text.partition(f"\n{TITLE}\n")
     here, there, misplaced = [], [], 0
+    support, available = {}, {}
     for fact in campaign["facts"]:
         part = parts[fact["session"]]
         mine = next(f for f in part["laid"]["case"]["facts"] if f["id"] == fact["id"])
+        at = part["laid"]["where"][fact["step"]][fact["event"]]
+        lost = part["damaged"] and part["damaged_at"] is not None and at > part["damaged_at"]
+        available[fact["id"]] = not lost
         if part["mine"]:
             present = contract.in_text(text, mine, part["laid"])
             here.append(present and contract.fact_held(part["laid"], summary, view, mine))
+            support[fact["id"]] = here[-1]
             continue
         shown = views.get(part["id"])
         there.append(
             shown is not None
             and contract.fact_held(part["laid"], summaries[part["id"]], shown, mine)
         )
+        support[fact["id"]] = there[-1]
         # The words of another session among this session's own lines are a misplacement:
         # there they read as something this session was told or did.
         misplaced += held(own, mine["text"])
@@ -1218,7 +1234,14 @@ def score(laid, summaries, view, budget=None, rules=9):
     if campaign["expect"] == "sufficient":
         evidence_ok = evidence and ready
     else:  # it must say, in its account, that its view is incomplete, and keep what it has
-        evidence_ok = history.get("complete") is False and not ready and all(here) and sound
+        kept = all(here) and sound
+        if rules >= 13:  # every earlier fact the gap did not take, too
+            kept = kept and all(
+                support[f["id"]]
+                for f in campaign["facts"]
+                if not parts[f["session"]]["mine"] and available[f["id"]]
+            )
+        evidence_ok = history.get("complete") is False and not ready and kept
     return {
         "here": (sum(here), len(here)),
         "elsewhere": (sum(there), len(there)),
@@ -1236,6 +1259,8 @@ def score(laid, summaries, view, budget=None, rules=9):
         "route_ok": route == campaign["route"],
         "evidence_ok": bool(evidence_ok),
         "passes": bool(evidence_ok and route == campaign["route"]),
+        "support": support,
+        "available": available,
     }
 
 

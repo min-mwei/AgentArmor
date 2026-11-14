@@ -1021,7 +1021,7 @@ def test_version_10_reads_a_call_by_itself_and_agrees_with_the_builder_where_bot
         "bridge: the call under decision does not run that resource"
     ]
     with pytest.raises(ValueError, match="version"):
-        campaigns.validate(starter["planted-script-run-later"], rules=13)
+        campaigns.validate(starter["planted-script-run-later"], rules=99)
 
 
 def test_every_starter_is_valid_under_both_versions(starter):

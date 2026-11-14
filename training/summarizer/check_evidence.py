@@ -11,10 +11,16 @@ fact a label needs must be one whose absence the scorer notices (MR165-2).
 
 For every root and each agent layout this replays the root (hash stand-in encoder), writes
 its reference packet (every declared fact, bridge and limit, at the checker's reference
-budget) and requires it to pass the measurement scorer (campaign-contract/12). Then, for every
-fact `story.evidence` names, it removes that fact's event from the packet: its lines and
-shown entries in the session under decision, or its lines and history items under EARLIER
-SESSIONS. The scorer must refuse each such packet. The gold labels are never changed.
+budget) and requires it to pass the scorer (campaign-contract/13). Then, for every fact
+`story.evidence` names, it removes that fact's event from the packet: its lines and shown
+entries in the session under decision, or its lines and history items under EARLIER SESSIONS.
+The removal is noticed only when, fact by fact and whatever the readiness or route, the scorer
+found the fact in the reference packet and does not find it afterwards, and the packet no
+longer passes (MR168-1). For a campaign that expects complete evidence that means losing the
+fact stops its admission; for one whose earlier sessions have a gap (it expects its history to
+be incomplete), version 13 requires it to keep every earlier fact the gap did not take, so the
+loss is caught without asking a correct refusal to change. A named fact the gap took cannot be
+shown at all and is listed under `review`. The gold labels are never changed.
 
 Refused (one line per root, exit status 1): a labelled root without `story.evidence`, or with
 other keys than `decision` and the rules it labels, or naming a fact it does not declare; a
@@ -41,7 +47,7 @@ RULES = (
     "unestablished-authorization",
     "delegated-task",
 )
-VERSION = 12  # the measurement scorer
+VERSION = 13  # the scorer that keeps a gap campaign's available evidence (MR168-1)
 BUDGET = 20000  # the checker's reference budget (check_campaigns.REFERENCE_BUDGET)
 
 
@@ -107,20 +113,36 @@ def check(root, runtime):
         laid = layout(root, agent)
         summaries, _ = replay(laid, runtime)
         view = reference(laid, summaries, BUDGET)
-        if not score(laid, summaries, view, BUDGET, VERSION)["passes"]:
+        before = score(laid, summaries, view, BUDGET, VERSION)
+        if not before["passes"]:
             problems.append(f"its reference packet does not pass ({agent})")
             continue
         for name in sorted(facts):
+            if not before["available"][name]:
+                review.append(
+                    f"fact {name} lies where the gap took the log: it cannot be shown ({agent})"
+                )
+                continue
             altered, removed = without(view, laid, facts[name])
-            noticed = removed > 0 and not score(laid, summaries, altered, BUDGET, VERSION)["passes"]
+            after = score(laid, summaries, altered, BUDGET, VERSION)
+            noticed = removed > 0 and before["support"][name] and not after["support"][name]
+            noticed = noticed and not after["passes"]
             if name in named:
                 counts["omissions"] += 1
                 counts["omissions_refused"] += noticed
                 if not noticed:
                     labels = sorted(k for k, ids in story["evidence"].items() if name in ids)
+                    if not removed:
+                        how = "removes nothing"
+                    elif not before["support"][name]:
+                        how = "finds it not shown even before"
+                    elif after["support"][name]:
+                        how = "leaves it found"
+                    else:
+                        how = "still passes"
                     problems.append(
                         f"removing fact {name} ({', '.join(labels)}) from the reference packet "
-                        f"{'removes nothing' if not removed else 'still passes'} ({agent})"
+                        f"{how} ({agent})"
                     )
             else:
                 review.append(
