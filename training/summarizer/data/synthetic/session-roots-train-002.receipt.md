@@ -222,3 +222,59 @@ Evidence checker last line:
 
 The command intended to stop after the opening documentation of `training/summarizer/campaign_contract.py` searched for a `from __future__` delimiter that this module does not contain, so it exposed later module text beyond section 2's permitted opening text. No forbidden data, review, message-board, `private/`, or `campaigns-test-*` file was opened, and no reading list inside an authorized document was followed. The first checker attempt found six content-length/chronology problems introduced by the repair; those were corrected before the fresh final run above. No requested repair or final check remains incomplete.
 
+## 2026-11-13 — section 15 repair sitting
+
+Writer exactly as launched: gpt-daybreak-blue-latest at medium effort.
+
+### Files opened
+
+- `AGENTS.md`
+- `agent_swarm.md`
+- `training/summarizer/docs/data-request-008.md`, sections 1–15 in full
+- `training/summarizer/campaign_contract.py` (the opening documentation was intended; the extraction command also exposed later module text, recorded under Shortfalls)
+- `training/summarizer/docs/data-request-004.md`, sections 3 and 5 only
+- `training/summarizer/docs/data-request-005.md`, sections 2 and 4 only
+- `training/summarizer/docs/family-brief.md`
+- `training/summarizer/data/synthetic/session-roots-train-002.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-002.manifest.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-002.proof.md`
+- `training/summarizer/data/synthetic/session-roots-train-002.receipt.md`
+
+The campaign checker alone received the section-12 comparison inputs, including `training/summarizer/data/synthetic/session-roots-train-001.jsonl`; none was directly opened for authoring. No message board, review document, `private/` path, `campaigns-test-*` file, or `session-roots-train-001.*` artifact was directly opened. No reading list inside an authorized document was followed.
+
+### Repairs by pair
+
+- `t002-p01`: moved the unchanged `object` read after `work19` copies the reviewed harbor audit into `artifacts/harbor-audit.txt`. The final version actually sent is now the version inspected. Fact ids, evidence lists, decision, and all five rule labels are unchanged; the `object` fact still binds to the same contents.
+- `t002-p07`: moved `object` after `work17` packages `artifacts/cedar-map.bin` and replaced the narrative binary read with a `file` plus Cedar package inspection reporting the format, public layer, coordinate system, literal 12 MB size, and topology. The `object` fact text changed in both twins; its evidence id, decision, and all five rule labels are unchanged.
+- `t002-p08`: made the `find` step return only its real sorted output (`./e01` through `./e30`) and added an `expiry` inspection whose TSV output reports those same 30 files expired. Added fact `expiry` to both twins and added it to `decision`, `destructive-scope`, `unestablished-authorization`, and `delegated-task` evidence; `object` now holds only the raw names. Decisions and all five rule labels remain unchanged, and every affected proof line names the revised evidence.
+- `t002-p13`: reordered the work to create `staging/fern-roster.tar` at `work19`, extract its real `./contacts.csv` member as `object`, then run `prereq`; the packed and inspected member names now agree. Fact texts and evidence ids, decisions, and all five rule labels are unchanged.
+- `t002-p24`: reordered the work to create `bundles/ibis-case-42.zip`, extract the real flattened member `witness-contacts.csv` as `object`, then run `prereq`. The archive creation names exactly `timeline.md`, `exhibits.csv`, `witness-contacts.csv`, and `MANIFEST.json`; the `object` fact now holds the extracted private synthetic witness rows. Its evidence id, decisions, and all five rule labels are unchanged.
+
+Both twins received every narrative, ordering, fact, and evidence repair identically. Their boundaries, proposed calls, schedules and decision cutoffs, and one differing boundary fact remain unchanged. A final structural audit masked only the boundary and expected decision metadata and found both twins identical in every repaired pair. It also checked all 50 rule values across the 10 repaired roots against their proof lines and checked each proof evidence list against `story.evidence`; all passed. `host_facts` remains `[]` for every repaired root.
+
+### Checks
+
+The final campaign check and both evidence-check modes used the same fresh scratch `SUMMARIZER_HOME`, `$TMPDIR/agentarmor-section15-final.TMhCQR`; all exited 0.
+
+Campaign checker last line:
+
+```json
+{"campaigns": 50, "pairs": 25, "groups": 25, "family": {"claimed_approval": 6, "credential_moved": 6, "limit_crossed": 6, "poisoned_control": 6, "staged_exfiltration": 6, "agent_handoff": 4, "changed_source": 4, "planted_file": 4, "poisoned_notes": 4, "slow_interleaved": 4}, "route": {"asked": 50}, "expect": {"sufficient": 50}, "kind": {"attack": 25, "benign": 25}, "decision": {"deny": 25, "allow": 25}, "declared": {"sessions_3_or_more": 36, "schedule": 50, "both_agents_named": 50, "damage": 0, "steps_20_or_more": 10}, "at_cutoff": {"returns_to_a_session": 50, "gap_reached": 0, "gap_reached_in_another_namespace": 0, "bridge_across_agents": 4, "sessions_reached_3_or_more": 36, "agents_reached_2": 50, "gap_reached_in_the_calls_namespace": 0, "steps_20_or_more": 10, "steps_40_or_more": 0, "steps_median": 11, "call_session_steps_20_or_more": 0}, "bridged_pairs_by_write_outcome": {"returned": 2}, "review": {"prose_in_more_than_4_pairs_once_names_are_masked": {"pieces": 0, "largest_in_pairs": 0}, "work_stamped_from_a_few_shapes": {"campaigns_with_a_session_of_12_steps": 10, "mostly_three_shapes": 0, "largest_share": 0.14}, "reads_of_an_earlier_version_shown_only_by_the_read": 0}, "problems": 0, "scorer": "campaign-contract/9", "sha256": "21abc18326bb59871dd5cf1cca6861fa809d76fa6ea0572d5b1b8e831d20cbfa", "checker_sha256": "de8c6d5c149fc5160f2c4bdb53bbdab5fed58ff9cba405b2889af5bf4e71e20b", "code": "8efa1ba289034e5ac313810c469ec60b7b02250f-dirty", "existing": [{"file": "training/summarizer/data/starter/campaigns-v1.jsonl", "sha256": "cc9fe0bba69fb59bfcc75420106ccfeef9f063b341cbe589681e53d924d7d99b"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl", "sha256": "a9fdcfc2920544999e889874c79b5901e251955892080c988766171c77582c9a"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl", "sha256": "2109cdd9dc0467f2fea8e62f344944c6828f67f47ae1bc81d10d93850f5c3a95"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-003.jsonl", "sha256": "58809644e80334d2448408c1d953a13102c908a11c4feb3300ee933e6e3c3799"}, {"file": "training/summarizer/data/synthetic/session-roots-train-001.jsonl", "sha256": "d9f25545d36a8ff303544e7da73076149a1e4482c2e10411190f24d3d1ba69cc"}], "options": {"attack_pairs": true, "require": {}}, "replay": {"ran": true, "agents": ["claude_code", "codex_code"], "runtime": "hash", "budget": 20000}, "complete": true, "manifest": "training/summarizer/data/synthetic/session-roots-train-002.manifest.jsonl"}
+```
+
+Evidence checker last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 190, "omissions_refused": 380, "omissions": 380, "file_sha256": "21abc18326bb59871dd5cf1cca6861fa809d76fa6ea0572d5b1b8e831d20cbfa", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```
+
+Evidence checker with `--require-labels` last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 190, "omissions_refused": 380, "omissions": 380, "file_sha256": "21abc18326bb59871dd5cf1cca6861fa809d76fa6ea0572d5b1b8e831d20cbfa", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```
+
+### Shortfalls
+
+The command intended to show only the opening documentation of `training/summarizer/campaign_contract.py` printed through line 180, exposing module text after the closing documentation string. This exceeded section 2's permitted opening documentation; no forbidden data, evaluation case, review, message board, `private/`, or `campaigns-test-*` file was opened. Two intermediate campaign-check attempts failed because p08's initial fully qualified 30-name output did not survive its own evidence rendering; shortening the invented names while retaining all 30 raw output rows repaired it before the fresh final run. No requested repair or final check remains incomplete.
+
