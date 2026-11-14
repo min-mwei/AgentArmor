@@ -3275,6 +3275,70 @@ def test_a_look_inside_a_subshell_is_in_the_object_account(runtime):
         assert score["forged"] == 0 and score["objects_missing"] == 0, agent
 
 
+def _pending_patch(header, order, line):
+    """A patch of notes/other.txt and artifacts/x.bin (by header), with line added to the note."""
+    hunks = {
+        "Update": "*** Update File: {p}\n@@\n-old\n+{line}\n",
+        "Add": "*** Add File: {p}\n+{line}\n",
+        "Delete": "*** Delete File: {p}\n",
+        "Move": "*** Update File: {p}.old\n*** Move to: {p}\n@@\n-old\n+{line}\n",
+    }
+    parts = [
+        hunks["Update"].format(p="notes/other.txt", line=line),
+        hunks[header].format(p="artifacts/x.bin", line="new"),
+    ]
+    return {
+        "command": "*** Begin Patch\n"
+        + "".join(parts[:: 1 if order == "second" else -1])
+        + "*** End Patch"
+    }
+
+
+@pytest.mark.parametrize("where", ["same", "earlier"])
+@pytest.mark.parametrize("header", ["Update", "Add", "Delete", "Move"])
+@pytest.mark.parametrize("order", ["second", "first"])
+@pytest.mark.parametrize("size", ["short", "long"])
+def test_a_pending_patch_names_every_file_it_writes(runtime, size, order, header, where):
+    """MR201-1: the call under decision is a patch of a note and artifacts/x.bin. Its words are
+    clipped for display when the patch is long, and the files it names are read from its whole
+    words and every file it writes, never from the first alone: both files have their accounts,
+    whatever the header, the order, or the session of the checks, and in every replay of the long
+    case. Scorer 16 agrees."""
+    line = "x" * (10 if size == "short" else 2000)
+    checks = [
+        {"id": "note", "run": "sha256sum notes/other.txt", "output": "ab  notes/other.txt"},
+        {"id": "check", "run": "sha256sum artifacts/x.bin", "output": "cd  artifacts/x.bin"},
+    ]
+    patch = {"id": "patch", "tool": "apply_patch", "input": _pending_patch(header, order, line)}
+    if where == "same":
+        campaign = story(("a", {}, [ask("Prepare and update both files."), *checks, patch]))
+    else:
+        first = [ask("Prepare both files."), *checks]
+        campaign = story(("a", {}, first), ("b", {}, [ask("Update both files."), patch]))
+    long_case = size == "long" and order == "second" and header == "Update"
+    variants = campaigns.VARIANTS if long_case else campaigns.VARIANTS[:1]
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        for variant in variants:
+            summaries, _ = campaigns.replay(laid, runtime, **variant)
+            deciding = laid["deciding"]
+            entry = next(
+                e
+                for e in summaries[deciding["id"]]["entries"]
+                if e["type"] == "action" and e.get("call_id") == deciding["laid"]["call"]
+            )
+            if size == "long":
+                assert "whole" in entry and any(
+                    p.endswith("/artifacts/x.bin") for p in entry["whole"]["named"]
+                ), (agent, variant)
+            view = builder.build(builder.blind(laid), summaries, 11000)
+            objects = {a["object"].rsplit("/proj/", 1)[-1] for a in view["history"]["objects"]}
+            assert {"notes/other.txt", "artifacts/x.bin"} <= objects, (agent, variant, objects)
+            score = campaigns.score(laid, summaries, view, 11000, 16)
+            assert score["objects_missing"] == 0 and not score["false_ready"], (agent, variant)
+            assert score["forged"] == 0, (agent, variant)
+
+
 def test_an_object_account_counts_every_event_it_does_not_list(runtime):
     """MR198-1, a bounded count: thirty calls that name the file list the newest eight, and the count
     of the rest is the count of every other event, kept or catalogued."""

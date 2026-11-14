@@ -1299,12 +1299,14 @@ def named_by_call(call, cwd, home):
     """The files a call's own words name, before any step: what uses() reads off its words, and for
     a tool that is no shell or file tool, the paths in its input ({"path": "out/bundle"}), which it
     names as much as a command does. One reading for the lookup and for the reference arm. A
-    pending call whose words a summary clipped carries what its whole words name (whole_call)."""
-    named = whole_call(call).get("named")
-    if isinstance(named, list):
-        return set(named)
+    pending call whose words a summary clipped carries what its whole words name (whole_call): that
+    is added to what its whole target and its recorded writes name, and never stands in for them,
+    so a file the recorded effects know is never left out (MR201-1)."""
+    call = whole_call(call)
     words = {k: _ADDRESS.sub(" ", v) if isinstance(v, str) else v for k, v in call.items()}
     named = set(uses(words, cwd, home)["named"])  # an address's host is no file (auditor@x.example)
+    if isinstance(call.get("named"), list):
+        return named | set(call["named"])
     if call.get("tool") not in SHELLS | WRITES | READS:
         named |= _said(words, cwd, home)
     return named

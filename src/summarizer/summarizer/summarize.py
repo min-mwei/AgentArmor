@@ -563,6 +563,7 @@ class Session:
         )
         unit.patch_unread = not call["writes_whole"]
         whole = {"tool": tool, "target": call["target"], "text": call["whole"]}
+        whole["writes"] = call["writes"]  # every file a file tool writes, as the effects have them
         unit.named = sorted(named_by_call(whole, cwd, self.home))
         unit.input_clipped = any(
             str(note.get("path", "")).partition(".")[0].partition("[")[0] == "tool_input"
