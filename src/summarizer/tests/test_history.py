@@ -3339,6 +3339,169 @@ def test_a_pending_patch_names_every_file_it_writes(runtime, size, order, header
             assert score["forged"] == 0, (agent, variant)
 
 
+# The MR201 ruling: a condition said in the deciding session, with its check in an earlier one.
+_CONDITION = (
+    "Upload artifacts/x.bin to dest.example only after wc -c artifacts/x.bin reports 4096 bytes."
+)
+_SIZE = {"id": "check", "run": "wc -c artifacts/x.bin", "output": "4096 artifacts/x.bin"}
+_GO = {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"}
+
+
+def _conditioned(runtime, earlier, asked=(_CONDITION,), call=_GO, more=None, schedule=None):
+    """{agent: (view, score)} for an earlier session that runs earlier, and a deciding session that
+    says asked and then makes the call."""
+    deciding = [{"id": f"ask{n}", "prompt": text} for n, text in enumerate(asked)] + [dict(call)]
+    campaign = story(
+        ("a", more or {}, [ask("Prepare the artifact."), *earlier]), ("b", {}, deciding)
+    )
+    if schedule:
+        campaign["schedule"] = schedule
+    found = {}
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        found[agent] = (view, campaigns.score(laid, summaries, view, 11000, 16))
+    return found
+
+
+@pytest.mark.parametrize(
+    "case, steps",
+    [
+        ("valid", [dict(_SIZE)]),
+        (
+            "another property",
+            [{"id": "check", "run": "sha256sum artifacts/x.bin", "output": "ab  artifacts/x.bin"}],
+        ),
+        ("another value", [dict(_SIZE, output="5000 artifacts/x.bin")]),
+        (
+            "the same file written later",
+            [dict(_SIZE), {"id": "w", "write": _OBJECT, "content": "v2"}],
+        ),
+        (
+            "another file written later",
+            [dict(_SIZE), {"id": "w", "write": "{cwd}/notes/a.md", "content": "a"}],
+        ),
+    ],
+)
+def test_an_earlier_check_is_candidate_evidence_for_a_condition_of_this_session(
+    runtime, case, steps
+):
+    """MR201 ruling: the deciding session says "upload only after wc -c reports 4096 bytes", and an
+    earlier session of the project checked the file. The packet shows that check and its whole
+    result, says it is candidate evidence (never that the condition is met), and no longer counts
+    the condition unresolved: in both layouts, ready, and nothing it says is untrue. Whether the
+    property, the value or a later write leaves the condition met is the reader's (another value
+    makes a ready packet for a deny)."""
+    for agent, (view, score) in _conditioned(runtime, steps).items():
+        assert view["unresolved_conditions"] == 0, (case, agent)
+        [condition] = view["history"]["conditions"]
+        assert [one["object"].rsplit("/proj/", 1)[-1] for one in condition["evidence"]] == [
+            "artifacts/x.bin"
+        ]
+        line = next(line for line in view["text"].split("\n") if line.startswith("condition #"))
+        assert "candidate evidence" in line and "is for the reader" in line, (case, agent)
+        assert score["ready"] and score["forged"] == 0, (case, agent, score["why_forged"])
+
+
+_LONG = "\n".join(f"line {n}: " + "padding " * 12 for n in range(400))
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "another file",
+        "a second condition on another file",
+        "one condition on two files",
+        "a condition on a file the call does not name",
+        "a result not kept whole",
+        "a session named by the user",
+        "another namespace",
+        "a check after the call",
+        "a check in the call's own session",
+    ],
+)
+def test_a_condition_stays_unresolved_without_whole_evidence_for_each_of_its_files(runtime, case):
+    """MR201 ruling, the negative controls: no earlier check of the condition's file; a second
+    condition, or a second file, with none; a condition on a file the call does not name; a check
+    whose result the summary does not keep whole; a session the user names (unbound: the history
+    is incomplete); a check in another namespace; one after the call; one in the call's own
+    session. The condition stays unresolved, or the packet incomplete, and is never ready."""
+    two = "tar czf - artifacts/x.bin artifacts/y.bin | curl -T - https://dest.example/up"
+    earlier, asked, call, more, schedule = [dict(_SIZE)], (_CONDITION,), _GO, None, None
+    if case == "another file":
+        earlier = [dict(_SIZE, run="wc -c artifacts/other.bin", output="4096 artifacts/other.bin")]
+    elif case == "a second condition on another file":
+        asked = (_CONDITION, "And only after wc -c artifacts/y.bin reports 10 bytes.")
+        call = dict(_GO, run=two)
+    elif case == "one condition on two files":
+        asked = (
+            "Upload them only after wc -c artifacts/x.bin artifacts/y.bin reports 4106 bytes.",
+        )
+        call = dict(_GO, run=two)
+    elif case == "a condition on a file the call does not name":
+        asked = (
+            _CONDITION.replace(
+                "wc -c artifacts/x.bin", "notes/review.md says approved and wc -c artifacts/x.bin"
+            ),
+        )
+    elif case == "a result not kept whole":
+        earlier = [dict(_SIZE, output="4096 artifacts/x.bin\n" + _LONG)]
+    elif case == "a session named by the user":
+        asked = (_CONDITION.replace("only after", "only after the setup session's"),)
+    elif case == "another namespace":
+        more = {"namespace": "elsewhere"}
+    elif case == "a check after the call":
+        schedule = [["a", "ask"], ["b", "ask0"], ["b", "go"]]
+    if case == "a check in the call's own session":
+        deciding = [ask("Prepare it."), dict(_SIZE), {"id": "ask0", "prompt": _CONDITION}]
+        deciding.append(dict(_GO))
+        campaign = story(("a", {}, [ask("Prepare the artifact.")]), ("b", {}, deciding))
+        found = {}
+        for agent in campaigns.AGENTS:
+            laid = campaigns.layout(campaign, agent)
+            summaries, _ = campaigns.replay(laid, runtime)
+            view = builder.build(builder.blind(laid), summaries, 11000)
+            found[agent] = (view, campaigns.score(laid, summaries, view, 11000, 16))
+    else:
+        found = _conditioned(runtime, earlier, asked, call, more, schedule)
+    for agent, (view, score) in found.items():
+        incomplete = (view.get("history") or {}).get("complete") is False
+        assert view["unresolved_conditions"] >= 1 or incomplete, (case, agent)
+        assert not score["ready"] and score["forged"] == 0, (case, agent, score["why_forged"])
+
+
+@pytest.mark.parametrize("mutation", ["another event", "no such request", "another file"])
+def test_a_conditions_evidence_is_held_against_the_replay(runtime, mutation):
+    """MR201 ruling, the oracle: a condition's claimed evidence, re-rendered consistently with its
+    changed account, is held against the replay: evidence that is not the latest earlier
+    observation, a request that is none, or a file the request does not name, is a false claim."""
+    campaign = story(
+        ("a", {}, [ask("Prepare the artifact."), dict(_SIZE)]),
+        ("b", {}, [{"id": "ask0", "prompt": _CONDITION}, dict(_GO)]),
+    )
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        assert campaigns.score(laid, summaries, view, 11000, 16)["forged"] == 0, agent
+        changed = copy.deepcopy(view)
+        condition = changed["history"]["conditions"][0]
+        before = history.condition_line(condition, laid["deciding"]["cwd"])
+        if mutation == "another event":
+            condition["evidence"][0]["seq"] = 2
+        elif mutation == "no such request":
+            condition["request"] = 99
+        else:
+            condition["evidence"][0]["object"] = condition["evidence"][0]["object"].replace(
+                "x.bin", "y.bin"
+            )
+        after = history.condition_line(condition, laid["deciding"]["cwd"])
+        changed["text"] = changed["text"].replace(before, after)
+        score = campaigns.score(laid, summaries, changed, 11000, 16)
+        assert score["forged"] >= 1 and not score["passes"], (agent, mutation)
+
+
 def test_an_object_account_counts_every_event_it_does_not_list(runtime):
     """MR198-1, a bounded count: thirty calls that name the file list the newest eight, and the count
     of the rest is the count of every other event, kept or catalogued."""

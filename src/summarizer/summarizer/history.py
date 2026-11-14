@@ -1514,6 +1514,106 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
     return told
 
 
+CONDITION_LINE = 200  # room kept for one condition's evidence line in a section
+
+
+_FILE_NAME = re.compile(r"[^/]+\.[A-Za-z0-9]{1,5}")  # a name with a short suffix: report.md
+
+
+def _condition_files(request, cwd, home):
+    """The files a request names: each path-like piece of its words that holds a slash, or that
+    ends in a short suffix as a file name does. A host such as dest.example is no file here."""
+    pieces = {_piece(piece) for piece in _PATHISH.findall(str(request.get("text") or ""))}
+    files = {piece for piece in pieces if "/" in piece or _FILE_NAME.fullmatch(piece)}
+    return {expand(piece, cwd, home) for piece in files}
+
+
+def _settled_only_elsewhere(mine, view, accounts, home):
+    """{request seq: the files it names}, for each condition of the call's own session that its
+    own later calls cannot settle because none came at all (none returned, none is pending, and
+    the summary left no call out), and whose request names only files the call names (accounts:
+    every file the call names, with or without events). Another reason it is unresolved is
+    never set aside, and a condition on a file the call does not name is never settled here."""
+    summary = mine["summary"]
+    if sum(summary["session"]["omitted"]["actions"].values()):
+        return {}
+    prompts = {e["seq"]: e for e in summary["entries"] if e["type"] == "prompt"}
+    named_by_the_call = {account["object"] for account in accounts}
+    found = {}
+    for condition in view.get("conditions") or ():
+        if condition["resolved"] or condition["results"] or condition["pending"]:
+            continue
+        request = prompts.get(condition["request"])
+        files = _condition_files(request, mine["cwd"], home) if request else set()
+        if files and files <= named_by_the_call:
+            found[condition["request"]] = sorted(files)
+    return found
+
+
+def _shown_whole(event, shown, parts_by_alias):
+    """Whether the packet shows an earlier session's observation whole: the call that made it, its
+    words not cut, and every piece of its result, each on a line of the section (MR201 ruling)."""
+    alias = event["alias"][3:-1] if event["alias"].startswith("[s:") else None
+    other = parts_by_alias.get(alias)
+    if other is None:
+        return False
+    entries = other["summary"]["entries"]
+    call = next((e for e in entries if e["type"] == "action" and e["seq"] == event["seq"]), None)
+    if call is None or "text_chars" in call or (alias, call["seq"], "action") not in shown:
+        return False
+    back = [
+        e
+        for e in entries
+        if e["type"] == "content"
+        and e.get("call_id") == call.get("call_id")
+        and e["seq"] > call["seq"]
+        and not e.get("aside")
+    ]
+    if not back or call.get("result_pieces") != len(back):
+        return False
+    return all((alias, e["seq"], "content", e.get("sha256")) in shown for e in back)
+
+
+def condition_evidence(wanted, objects, shown, parts_by_alias):
+    """For each condition that only an earlier session can settle (_settled_only_elsewhere), the
+    candidate evidence the packet shows: for every file it names, the latest observation of it
+    in an earlier session, from an account with no gap, whose call and whole result are shown.
+    A condition gets it only when every file it names has it; one result settles one file. It
+    says that candidate evidence is shown, never that the condition is met: whether the value
+    meets it, a later write changed the file, or another grant replaced it is the reader's."""
+    accounts = {account["object"]: account for account in objects}
+    found = []
+    for request, named in sorted(wanted.items()):
+        evidence = []
+        for path in named:
+            account = accounts[path]
+            looks = [e for e in account["events"] if e["kind"] == "looked at"]
+            latest = looks[-1] if looks else None
+            if not account["complete"] or latest is None or latest["alias"] == "this session":
+                break
+            if not _shown_whole(latest, shown, parts_by_alias):
+                break
+            evidence.append({"object": path, "alias": latest["alias"], "seq": latest["seq"]})
+            evidence[-1]["result"] = latest["result"]
+        else:
+            found.append({"request": request, "evidence": evidence})
+    return found
+
+
+def condition_line(condition, cwd):
+    """The section's line for one condition's candidate evidence, from the account alone."""
+    said = []
+    for one in condition["evidence"]:
+        name = one["object"]
+        name = os.path.relpath(name, cwd) if name.startswith(cwd + "/") else name
+        said.append(f"{one['alias']} #{one['seq']} looked at {name}, shown with its result")
+    return (
+        f"condition #{condition['request']}: candidate evidence from an earlier session: "
+        + "; ".join(said)
+        + "; whether it meets the condition is for the reader"
+    )
+
+
 def object_line(account, cwd):
     """The history section's line for one object's account, from the account and nothing else: the
     sessions searched, then each recorded event in host-clock order (its session when it differs
@@ -2157,6 +2257,10 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     objects = [account for account in found["objects"] if account["events"] or account["gaps"]]
     told_of = [object_line(account, mine["cwd"]) for account in objects]
     frame = len(TITLE) + 80 + sum(len(line) + 1 for line in told_of)  # title, second line, objects
+    # Conditions of this session that only an earlier session can settle: room for each one's
+    # line of candidate evidence is kept before anything else is placed (MR201 ruling).
+    elsewhere = _settled_only_elsewhere(mine, view, found["objects"], home)
+    frame += CONDITION_LINE * len(elsewhere)
 
     def placed(view):
         """The groups that find room beside a digest: (chosen items, left out, why)."""
@@ -2218,6 +2322,20 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     ]
     if objects:
         account["objects"] = objects
+    # The candidate evidence an earlier session gives a condition of this session, from what the
+    # section shows whole; each condition it gives evidence to is no longer counted unresolved.
+    wanted = _settled_only_elsewhere(mine, view, found["objects"], home) if elsewhere else {}
+    showing = {
+        (source["alias"], about["seq"], about["type"], about.get("sha256"))
+        for source, _, _, _, about in items
+    }
+    showing |= {(alias, seq, kind) for alias, seq, kind, _ in showing}
+    by_alias = {other["alias"]: other for other in others}
+    conditions = condition_evidence(wanted, found["objects"], showing, by_alias)
+    if conditions:
+        account["conditions"] = conditions
+        view = view | {"unresolved_conditions": view["unresolved_conditions"] - len(conditions)}
+    told_of += [condition_line(condition, mine["cwd"]) for condition in conditions]
     shown = [f"[s:{source['alias']}] {words}: {line}" for source, _, words, line, _ in items]
     body, _, footer = view["text"].rpartition("\n")
     text = "\n".join([body, TITLE, header(account), *shown, *told_of, footer])

@@ -113,7 +113,7 @@ from score_eval import code_version
 from summarizer import history as history_lookup
 from summarizer.daemon import Daemon
 from summarizer.effects import shell_words  # noqa: F401  (read here and re-exported)
-from summarizer.history import object_line
+from summarizer.history import condition_line, object_line
 from summarizer.hook import Scripted, handle
 from summarizer.store import EVENTS, load_summary, session_dir
 from summarizer.text import digest, entry_lines
@@ -1308,6 +1308,63 @@ def object_problems(laid, summaries, view):
     return problems, missing
 
 
+def condition_problems(laid, summaries, view):
+    """What a view's condition evidence claims that this harness's replay and packet do not bear
+    out (MR201 ruling), read with no part of the runtime's evidence builder: each claimed request
+    is a request of the deciding session before the call that names every file it is given
+    evidence for; each piece of evidence is the latest returned observation of that file, by
+    the oracle's own reading of the steps, in a searched earlier session; and the packet's items
+    show that observation's call and the event of its result."""
+    history = view.get("history") or {}
+    conditions = history.get("conditions") or []
+    if not conditions:
+        return []
+    deciding = laid["deciding"]
+    records, _ = _oracle_steps(laid, summaries)
+    shown = {
+        (item.get("alias"), item.get("seq"), item.get("type")) for item in history.get("items", ())
+    }
+    steps = {step["id"]: step for step in deciding["laid"]["case"]["steps"]}
+    requests = {
+        _logged(deciding, marks["request"]): steps[sid].get("prompt", "")
+        for sid, marks in deciding["laid"]["where"].items()
+        if "request" in marks and marks["request"] < deciding["cut"]
+    }
+    problems = []
+    for condition in conditions:
+        said = _oracle_paths(requests.get(condition.get("request"), ""), deciding["cwd"])
+        if condition.get("request") not in requests:
+            problems.append("a condition's request that is no request of the call's session")
+            continue
+        for one in condition.get("evidence", ()):
+            path, alias = one.get("object"), str(one.get("alias") or "")
+            looks = [
+                r
+                for r in records
+                if r["alias"] != "this session"
+                and r["outcome"] == "returned"
+                and (
+                    path in r["surely"]
+                    if r["kind"] == "read"
+                    else r["observing"] and _held(r, path)
+                )
+            ]
+            latest = max(looks, key=lambda r: r["order"], default=None)
+            if path not in said:
+                problems.append("a condition's evidence for a file its request does not name")
+            elif latest is None or (latest["alias"], latest["seq"]) != (alias, one.get("seq")):
+                problems.append("a condition's evidence that is not the latest earlier observation")
+            elif (alias[3:-1], latest["seq"], "action") not in shown or (
+                alias[3:-1],
+                latest["result"],
+                "content",
+            ) not in shown:
+                problems.append(
+                    "a condition's evidence whose call or result the packet does not show"
+                )
+    return problems
+
+
 def _entry(summary, about):
     """The entry of a summary that an account names, by its kind, event and identity."""
     for entry in summary["entries"]:
@@ -1406,6 +1463,10 @@ def check_history(laid, summaries, view, rules=9):
     # (history.object_line, MR196): each is the very rendering of its account, and is no item.
     accounts = (view.get("history") or {}).get("objects") or []
     told_of = [object_line(one, laid["deciding"]["cwd"]) for one in accounts]
+    # Then one line for each condition of the call's session that an earlier session gives
+    # candidate evidence to (history.condition_line, MR201 ruling), also rendered from its account.
+    conditions = (view.get("history") or {}).get("conditions") or []
+    told_of += [condition_line(one, laid["deciding"]["cwd"]) for one in conditions]
     if told_of:
         if section[-len(told_of) :] != told_of:
             problems_of_objects = ["an object line that is not what its account says"]
@@ -1422,6 +1483,7 @@ def check_history(laid, summaries, view, rules=9):
     problems, by_alias = list(problems_of_objects), {}
     if rules >= 16:
         problems += object_problems(laid, summaries, view)[0]
+        problems += condition_problems(laid, summaries, view)
     for source in history.get("sources", ()):
         match = [
             part
