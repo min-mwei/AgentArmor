@@ -593,8 +593,12 @@ def _conditions(summary, target, shown):
     return found
 
 
-def _condition_line(conditions, worst=False):
-    """One line for every condition, so its cost is known before anything is selected."""
+def _condition_line(conditions, worst=False, elsewhere=()):
+    """One line for every condition, so its cost is known before anything is selected.
+
+    elsewhere names the conditions that no later result of this session settles and for which
+    an earlier session's whole candidate evidence is shown in the section below (MR203-2): the
+    line says so of them, apart from those still unresolved. It never says a condition is met."""
     if not conditions:
         return None
     requests = ", ".join(f"#{item['request']}" for item in conditions)
@@ -605,9 +609,20 @@ def _condition_line(conditions, worst=False):
     line += " in full"
     if pending or worst:
         line += f"; {pending} later calls have no result yet"
-    if worst or not all(item["resolved"] for item in conditions):
+    credited = [item["request"] for item in conditions if item["request"] in elsewhere]
+    if credited:
+        named = ", ".join(f"#{seq}" for seq in credited)
+        line += f"; {named}: no later result in this session, whole candidate evidence from an "
+        line += "earlier session shown below"
+    if worst or not all(item["resolved"] or item["request"] in elsewhere for item in conditions):
         line += "; UNRESOLVED: a result that settles one may be missing"
     return line
+
+
+def condition_line_for(conditions, elsewhere=()):
+    """The digest's condition line as it reads once the conditions in elsewhere are given an
+    earlier session's candidate evidence (history.packet(), MR203-2)."""
+    return _condition_line(conditions, elsewhere=elsewhere)
 
 
 CUT_KINDS = ("prompt", "action", "message")  # a piece of content is never cut

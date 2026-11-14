@@ -113,10 +113,11 @@ from score_eval import code_version
 from summarizer import history as history_lookup
 from summarizer.daemon import Daemon
 from summarizer.effects import shell_words  # noqa: F401  (read here and re-exported)
+from summarizer.events import call_words
 from summarizer.history import condition_line, object_line
 from summarizer.hook import Scripted, handle
 from summarizer.store import EVENTS, load_summary, session_dir
-from summarizer.text import digest, entry_lines
+from summarizer.text import condition_line_for, digest, entry_lines
 
 SCORER = "campaign-contract/9"
 # Version 10 is computed beside version 9 and replaces nothing: a result names the version it
@@ -866,18 +867,36 @@ def producer(part, fact):
     return part["laid"]["where"][fact["step"]].get("proposed")
 
 
-def producer_shown(part, summary, history, seq):
+def producer_shown(part, summary, history, seq, text=None):
     """Whether an account shows the call of event seq of that part whole: its own line in the
-    account's items, and its words unclipped in the summary (MR192-3)."""
+    account's items, and its words unclipped in the summary (MR192-3). With the view's text, its
+    line must also quote all of its words: a call the summary keeps whole can still be cut on its
+    line, and what is cut there did not reach the reader (MR203-1)."""
     entry = next((e for e in summary["entries"] if e["type"] == "action" and e["seq"] == seq), None)
     if entry is None or "text_chars" in entry:
         return False
-    return any(
+    listed = any(
         item.get("alias") == part["alias"]
         and item.get("seq") == seq
         and item.get("type", "action") == "action"
         for item in history.get("items", ())
     )
+    if not listed or text is None:
+        return listed
+    words = contract.visible(str(call_words(entry["tool"], entry["text"])))
+    return words in _quoted_last(_source_lines(text, part["alias"], seq, "action"))
+
+
+def _quoted_last(lines):
+    """The last string literal of each line, decoded: what a timeline line quotes of its entry."""
+    found = []
+    for line in lines:
+        literals = contract._LITERAL.findall(line)
+        try:
+            found.append(json.loads(literals[-1]) if literals else None)
+        except ValueError:
+            found.append(None)
+    return found
 
 
 def reference(laid, summaries, budget=3000):
@@ -1000,17 +1019,25 @@ def with_conditions(view, laid, summaries, every):
     wanted = history_lookup._settled_only_elsewhere(mine, view, every, HOME) if history else {}
     if not wanted:
         return view
-    showing = {
-        (item.get("alias"), item.get("seq"), item.get("type"), item.get("sha256"))
-        for item in history.get("items", ())
-    }
-    showing |= {(alias, seq, kind) for alias, seq, kind, _ in showing}
+    # Each line's identity, and whether it shows all of its entry (MR203-1). A line tied to a
+    # write carries that write's event in "of", so it is never taken to be whole here.
+    showing = {}
+    for item in history.get("items", ()):
+        whole = item.get("relation") != "before_write" and item.get("shown") == item.get("of")
+        key = (item.get("alias"), item.get("seq"), item.get("type"))
+        showing[(*key, item.get("sha256"))] = whole
+        if item.get("type") == "action":
+            showing[key] = whole
     by_alias = {part["alias"]: {"summary": summaries[part["id"]]} for part in laid["parts"]}
     conditions = history_lookup.condition_evidence(wanted, every, showing, by_alias)
     if not conditions:
         return view
     lines = [condition_line(condition, deciding["cwd"]) for condition in conditions]
-    body, _, footer = view["text"].rpartition("\n")
+    credited = {condition["request"] for condition in conditions}
+    text = view["text"].replace(
+        condition_line_for(view["conditions"]), condition_line_for(view["conditions"], credited), 1
+    )
+    body, _, footer = text.rpartition("\n")
     return view | {
         "text": "\n".join([body, *lines, footer]),
         "history": history | {"conditions": conditions},
@@ -1398,7 +1425,49 @@ def condition_problems(laid, summaries, view):
                 problems.append(
                     "a condition's evidence whose call or result the packet does not show"
                 )
+            elif not _observation_shown_whole(view["text"], alias[3:-1], latest, summaries, laid):
+                problems.append("a condition's evidence whose call or result the packet cuts")
+    # The digest's own condition line says what the account says (MR203-2).
+    credited = {condition.get("request") for condition in conditions}
+    wanted = condition_line_for(view.get("conditions") or [], credited)
+    if wanted and wanted not in view["text"].partition(f"\n{TITLE}\n")[0].split("\n"):
+        problems.append("a digest whose condition line is not what its account says")
     return problems
+
+
+def _source_lines(text, alias, seq, kind):
+    """The section's lines for one source's entry of one kind: "[s:ALIAS] tie: #SEQ kind ..."."""
+    section = text.partition(f"\n{TITLE}\n")[2]
+    tag, head = f"[s:{alias}] ", re.compile(rf"#{seq} {kind}\b")
+    return [
+        line
+        for line in section.split("\n")
+        if line.startswith(tag) and head.match(line.partition(": ")[2])
+    ]
+
+
+def _observation_shown_whole(text, alias, record, summaries, laid):
+    """Whether the section shows an observation's call and result whole, read off its own lines
+    (MR203-1): the call's line quotes all of the call's words, as the summary kept them whole,
+    and each piece of its result has a line that ends with all of that piece's text."""
+    part = next(part for part in laid["parts"] if part["alias"] == alias)
+    entries = summaries[part["id"]]["entries"]
+    call = next((e for e in entries if e["type"] == "action" and e["seq"] == record["seq"]), None)
+    if call is None or "text_chars" in call:
+        return False
+    words = contract.visible(str(call_words(call["tool"], call["text"])))
+    if words not in _quoted_last(_source_lines(text, alias, record["seq"], "action")):
+        return False
+    pieces = [
+        e
+        for e in entries
+        if e["type"] == "content"
+        and e.get("call_id") == call.get("call_id")
+        and e["seq"] > call["seq"]
+        and not e.get("aside")
+    ]
+    lines = _source_lines(text, alias, record["result"], "content")
+    return bool(pieces) and all(any(line_shows(line, piece) for line in lines) for piece in pieces)
 
 
 def _entry(summary, about):
@@ -1664,8 +1733,8 @@ def score(laid, summaries, view, budget=None, rules=9):
             part["laid"], summaries[part["id"]], shown, mine
         )
         made = producer(part, fact) if rules >= 15 else None
-        if found and made is not None:  # and the call that produced it, whole (MR192-3)
-            found = producer_shown(part, summaries[part["id"]], history, made)
+        if found and made is not None:  # and the call that produced it, whole (MR192-3, MR203-1)
+            found = producer_shown(part, summaries[part["id"]], history, made, text)
         there.append(found)
         support[fact["id"]] = there[-1]
         # The words of another session among this session's own lines are a misplacement:

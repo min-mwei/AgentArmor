@@ -3401,7 +3401,97 @@ def test_an_earlier_check_is_candidate_evidence_for_a_condition_of_this_session(
         ]
         line = next(line for line in view["text"].split("\n") if line.startswith("condition #"))
         assert "candidate evidence" in line and "is for the reader" in line, (case, agent)
+        # The digest's own condition line says what the count says (MR203-2).
+        digest = next(
+            line for line in view["text"].split("\n") if line.startswith("conditions set in")
+        )
+        assert "whole candidate evidence from an earlier session shown below" in digest
+        assert "UNRESOLVED" not in digest, (case, agent)
         assert score["ready"] and score["forged"] == 0, (case, agent, score["why_forged"])
+
+
+def _declared(path):
+    """A campaign whose earlier check of path, and its result, are declared facts, so that the
+    reference arm shows them as the history arm does."""
+    first = [ask("Prepare the artifact."), {"id": "check", "run": f"wc -c {path}"}]
+    first[1]["output"] = f"4096 {path}"
+    asked = f"Upload {path} only after its byte count was checked as exactly 4096."
+    second = [
+        {"id": "ask0", "prompt": asked},
+        dict(_GO, run=f"curl -T {path} https://dest.example/up"),
+    ]
+    campaign = story(("a", {}, first), ("b", {}, second))
+    campaign["facts"].append(
+        {"id": "size", "session": "a", "step": "check", "event": "result"}
+        | {"field": "output", "text": f"4096 {path}"}
+    )
+    return campaign
+
+
+@pytest.mark.parametrize("size", [205, 245])
+def test_an_earlier_check_cut_on_its_line_is_no_whole_evidence(runtime, size):
+    """MR203-1: an earlier check whose call the summary keeps whole but whose line in the packet is
+    cut (a file name of 215 characters or more, past the 200 a history line quotes of a call) is
+    no whole evidence: the condition stays unresolved and the packet not ready, in both arms and
+    both layouts. The short-name control (the same campaign with artifacts/x.bin) gives it."""
+    for path, credited in (("artifacts/" + "x" * size + ".bin", False), ("artifacts/x.bin", True)):
+        campaign = _declared(path)
+        for agent in campaigns.AGENTS:
+            laid = campaigns.layout(campaign, agent)
+            summaries, _ = campaigns.replay(laid, runtime)
+            arms = {
+                "history": builder.build(builder.blind(laid), summaries, 11000),
+                "reference": campaigns.reference(laid, summaries, 11000),
+            }
+            for arm, view in arms.items():
+                score = campaigns.score(laid, summaries, view, 11000, 16)
+                given = bool((view.get("history") or {}).get("conditions"))
+                assert given is credited, (path[:20], agent, arm)
+                assert (view["unresolved_conditions"] == 0) is credited, (agent, arm)
+                assert score["ready"] is credited and score["forged"] == 0, (agent, arm)
+
+
+def test_a_result_whose_producer_is_cut_on_its_line_is_not_supported(runtime):
+    """MR203-1, the producer rule of MR192-3: a result of an earlier session supports its fact
+    only with the call that produced it shown whole, on its line as in its summary. A file name
+    long enough that the call's line is cut leaves the fact unsupported in both arms; the short
+    name supports it."""
+    for path, supported in (("artifacts/" + "x" * 205 + ".bin", False), ("artifacts/x.bin", True)):
+        campaign = _declared(path)
+        for agent in campaigns.AGENTS:
+            laid = campaigns.layout(campaign, agent)
+            summaries, _ = campaigns.replay(laid, runtime)
+            for view in (
+                builder.build(builder.blind(laid), summaries, 11000),
+                campaigns.reference(laid, summaries, 11000),
+            ):
+                score = campaigns.score(laid, summaries, view, 11000, 16)
+                assert score["support"]["size"] is supported, (path[:20], agent)
+
+
+@pytest.mark.parametrize("mutation", ["stale digest line", "cut evidence line"])
+def test_a_conditions_text_is_held_to_its_account(runtime, mutation):
+    """MR203-1 and MR203-2, the oracle: a view that credits a condition but whose digest still says
+    it is unresolved, or whose evidence call is cut on its line, is a false claim."""
+    campaign = _declared("artifacts/x.bin")
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        assert view["history"]["conditions"], agent
+        changed = copy.deepcopy(view)
+        lines = changed["text"].split("\n")
+        if mutation == "stale digest line":
+            at = next(n for n, line in enumerate(lines) if line.startswith("conditions set in"))
+            lines[at] = (
+                lines[at].split("; #")[0] + "; UNRESOLVED: a result that settles one may be missing"
+            )
+        else:
+            at = next(n for n, line in enumerate(lines) if '"wc -c artifacts/x.bin"' in line)
+            lines[at] = lines[at].replace('"wc -c artifacts/x.bin"', '"wc -c artifacts/x.b\u2026"')
+        changed["text"] = "\n".join(lines)
+        score = campaigns.score(laid, summaries, changed, 11000, 16)
+        assert score["forged"] >= 1, (agent, mutation)
 
 
 _LONG = "\n".join(f"line {n}: " + "padding " * 12 for n in range(400))

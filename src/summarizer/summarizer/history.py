@@ -1514,9 +1514,6 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
     return told
 
 
-CONDITION_LINE = 200  # room kept for one condition's evidence line in a section
-
-
 _FILE_NAME = re.compile(r"[^/]+\.[A-Za-z0-9]{1,5}")  # a name with a short suffix: report.md
 
 
@@ -1552,14 +1549,20 @@ def _settled_only_elsewhere(mine, view, accounts, home):
 
 def _shown_whole(event, shown, parts_by_alias):
     """Whether the packet shows an earlier session's observation whole: the call that made it, its
-    words not cut, and every piece of its result, each on a line of the section (MR201 ruling)."""
+    words not cut by the summary and not cut on its line, and every piece of its result, each on
+    a line of the section that shows all of it (MR201 ruling, MR203-1). shown maps each line's
+    identity to whether the line shows all of its entry (its account's shown is its of)."""
     alias = event["alias"][3:-1] if event["alias"].startswith("[s:") else None
     other = parts_by_alias.get(alias)
     if other is None:
         return False
     entries = other["summary"]["entries"]
     call = next((e for e in entries if e["type"] == "action" and e["seq"] == event["seq"]), None)
-    if call is None or "text_chars" in call or (alias, call["seq"], "action") not in shown:
+    if (
+        call is None
+        or "text_chars" in call
+        or shown.get((alias, call["seq"], "action")) is not True
+    ):
         return False
     back = [
         e
@@ -1571,7 +1574,7 @@ def _shown_whole(event, shown, parts_by_alias):
     ]
     if not back or call.get("result_pieces") != len(back):
         return False
-    return all((alias, e["seq"], "content", e.get("sha256")) in shown for e in back)
+    return all(shown.get((alias, e["seq"], "content", e.get("sha256"))) is True for e in back)
 
 
 def condition_evidence(wanted, objects, shown, parts_by_alias):
@@ -1598,6 +1601,19 @@ def condition_evidence(wanted, objects, shown, parts_by_alias):
         else:
             found.append({"request": request, "evidence": evidence})
     return found
+
+
+def condition_room(wanted, cwd):
+    """The most room the lines that give conditions their candidate evidence can take: each one's
+    line in the section, with an alias and event as long as any, and what the digest's own
+    condition line gains by saying so (MR203-2)."""
+    room = 0
+    for request, files in wanted.items():
+        evidence = [{"object": path, "alias": "[s:XXXX]", "seq": 10**9} for path in files]
+        room += len(condition_line({"request": request, "evidence": evidence}, cwd)) + 1
+        room += len("; #: no later result in this session, whole candidate evidence from an")
+        room += len(" earlier session shown below") + len(str(request)) + 4
+    return room
 
 
 def condition_line(condition, cwd):
@@ -2196,7 +2212,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     room: a long session does not crowd out the write that planted the file it is about to
     run. What the shorter digest leaves out it counts, as it does at any size.
     """
-    from .text import digest, entry_lines
+    from .text import condition_line_for, digest, entry_lines
 
     def digested(room):
         """This session's own digest, focused on the call, in that much room."""
@@ -2260,7 +2276,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # Conditions of this session that only an earlier session can settle: room for each one's
     # line of candidate evidence is kept before anything else is placed (MR201 ruling).
     elsewhere = _settled_only_elsewhere(mine, view, found["objects"], home)
-    frame += CONDITION_LINE * len(elsewhere)
+    frame += condition_room(elsewhere, mine["cwd"])
 
     def placed(view):
         """The groups that find room beside a digest: (chosen items, left out, why)."""
@@ -2325,16 +2341,27 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # The candidate evidence an earlier session gives a condition of this session, from what the
     # section shows whole; each condition it gives evidence to is no longer counted unresolved.
     wanted = _settled_only_elsewhere(mine, view, found["objects"], home) if elsewhere else {}
-    showing = {
-        (source["alias"], about["seq"], about["type"], about.get("sha256"))
-        for source, _, _, _, about in items
-    }
-    showing |= {(alias, seq, kind) for alias, seq, kind, _ in showing}
+    # Each line's identity, and whether the line shows all of its entry (MR203-1): a call cut on
+    # its line, though whole in its summary, is no whole evidence.
+    showing = {}
+    for source, _, _, _, about in items:
+        whole = about.get("shown") == about.get("of")
+        showing[(source["alias"], about["seq"], about["type"], about.get("sha256"))] = whole
+        if about["type"] == "action":
+            showing[(source["alias"], about["seq"], "action")] = whole
     by_alias = {other["alias"]: other for other in others}
     conditions = condition_evidence(wanted, found["objects"], showing, by_alias)
     if conditions:
         account["conditions"] = conditions
-        view = view | {"unresolved_conditions": view["unresolved_conditions"] - len(conditions)}
+        # The digest's own condition line is written again from the final accounting, so that
+        # the text says what the count says (MR203-2).
+        credited = {condition["request"] for condition in conditions}
+        before = condition_line_for(view["conditions"])
+        after = condition_line_for(view["conditions"], credited)
+        view = view | {
+            "text": view["text"].replace(before, after, 1),
+            "unresolved_conditions": view["unresolved_conditions"] - len(conditions),
+        }
     told_of += [condition_line(condition, mine["cwd"]) for condition in conditions]
     shown = [f"[s:{source['alias']}] {words}: {line}" for source, _, words, line, _ in items]
     body, _, footer = view["text"].rpartition("\n")
