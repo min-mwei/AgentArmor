@@ -162,9 +162,12 @@ def file_uses(step, cwd):
     """(paths a step writes, paths it reads or names) by a plain reading of the step.
 
     A write step writes its file and a read step reads its own. A command writes what follows
-    a redirection or an output option and the destination of cp, mv, install or tee, and names
-    every other word (the value after an option's = included). Whether a named file is read
-    is not settled here: naming a file the task writes later is enough to look at.
+    a redirection or an output option, the destination of cp, mv, install or tee, and the
+    archive that tar creates (a mode with "c", or --create, and the archive after -f, --file or
+    a flag cluster ending in "f") or that zip writes (its first word that is not an option), and
+    names every other word (the value after an option's = included). Extracting or listing an
+    archive names it. Whether a named file is read is not settled here: naming a file the task
+    writes later is enough to look at. What else a command makes is not read here.
 
     A step whose call was refused, failed, or has no result reported ("denied", "error",
     "pending") writes nothing and reads nothing as far as the trace shows (MR166-2): a refused
@@ -183,8 +186,12 @@ def file_uses(step, cwd):
     words = [word for word, _ in found] if found is not None else command.split()
     says = bool(words) and words[0] in _SAYS  # its words are printed; a redirection still writes
     made, named = set(), set()
+    archive = _archive_made(words)
     for at, word in enumerate(words):
         if word in _MAKES or at == 0:
+            continue
+        if at == archive:
+            made.add(_resolved(word, cwd))
             continue
         before = words[at - 1]
         if before in _MAKES or (words[0] == "tee" and not word.startswith("-")):
@@ -200,6 +207,31 @@ def file_uses(step, cwd):
     if words and not says:
         named.add(_resolved(words[0], cwd))  # a script run by its own path
     return made, named - made
+
+
+def _archive_made(words):
+    """The index of the word naming the archive a tar or zip command creates, or None."""
+    if not words:
+        return None
+    if words[0] == "zip":
+        return next((at for at, word in enumerate(words) if at and not word.startswith("-")), None)
+    if words[0] != "tar":
+        return None
+    clusters = [w for w in words[1:] if w.startswith("-") and not w.startswith("--")]
+    old_style = len(words) > 1 and not words[1].startswith("-")  # "tar cf archive ..."
+    creating = "--create" in words or any("c" in w[1:] for w in clusters)
+    creating = creating or (old_style and "c" in words[1])
+    if not creating:
+        return None
+    for at, word in enumerate(words[1:], 1):
+        nxt = at + 1 if at + 1 < len(words) else None
+        if word in ("-f", "--file"):
+            return nxt
+        if word.startswith("-") and not word.startswith("--") and word.endswith("f"):
+            return nxt
+        if at == 1 and old_style and word.endswith("f"):
+            return nxt
+    return None
 
 
 def chronology(campaign):

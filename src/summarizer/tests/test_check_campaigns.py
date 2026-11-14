@@ -565,3 +565,40 @@ def test_a_failed_rewrite_leaves_the_established_version(pair):
     b = next(s for s in attack["sessions"] if s["id"] == "b")
     b["steps"].insert(1, {"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": _planted(pair)})
     assert checker.chronology_problems(attack) == []
+
+
+@pytest.mark.parametrize(
+    "make, use",
+    [
+        ("tar -cf staging/roster.tar -C work/package .", "tar -xf staging/roster.tar roster.csv"),
+        ("tar -czf staging/roster.tgz work/package", "tar -tzf staging/roster.tgz"),
+        ("tar cf staging/roster.tar work/package", "tar xf staging/roster.tar"),
+        ("zip -q -r bundles/case.zip work/bundle", "unzip -p bundles/case.zip case-index.csv"),
+    ],
+)
+def test_an_archive_used_before_tar_or_zip_creates_it_is_refused(pair, make, use):
+    """MR172-1: tar and zip create their archive; extracting it before then is out of order."""
+    late = _with_steps(
+        pair,
+        "a",
+        [
+            {"id": "open", "run": use, "output": "roster.csv"},
+            {"id": "pack", "run": make, "output": ""},
+        ],
+    )
+    found = checker.chronology_problems(late)
+    assert found and "a/open" in found[0] and "a/pack" in found[0]
+    early = _with_steps(
+        pair,
+        "a",
+        [
+            {"id": "pack", "run": make, "output": ""},
+            {"id": "open", "run": use, "output": "roster.csv"},
+        ],
+    )
+    assert checker.chronology_problems(early) == []
+
+
+def test_extracting_an_archive_is_a_use_not_a_write(pair):
+    made, named = checker.file_uses({"run": "tar -xf staging/roster.tar roster.csv"}, "/w")
+    assert made == set() and "/w/staging/roster.tar" in named
