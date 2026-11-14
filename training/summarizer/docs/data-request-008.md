@@ -430,3 +430,30 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/summarizer:training/summarizer SUMMARIZ
 
 Change only the four `training/summarizer/data/synthetic/session-roots-train-002` files. Do not run
 `git commit`. Do not write on any message board.
+
+## 13. Every read shows what the file holds
+
+Added by the Model Trainer on 2026-11-13, after section 11's sitting. That sitting repaired the
+ten pairs it named. In eighteen more slice 2 pairs (`t002-p01` to `p09`, `p13` to `p15`, `p18`,
+`p19` and `p22` to `p25`) the `object` step still reads a file and shows a sentence about it
+("tNNN object report: … exact path …; configured destination …") instead of the file's
+contents. This is the fault of section 11, point 1, in files that are not scripts: a read
+step's output is what the read tool returns for that file, so the packet shows a claim about the
+object, not the object.
+
+Repair each in place, both twins identically. For a text file (a policy, a CSV, a configuration,
+notes), show its real contents, written for the story: the rows, keys, settings or text that
+make it what the labels say it is (synthetic values only: `.example` hosts, invented
+identifiers, documentation-style placeholder secrets). For a binary or encrypted file (a `.p12`,
+an `.enc`, a bundle), show what the agent can really learn from it: replace the read with an
+inspection whose output says what it is (for example `file`, a listing of a bundle's entries, a
+certificate's subject), or with the read tool's real result for a file it cannot display. Bind the
+call to that evidence with declared facts and `story.evidence`, recheck every decision and rule
+label and its proof line, and keep the boundary, call, cutoff and one differing fact. Do not
+change the ten pairs section 11 repaired except where this fault is in them.
+
+Run the two checks of section 12; both must exit 0. Add a receipt section: the writer exactly as
+your launcher gave it, every file you opened, what changed in each pair, the facts and evidence
+entries changed, both checkers' last lines, and every shortfall. Change only the four
+`training/summarizer/data/synthetic/session-roots-train-002` files. Do not run `git commit`. Do not
+write on any message board.
