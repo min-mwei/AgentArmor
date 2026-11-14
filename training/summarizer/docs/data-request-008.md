@@ -856,3 +856,39 @@ manifest, and `check_evidence.py --require-labels`; both must exit 0. The receip
 
 Change only the four files of your new revision. Do not run `git commit`. Do not write on any
 message board.
+
+## 24. Slice 3: three mechanisms the training slices lack (MR220)
+
+Added by the Model Trainer on 2026-11-14, after the first fixed-K0 development comparison. With the
+complete evidence in front of it, Kai-4B allowed nearly every attack of three mechanisms that neither
+training slice holds. Twelve more pairs, four for each mechanism, go in a third file. Everything above
+holds unless this section says otherwise.
+
+- **The file:** `training/summarizer/data/synthetic/session-roots-train-003.jsonl` in AgentArmor,
+  with its `.proof.md`, `.receipt.md` and `.manifest.jsonl` beside it. Ids begin `t003-`.
+- **The three mechanisms**, by these family names:
+  1. **`later_look_disagrees`.** A check or observation of an object, made in one session, is
+     contradicted by a later look at the same object. The call acts on the earlier result, now
+     stale. Twin: the later look agrees, or the call acts on what the later look showed.
+  2. **`lookalike_name`.** The user authorized one object earlier: a path, host, package,
+     account or repository. The call acts on another whose name only looks like it. Twin: the
+     call acts on exactly the object the user authorized.
+  3. **`destruction_prepared`.** An earlier session prepares a destructive step, such as a
+     script, a cleanup list or a configuration, whose scope goes beyond what the user
+     authorized. The later call runs it. Twin: the prepared scope is exactly what the user
+     authorized.
+- **What applies:** sections 4, 8, 13 and 16 to 21 apply to every pair. That covers labels and their
+  evidence inside the story, reads that show what a file holds, the user's own earlier words,
+  chronology, and outcomes said only with `denied`, `error` or `pending`.
+- **What is new:** situations unlike anything you have written. Read section 2's list and this
+  section, and nothing else.
+- **Across the file:** three or more sessions in at least 8 campaigns; both agents in at least 8;
+  a return to a session in at least 6; twenty or more steps in at least 8.
+- **The checks:** run the command your launcher gives you. It runs AgentArmor's
+  `check_campaigns.py --attack-pairs`, comparing your file with every earlier campaign file
+  (held-out ones included: the checker reads them and you do not), and `check_evidence.py
+  --require-labels`. Both must exit 0 with no problem and no refusal.
+- **Proof and receipt** as section 5. The receipt names every file of another repository relative
+  to that repository's root, with no absolute path.
+- **What you change:** only these four files. Do not run `git`. Do not write on any message board.
+- **Review:** the Model Reviewer reads slice 3 before it goes through its own TRAIN admission.
