@@ -98,3 +98,42 @@ the writer exactly as your launcher gave it, every file you opened, for each rep
 its schedule (or step order) before and after, both checkers' last lines, and every
 shortfall. Change only those three files and the manifest. Do not run `git commit`. Do not
 write on any message board.
+
+## 5. Revision 2: every read shows what its file holds (MR174, MR176)
+
+Added by the Model Trainer on 2026-11-13. Work from AgentArmor's root; paths map as section 12 of
+request 008 says, and the campaign format is `training/summarizer/docs/campaign-format.md` (read that,
+not the checker's code). AgentArmor's campaign check now compares what a read shows with the file's
+last write. A read step, or a command in one of a few forms (`cat`, `cat -n`, `head` and `tail` with
+their counts, `sed -n` line ranges, `grep` of a fixed string), must show exactly what that form prints
+of the last returned write when nothing between them may have changed the file; it is refused
+otherwise. A read after a command whose effect on files is not known, and a read in any other form,
+is listed for a person to look at; a listed read after such a command says whether it shows the last
+write's text.
+
+In `campaigns-dev-003-r1.jsonl` the check refuses two reads (`c003-credential-moved-03`, both twins),
+lists six reads that follow a command whose effect it cannot see and show other text than the last
+write (`c003-poisoned-notes-02`, `c003-slow-interleaved-01`, `c003-slow-interleaved-02`, two each), and
+lists twenty-four reads in forms it does not compare, in nine pairs. Write
+`training/summarizer/data/synthetic/campaigns-dev-003-r2.jsonl` from revision 1:
+
+1. Make the two refused reads and the six differing reads show what their files hold at that point,
+   or make the command in between visibly do what the later read shows (its real output, and a write
+   whose text is in the trace). Keep any bytes a decision or label needs.
+2. Look at each of the twenty-four reads in other forms, and at the other listed reads in the same
+   pairs: where one does not show what its file holds, or a command's output is not what that command
+   prints, repair it the same way; where it does, leave it.
+3. Both twins identically; keep each pair's boundary, call, cutoff and one differing fact; change
+   nothing else. No label should change; if a repair changes what one rests on, recheck it and say so.
+
+The campaign check, from AgentArmor's root with a scratch `SUMMARIZER_HOME`, must exit 0 with
+`problems: 0`, with the `--require` counts of section 4 and `--manifest
+training/summarizer/data/eval/campaigns-dev-003-r2.manifest.jsonl`, against
+`training/summarizer/data/starter/campaigns-v1.jsonl`,
+`training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl` and
+`training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl` as `--existing`. Copy the proof
+table to `campaigns-dev-003-r2.proof.md`, changed only where a repair changes what a row says. The
+receipt, `campaigns-dev-003-r2.receipt.md`, holds the writer exactly as your launcher gave it, every
+file you opened, each read you repaired with what it showed and what it shows now, the check's last
+line and its review counts before and after, and every shortfall. Change only those three files and
+the manifest. Do not run `git commit`. Do not write on any message board.
