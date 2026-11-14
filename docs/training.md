@@ -6,6 +6,11 @@ training, data admission, checkpoint selection and export qualification. Its
 defines the registered model and environment. Generic language-model fine-tuning
 does not produce Kai's pointer decision head.
 
+The [stack qualification plan](stack-qualification-plan.md) coordinates source admission,
+EG2 adaptation, Kai session training, prior-feature retention and real AgentArmor shadow
+integration. It preserves the registered model and evaluation contracts and names the
+remaining evidence needed for release.
+
 ## Dependencies
 
 The extras in [pyproject.toml](../src/vllm/pyproject.toml) isolate serving from
