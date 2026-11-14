@@ -106,6 +106,9 @@ def test_kai_hf_source_requires_a_pinned_export(monkeypatch, tmp_path):
         ["--package", "x", "--tensor-parallel-size", "2"],
         ["--package", "x", "--port", "0"],
         ["--package", "x", "--port", "65536"],
+        ["--package", "x", "--backend", "metal"],
+        ["--package", "x", "--backend", "MLX"],
+        ["--package", "x", "--backend", ""],
     ],
 )
 def test_startup_rejects_incompatible_options(argv):
@@ -119,8 +122,8 @@ def test_local_package_does_not_access_hf(monkeypatch):
     import agentarmor_vllm.engine as engine
 
     monkeypatch.setattr(cache, "kai_snapshot", lambda *_: pytest.fail("unexpected HF request"))
-    monkeypatch.setattr(engine, "load_service", lambda package: ("kai", package))
-    assert load_kai_service(parse_args(["--package", "synthetic"])) == ("kai", "synthetic")
+    monkeypatch.setattr(engine, "load_service", lambda package, backend: ("kai", package, backend))
+    assert load_kai_service(parse_args(["--package", "synthetic"])) == ("kai", "synthetic", "vllm")
 
 
 def test_hf_loader_preserves_source_identity_and_cache_boundary(monkeypatch, tmp_path):
@@ -157,7 +160,11 @@ def test_hf_loader_preserves_source_identity_and_cache_boundary(monkeypatch, tmp
         "snapshot": (revision, "/cache", True),
         "load": (
             package,
-            {"hf_blobs": blobs, "source": {"hf_repo": KAI_REPO, "revision": revision}},
+            {
+                "hf_blobs": blobs,
+                "source": {"hf_repo": KAI_REPO, "revision": revision},
+                "backend": "vllm",
+            },
         ),
     }
 
@@ -168,3 +175,23 @@ def test_hf_loader_preserves_source_identity_and_cache_boundary(monkeypatch, tmp
     monkeypatch.setattr(engine, "load_service", lambda *_: pytest.fail("must not fall back"))
     with pytest.raises(FileNotFoundError, match="missing pinned export"):
         load_kai_service(args)
+
+
+@pytest.mark.parametrize(
+    "option, backend",
+    [([], "vllm"), (["--backend", "vllm"], "vllm"), (["--backend", "mlx"], "mlx")],
+)
+def test_backend_option_reaches_the_loader_for_either_source(monkeypatch, option, backend):
+    import agentarmor_vllm.cache as cache
+    import agentarmor_vllm.engine as engine
+
+    revision, loads = "a" * 40, []
+    monkeypatch.setattr(cache, "kai_snapshot", lambda *_: ("export", "blobs"))
+    monkeypatch.setattr(engine, "load_service", lambda d, **kw: loads.append((d, kw)) or "kai")
+    assert load_kai_service(parse_args(["--package", "synthetic", *option])) == "kai"
+    assert load_kai_service(parse_args(["--kai-revision", revision, *option])) == "kai"
+    source = {"hf_repo": KAI_REPO, "revision": revision}
+    assert loads == [
+        ("synthetic", {"backend": backend}),
+        ("export", {"hf_blobs": "blobs", "source": source, "backend": backend}),
+    ]

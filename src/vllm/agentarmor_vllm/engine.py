@@ -1,4 +1,4 @@
-"""Raw causal hidden states from vLLM, followed by Kai's FP32 pointer head."""
+"""Raw causal hidden states from vLLM or MLX, followed by Kai's FP32 pointer head."""
 
 import math
 
@@ -7,6 +7,7 @@ import numpy as np
 from .api import to_answers, to_record
 from .encode import SPECIAL, encode, pause_token, rows_of, tokenizer_sha256
 from .requests import MAX_TOTAL_TOKENS, validate_request
+from .wire import read_json
 
 
 class Pointer:
@@ -39,6 +40,8 @@ class Pointer:
 
 
 class VllmBackbone:
+    name = "vllm"
+
     def __init__(self, package):
         from importlib.metadata import version
 
@@ -80,6 +83,55 @@ class VllmBackbone:
         return output.outputs.data.detach().float().cpu().numpy()
 
 
+class MlxBackbone:
+    """The same raw causal hidden states through MLX, the local Apple-silicon backend.
+
+    CPU tests pass ``text`` (a stand-in for the loaded text body) and ``mx`` (for ``mlx.core``).
+    """
+
+    name = "mlx"
+
+    def __init__(self, package, *, text=None, mx=None):
+        self.width, self.max_row = package.hidden_size, package.meta["max_row"]
+        if text is None:
+            model = package.root / "model"
+            config = read_json((model / "config.json").read_bytes())
+            # mlx-lm would import a config's model_file as model code (vLLM runs with
+            # trust_remote_code=False) or quantize on load; the export is plain merged BF16.
+            keys = {"model_file", "quantization", "quantization_config"}
+            if keys & set(config) or keys & set(config.get("text_config", {})):
+                raise ValueError("export config names model code or a quantization")
+            import mlx.core as mx
+            from mlx.utils import tree_flatten
+            from mlx_lm.utils import load_model
+
+            lm = load_model(model)[0]  # this directory's config and safetensors; no hub access
+            lm.eval()
+            # Weights as stored, as in Kai's loader (backbone.py:105); never float16.
+            if any(p.dtype != mx.bfloat16 for _, p in tree_flatten(lm.parameters())):
+                raise ValueError("MLX backbone requires bfloat16 weights")
+            text = lm.language_model.model
+        self.text, self.mx = text, mx
+
+    def hidden(self, row):
+        ids, mx = row["ids"], self.mx
+        if len(ids) > self.max_row:  # vLLM's engine is capped at max_row the same way
+            raise ValueError("row exceeds the checkpoint's row limit")
+        # Kai's pointer head reads the output of mlx-lm's Qwen3.5 text body,
+        # lm.language_model.model (Kai train/kai/qwen/forward.py:29), called causally on whole
+        # rows with no cache in the rows form (forward.py:44, backbone.py:169) and cast to FP32
+        # (forward.py:56): the last decoder layer after the final RMSNorm, before any LM head.
+        # One row per forward, a batch of one, no prompt cache: attention and DeltaNet's
+        # recurrent state see only this question's row.
+        h = self.text(mx.array([ids], dtype=mx.int32), cache=None)
+        h = np.array(h.astype(mx.float32))
+        if h.shape != (1, len(ids), self.width):
+            raise ValueError("backbone returned incomplete hidden states")
+        if not np.isfinite(h).all():
+            raise ValueError("nonfinite hidden states")
+        return h[0]
+
+
 class Service:
     def __init__(self, package, tokenizer, pointer, backbone, source=None):
         self.package, self.tok, self.pointer, self.backbone = package, tokenizer, pointer, backbone
@@ -98,7 +150,7 @@ class Service:
     def metadata(self):
         return {
             **self.source,
-            "backend": "vllm",
+            "backend": self.backbone.name,  # each backbone names itself: vllm or mlx
             "model": "kai-4b",
             "readout": "pointer",
             "policy_ready": False,
@@ -147,7 +199,9 @@ class Service:
         }
 
 
-def load_service(directory, *, hf_blobs=None, source=None):
+def load_service(directory, *, hf_blobs=None, source=None, backend="vllm"):
+    if backend not in ("vllm", "mlx"):
+        raise ValueError("unknown serving backend")
     from safetensors.numpy import load_file
     from transformers import AutoTokenizer
 
@@ -158,7 +212,7 @@ def load_service(directory, *, hf_blobs=None, source=None):
         package.root / "model", local_files_only=True, trust_remote_code=False
     )
     pointer = Pointer(load_file(package.root / "pointer.safetensors"), package.hidden_size)
-    # Validate tokenizer/head before allocating a GPU engine.
+    # Validate tokenizer/head before allocating either backbone.
     service = Service(package, tokenizer, pointer, None, source=source)
-    service.backbone = VllmBackbone(package)
+    service.backbone = (MlxBackbone if backend == "mlx" else VllmBackbone)(package)
     return service

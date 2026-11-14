@@ -32,6 +32,7 @@ model or an unmerged training checkpoint cannot replace this export.
 | `--package DIR` | Local directory containing `kai.json`, `pointer.safetensors` and `model/`; mutually exclusive with `--kai-revision` |
 | `--local-files-only` | Require the HF export to be cached; no download |
 | `--cache-dir DIR` | Override the Hugging Face hub cache location |
+| `--backend NAME` | `vllm` (default) or `mlx`, the local Apple-silicon backbone; see [Local MLX backbone](#local-mlx-backbone) |
 | `--port PORT` | Loopback HTTP port; default 8009 |
 
 HF cache options apply only to `--kai-revision`. Otherwise Hugging Face uses
@@ -186,3 +187,22 @@ package; it is not a signature or a qualification certificate. Keep the package
 read-only while serving. A trainer-reviewed export/merge receipt and comparison
 against the trainer’s registered read computation are still required before
 selecting thresholds or enabling policy use.
+
+### Local MLX backbone
+
+`--backend mlx` serves the same export on Apple silicon. Install `'./src/vllm[serve-mlx]'`
+(MLX and MLX-Metal 0.32.4, MLX-LM 0.32.2) and give the same `--package` or
+`--kai-revision`. Only the backbone changes: the export checks, request encoder,
+admission limits, FP32 pointer head, temperature and HTTP API are the ones above.
+MLX-LM reads `model/` from the verified export directory, never from the hub, and runs
+its BF16 weights as stored; any other weight dtype, a quantization or a config naming
+its own model code is refused. Each question runs as one complete causal row with no prompt
+cache. MLX returns the raw hidden states of the text body (the last layer after the
+final norm), the states Kai's MLX trainer feeds the pointer head. Health and every
+answer report `backend: "mlx"`.
+
+This is not a vLLM qualification, and vLLM results do not qualify it. Before use,
+measure numerical agreement with Kai's MLX reference: logits, probabilities and
+decisions on identical tokens and isolated rows, with tolerances set before the read.
+The CPU tests check this backbone's contract with stand-ins; they load neither MLX
+nor weights.

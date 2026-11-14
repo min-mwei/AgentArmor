@@ -82,6 +82,13 @@ def parse_args(argv=None):
     )
     parser.add_argument("--local-files-only", action="store_true", help="disable Kai HF downloads")
     parser.add_argument("--cache-dir", help="Hugging Face hub cache directory")
+    parser.add_argument(
+        "--backend",
+        choices=("vllm", "mlx"),
+        default="vllm",
+        help="hidden-state backbone: vllm (default) or mlx, the local Apple-silicon backend; "
+        "MLX is qualified separately from vLLM",
+    )
     parser.add_argument("--port", type=int, default=8009)
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -99,12 +106,15 @@ def load_kai_service(args):
     from .engine import load_service
 
     if args.package:
-        return load_service(args.package)
+        return load_service(args.package, backend=args.backend)
     from .cache import KAI_REPO, kai_snapshot
 
     package, blobs = kai_snapshot(args.kai_revision, args.cache_dir, args.local_files_only)
     return load_service(
-        package, hf_blobs=blobs, source={"hf_repo": KAI_REPO, "revision": args.kai_revision}
+        package,
+        hf_blobs=blobs,
+        source={"hf_repo": KAI_REPO, "revision": args.kai_revision},
+        backend=args.backend,
     )
 
 

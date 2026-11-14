@@ -29,6 +29,8 @@ class Tokenizer:
 
 
 class Backbone:
+    name = "vllm"  # the identity the service reports, as VllmBackbone's
+
     def __init__(self):
         self.rows = []
 
@@ -293,7 +295,7 @@ def test_export_is_validated_before_backbone_allocation(package_directory, monke
 
     def backbone(package):
         allocated.append(package.identity)
-        return "synthetic backbone"
+        return SimpleNamespace(name="vllm", tag="synthetic backbone")
 
     monkeypatch.setitem(
         sys.modules,
@@ -308,8 +310,9 @@ def test_export_is_validated_before_backbone_allocation(package_directory, monke
     else:
         loaded = engine.load_service(root)
         assert allocated == [sha256(root / "kai.json")]
-        assert loaded.backbone == "synthetic backbone"
+        assert loaded.backbone.tag == "synthetic backbone"
         assert loaded.metadata()["readout"] == "pointer"
+        assert loaded.metadata()["backend"] == "vllm"
 
 
 def test_kai_pooling_keeps_raw_hidden_states_and_exact_tokens(monkeypatch, tmp_path):
