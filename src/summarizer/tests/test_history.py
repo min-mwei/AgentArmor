@@ -1138,8 +1138,10 @@ def test_a_bound_stated_on_another_file_comes_with_what_was_done_under_it(runtim
     assert view["route"] == "unasked" and view["history"]["complete"] is True
     kinds = {group["kind"]: group["key"] for group in found["groups"]}
     assert kinds == {"statement": False, "recent": False}  # context: nothing here is key
+    # The request, the look that produced the note shown before the write (MR192-3), the write.
     assert [item["relation"] for item in found["items"] if item["type"] != "content"] == [
         "earlier",
+        "recent",
         "recent",
     ]
     for text in (limit, "A kiosk note.", "records/kiosk.txt"):
@@ -1844,7 +1846,16 @@ def _told_case(contents, cwd="/w/proj", other_cwd="/w/proj", taken=()):
     uses = {"named": {f"{cwd}/cards/deck.zip"}}
     places = {"domain:deck-review.example"}
     return history._told(
-        [other], {"a": dict.fromkeys(taken)}, cwd, "/home/u", call, command, set(), places, uses, []
+        [other],
+        {"a": dict.fromkeys(taken)},
+        cwd,
+        "/home/dev",
+        call,
+        command,
+        set(),
+        places,
+        uses,
+        [],
     )
 
 
@@ -1917,7 +1928,7 @@ def test_tied_candidates_are_ranked_newest_first_by_the_hosts_clock_across_sessi
         others,
         {"older": {}, "newer": {}},
         "/w/proj",
-        "/home/u",
+        "/home/dev",
         call,
         "curl -T cards/deck.zip https://deck-review.example/intake",
         set(),
@@ -2481,3 +2492,90 @@ def test_what_a_look_or_a_write_shows_of_a_file_is_cut_where_it_is_not_all_here(
     assert history._bodies([source([empty], [(empty, theirs_r)])], {path}) == []
     refused = dict(look, status="denied")
     assert history._bodies([source([refused, piece], [(refused, theirs_r)])], {path}) == []
+
+
+def test_a_path_keeps_its_leading_dot_and_loses_only_the_sentence_around_it():
+    """A leading dot belongs to the path: ".agent/guard.json" is not agent/guard.json, and
+    "./catalog" is not /catalog. Only quotes, brackets and the dots that end a sentence go."""
+    assert history._piece(".agent/guard.json") == ".agent/guard.json"
+    assert (
+        history._piece("./catalog") == "./catalog"
+        and history._piece("../shared/x") == "../shared/x"
+    )
+    assert history._piece('"config/x.toml",') == "config/x.toml"
+    assert history._piece("notes/a.md.") == "notes/a.md" and history._piece(".env") == ".env"
+    text = {"text": 'hook_manifest = ".agent/guard.json"; workspace = "./catalog". See ../x/y.md.'}
+    assert history._said(text, "/w", "/home/dev") == {
+        "/w/.agent/guard.json",
+        "/w/catalog",
+        "/x/y.md",
+    }
+    named = history.uses({"tool": "Bash", "target": "cat .env"}, "/w", "/home/dev")["named"]
+    assert "/w/.env" in named and "/w/env" not in named
+
+
+def test_pwd_and_home_in_earlier_text_are_where_that_text_runs():
+    """$PWD and $HOME, braced or not, are the working directory and home the text is read in;
+    no other variable is guessed at."""
+    body = {"text": 'atlasctl publish --file "$PWD/build/a.json" --key ${HOME}/k --out $OUT/x'}
+    said = history._said(body, "/work/atlas", "/home/dev")
+    assert "/work/atlas/build/a.json" in said and "/home/dev/k" in said
+    assert not any("PWD" in path or "HOME" in path for path in said)
+
+
+def test_a_statement_bears_on_what_a_tool_call_says_and_does():
+    """A tool that is no shell says what it does in its name and its input: a user's condition on
+    "the production rollout of release r17" bears on orchestrator.deploy with that input, and its
+    kind is read off the words of its name, never off a name that only contains them."""
+    call = {
+        "tool": "orchestrator.deploy",
+        "target": "",
+        "text": '{"release": "r17", "environment": "production"}',
+    }
+    assert history._kinds_of(call, "") == {"publish"}
+    assert history._kinds_of({"tool": "registry.delete_many"}, "") == {"delete"}
+    assert history._kinds_of({"tool": "redeployer.status"}, "") == set()
+    said = {
+        "type": "prompt",
+        "text": "Continue with the production rollout only if release r17 is cleared.",
+    }
+    spoken = f"{call['target']} {call['text']}"
+    assert history._bears(said, spoken, set(), "/w", "/home/dev", history._kinds_of(call, ""))
+    assert not history._bears(said, "", set(), "/w", "/home/dev", set())  # the old reading
+
+
+def test_a_configuration_handed_to_an_unknown_program_is_followed_as_a_lead(runtime):
+    """MR194-1's resolver, seeded with what the call names: "harbor-agent start --config
+    config/runner.toml" hands over a file whose observed body names .agent/guard.json, whose body
+    names tools/redact_report.py; both writes are kept, with what came before them, and nothing
+    is claimed of what the program runs."""
+    root = next(
+        r
+        for r in read_jsonl(ROOTS / "session-roots-train-001-r5.jsonl")
+        if r["id"] == "t001-control-attack"
+    )
+    for agent in campaigns.AGENTS:
+        laid, summaries, view, _ = built(copy.deepcopy(root), runtime, agent, budget=10000)
+        scored = campaigns.score(laid, summaries, view, 10000, 15)
+        assert "/.agent/guard.json" in view["text"] and "tools/redact_report.py" in view["text"], (
+            agent
+        )
+        assert view["history"]["bridges"] == [], agent  # named, never claimed to be run
+        assert scored["passes"] and not scored["false_ready"], (agent, scored["support"])
+
+
+@pytest.mark.parametrize(
+    "root_id",
+    ["t001-control-benign", "t001-approval-attack", "t001-approval-benign", "t001-handoff-attack"],
+)
+def test_slice_one_views_that_lost_their_evidence_now_keep_it(runtime, root_id):
+    """Development data (slice 1 revision 5, exposed): the lookup read a manifest path without its
+    leading dot, compared a statement with an empty target, and did not expand $PWD; these views
+    were falsely ready and now pass under scorer 15 in both layouts."""
+    root = next(
+        r for r in read_jsonl(ROOTS / "session-roots-train-001-r5.jsonl") if r["id"] == root_id
+    )
+    for agent in campaigns.AGENTS:
+        laid, summaries, view, _ = built(copy.deepcopy(root), runtime, agent, budget=10000)
+        scored = campaigns.score(laid, summaries, view, 10000, 15)
+        assert scored["passes"] and not scored["false_ready"], (agent, scored["support"])

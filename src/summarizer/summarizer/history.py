@@ -292,6 +292,16 @@ _COMMAND_KINDS = (
 # the user states often names one, and what was observed of it elsewhere is its evidence.
 _TOKEN = re.compile(r"(?<![\w.-])(?=[\w-]*[A-Za-z])(?=[\w-]*\d)\w[\w-]*(?![\w-])")
 _PATHISH = re.compile(r"[\w.~{}/-]*[/.][\w.~{}/-]*")
+_TRAILING_DOTS = re.compile(r"(?<=[^./])\.+$")
+
+
+def _piece(piece):
+    """A path-like piece of text without the quotes, brackets and sentence punctuation around it.
+    A leading dot belongs to the path (".agent/guard.json", "./catalog", "../shared/x", ".env"),
+    so only the dots that end a sentence after it are dropped ("see notes/a.md." is notes/a.md)."""
+    return _TRAILING_DOTS.sub("", piece.strip("'\"`(),;:"))
+
+
 # A user's reference to a session by a name ("the setup session", "that intake session"). Only the
 # host names sessions (an alias, a session id); a name a user gives one is not bound by any of them.
 _SESSION_NAMED = re.compile(r"\b(?:the|that|this|our)\s+([A-Za-z0-9][\w:-]*)\s+session\b", re.I)
@@ -717,7 +727,7 @@ def uses(entry, cwd, home):
     elif tool in SHELLS:
         _shell(target, cwd, home, found)
     for piece in _PATHISH.findall(target):
-        piece = piece.strip("'\"`.,;:()")
+        piece = _piece(piece)
         if "/" in piece or "." in piece.strip("."):
             found["named"].add(expand(piece, cwd, home))
     found["named"] |= {*found["run"], *found["read"]} | ({found["write"]} - {None})
@@ -803,12 +813,15 @@ def _kinds_said(text):
 
 
 def _kinds_of(call, command):
-    """The kinds of action a call is: by its tool, and for a command by its own words."""
+    """The kinds of action a call is: by its tool, and for a command by its own words. A tool that
+    is neither a shell nor a write is named for what it does, as "orchestrator.deploy" or
+    "registry.delete_many" is: a word of its name that says a kind makes the call that kind."""
     tool = call.get("tool")
     if tool in WRITES:
         return {"write"}
     if tool not in SHELLS:
-        return set()
+        words = re.split(r"[^a-z]+", str(tool or "").lower())
+        return {name for name, pattern in _KINDS if any(pattern.fullmatch(w) for w in words if w)}
     return {"run"} | {name for name, pattern in _COMMAND_KINDS if pattern.search(command)}
 
 
@@ -828,7 +841,7 @@ def _bears(prompt, call_text, named, cwd, home, kinds=()):
         return True
     said = set()
     for piece in _PATHISH.findall(text):
-        piece = piece.strip("'\"`.,;:()")
+        piece = _piece(piece)
         if piece:
             said.add(expand(piece, cwd, home))
     if said & named:
@@ -914,6 +927,9 @@ def select(mine, call_id, others, home):
     items, bridges, groups, why, excluded, searched, candidates = [], [], [], [], {}, [], []
     unresolved, unsupported, sources = {}, list(mine_uses["unsupported"]), []
     kinds, shown_in, tokens, plain = _kinds_of(call, command), {}, set(), []
+    # What the call says: its target and its input. A tool that is no shell has no command
+    # line, and its words are in its input ({"release": "r17", "environment": "production"}).
+    spoken = f"{command} {call.get('text') or ''}"
     for other in others:
         near = _known(namespace) and _known(other["namespace"])
         if near and other["namespace"] != namespace:
@@ -938,6 +954,7 @@ def select(mine, call_id, others, home):
     # A body that was observed is a lead to evidence and no proof that it will run, and
     # it stays lower-trust text. So is what was read of a control the call may load.
     places, passed, stepped = _places(call), [], set()
+    by_words = set(mine_uses["named"])  # what the call's own words name, before any step
     for other, acted in sources:
         results = {}
         for content in _lower(other["summary"]["entries"]):
@@ -978,6 +995,17 @@ def select(mine, call_id, others, home):
                 cut = cut or len(body.get("iocs") or ()) >= ENTRY_IOCS
             if cut and "program_text_cut" not in unsupported:
                 unsupported.append("program_text_cut")
+    # A file the call names whose use its words do not tell (a configuration handed to a program
+    # this module does not read the grammar of: "harbor-agent start --config config/runner.toml")
+    # is followed the same way, as a lead: what was observed of it names files and places, and
+    # they are counted with the call's own words, for the steps below. Named is no claim that
+    # the program reads it, so a cut body of such a file is not a cut of program text.
+    for body, _, path in _bodies(sources, by_words):
+        if body is not None:
+            found = _said(body, cwd, home) - mine_uses["named"] - {path}
+            stepped |= found
+            mine_uses["named"] |= found
+            places |= _places(body)
     # A second step, and no third (MR192-1, MR194-1). A file that program text names may be
     # program text too: a script the helper sources, a configuration it reads. What was observed
     # of such a file (the text of a write of it, or what came back for a look at it: _bodies)
@@ -1012,7 +1040,7 @@ def select(mine, call_id, others, home):
         for e in entries
         if e["type"] == "prompt"
         and e["seq"] < call["seq"]
-        and _bears(e, command, mine_uses["named"], cwd, home, kinds)
+        and _bears(e, spoken, mine_uses["named"], cwd, home, kinds)
     ]
     for prompt in stated:
         tokens |= _tokens(prompt)
@@ -1038,7 +1066,7 @@ def select(mine, call_id, others, home):
         taken = {(item["seq"], item["type"]): item for item in found["items"]}
         shown_in[other["key"]] = taken
         for prompt in (e for e in summary["entries"] if e["type"] == "prompt"):
-            named = _bears(prompt, command, mine_uses["named"], there, home, kinds)
+            named = _bears(prompt, spoken, mine_uses["named"], there, home, kinds)
             if same_project and named:
                 tokens |= _tokens(prompt)
                 bearing.append(prompt)
@@ -1257,7 +1285,7 @@ def _item(other, entry, relation, use=None, of=None, bears=False, groups=()):
 
 def _names(prompt, named, cwd, home):
     text = str(prompt.get("text") or "")
-    said = {expand(p.strip("'\"`.,;:()"), cwd, home) for p in _PATHISH.findall(text)}
+    said = {expand(_piece(p), cwd, home) for p in _PATHISH.findall(text)}
     return bool(said & named)
 
 
@@ -1543,10 +1571,18 @@ def _places(entry):
     return {one for one in entry.get("iocs") or () if str(one).split(":", 1)[0] in PLACES}
 
 
+_VARIABLES = re.compile(r"\$(?:\{(PWD|HOME)\}|(PWD|HOME)\b)")
+
+
 def _said(entry, cwd, home):
-    """The paths an entry's own text names, read as that session would read them."""
+    """The paths an entry's own text names, read as that session would read them: $PWD and $HOME
+    (or ${PWD}, ${HOME}) are the working directory and the home it runs in, as a shell expands
+    them; no other variable is guessed at."""
     text = str(entry.get("text") or "")
-    pieces = (piece.strip("'\"`.,;:()") for piece in _PATHISH.findall(text))
+    text = _VARIABLES.sub(
+        lambda m: (cwd if (m.group(1) or m.group(2)) == "PWD" else home) or m.group(0), text
+    )
+    pieces = (_piece(piece) for piece in _PATHISH.findall(text))
     return {expand(piece, cwd, home) for piece in pieces if "/" in piece or "." in piece.strip(".")}
 
 
@@ -1574,6 +1610,7 @@ def _under(other, prompt, taken, key=False):
     writes = [e for e in writes if (e["seq"], "action") not in taken][:UNDER]
     group = f"{other['key']}:under:{prompt['seq']}"
     items, seen = [], set(taken)
+    calls = {e["call_id"]: e for e in entries if e["type"] == "action" and e.get("call_id")}
     for write in writes:
         linked = (write.get("resembles") or {}).get("seq")
         before = [e for e in _lower(turn) if e["seq"] < write["seq"]]
@@ -1583,7 +1620,12 @@ def _under(other, prompt, taken, key=False):
             if e.get("call_id") == write.get("call_id") and e["seq"] > write["seq"]
         ]
         shown = [e for e in before if e["seq"] == linked] or before[-1:]
-        for entry, relation in (*((e, "shown") for e in shown), (write, "recent")):
+        # Each piece shown keeps the call that produced it (MR192-3), as everywhere else.
+        made = [calls.get(e.get("call_id")) for e in shown]
+        made = [
+            (c, "recent") for c, e in zip(made, shown, strict=True) if c and c["seq"] < e["seq"]
+        ]
+        for entry, relation in (*made, *((e, "shown") for e in shown), (write, "recent")):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
                 items.append(_item(other, entry, relation, groups=[group]))
