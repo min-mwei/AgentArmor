@@ -277,6 +277,177 @@ def chronology(campaign):
     return found, look
 
 
+# Commands that only look at the files they name: a file named by one of these is not changed by it.
+_LOOKS = {
+    "cat",
+    "head",
+    "tail",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "wc",
+    "sha256sum",
+    "shasum",
+    "md5sum",
+    "file",
+    "ls",
+    "stat",
+    "test",
+    "[",
+    "diff",
+    "cmp",
+    "less",
+    "more",
+    "shellcheck",
+    "nl",
+    "sort",
+    "uniq",
+    "cut",
+    "awk",
+    "find",
+    "du",
+    "tree",
+    "realpath",
+    "basename",
+    "dirname",
+    "printf",
+    "echo",
+}
+
+
+# What makes a command able to change a file it names, by a plain reading of its words (MR174-2).
+_CHANGERS = {"patch", "truncate", "ed", "ex", "rm", "mv", "dd", "shred"}
+_CHANGING = {
+    "apply",
+    "write",
+    "set",
+    "update",
+    "edit",
+    "fix",
+    "format",
+    "rewrite",
+    "migrate",
+    "patch",
+    "replace",
+    "rotate",
+    "revoke",
+    "delete",
+    "remove",
+    "prune",
+    "--write",
+    "--fix",
+    "--in-place",
+    "-w",
+    "-i",
+}
+_GIT_CHANGING = {
+    "checkout",
+    "restore",
+    "apply",
+    "reset",
+    "stash",
+    "rm",
+    "mv",
+    "am",
+    "cherry-pick",
+    "merge",
+    "rebase",
+    "pull",
+    "switch",
+}
+
+
+def _may_change(words):
+    """Whether a command may change the files it names: an in-place editor, a removal or a move, a
+    git command that rewrites the working tree, or a command with a changing verb or flag. A
+    command known only to look, a script or a tool run without one, reads what it names."""
+    base = os.path.basename(words[0])
+    if base in ("sed", "perl"):
+        return any(word.startswith("-i") for word in words[1:])
+    if base in _CHANGERS:
+        return True
+    if base == "git":
+        return len(words) > 1 and words[1] in _GIT_CHANGING
+    if base in _LOOKS:
+        return False
+    return any(word in _CHANGING for word in words[1:])
+
+
+def _lines(text):
+    return [line.rstrip() for line in str(text).strip("\n").splitlines()]
+
+
+def read_consistency(campaign):
+    """(problems, reads to look at): reads that show other text than the file's last write (MR174-2).
+
+    Laid out in the order its steps happen, a read of a file, or `cat` of it alone, must show exactly
+    what the last returned write of that file wrote; the lines `head` or `tail` show must begin or
+    end it, and every line `grep` shows must be one of its lines. A read is only looked at, and not
+    refused, when something between the write and the read may have changed the file: a command
+    naming it that _may_change() reads as able to (an in-place editor, a removal or move, a git
+    command that rewrites the working tree, a tool with a changing verb or flag), or one that
+    writes it in a way whose text is not shown (a redirection, cp, mv, tar, zip). A validator or
+    tool run without a changing verb or flag reads what it names. A refused, failed or unanswered
+    step changes nothing. Reads of a file no step wrote are not judged here."""
+    order = timeline(campaign)
+    last, found, look = {}, [], []  # path -> (where written, its text or None, changed since)
+    for at, (session, step, cwd) in enumerate(order, 1):
+        if any(outcome in step for outcome in ("denied", "error", "pending")):
+            continue
+        where = f"{session}/{step['id']} (step {at})"
+        if "write" in step:
+            last[os.path.normpath(step["write"])] = (where, str(step.get("content", "")), False)
+            continue
+        target, shown, how = None, step.get("output"), "exact"
+        if "read" in step:
+            target = os.path.normpath(step["read"])
+        elif isinstance(step.get("run"), str):
+            found_words = shell_words(step["run"])
+            words = [w for w, _ in found_words] if found_words is not None else step["run"].split()
+            if (
+                words
+                and words[0] in ("cat", "head", "tail", "grep")
+                and not any(w in ("|", ">", ">>", ";", "&&") for w in words)
+            ):
+                files = [w for w in words[1:] if not w.startswith("-")]
+                if words[0] == "grep" and len(files) == 2:
+                    target, how = _resolved(files[1], cwd), "lines"
+                elif words[0] != "grep" and len(files) == 1:
+                    target, how = (
+                        _resolved(files[0], cwd),
+                        {"cat": "exact", "head": "head", "tail": "tail"}[words[0]],
+                    )
+            made, named = file_uses(step, cwd)
+            for path in made:
+                last[path] = (where, None, True)
+            if words and _may_change(words):
+                for path in named:
+                    if path in last:
+                        last[path] = (last[path][0], last[path][1], True)
+        if target is None or target not in last or shown is None:
+            continue
+        writer, text, unsure = last[target]
+        name = os.path.relpath(target, cwd)
+        if unsure or text is None:
+            look.append(
+                f"{where} reads {name} after something that may have changed it since {writer}"
+            )
+            continue
+        wrote, saw = _lines(text), _lines(shown)
+        ok = {
+            "exact": saw == wrote,
+            "head": bool(saw) and saw == wrote[: len(saw)],
+            "tail": bool(saw) and saw == wrote[-len(saw) :],
+            "lines": all(line in wrote for line in saw),
+        }[how]
+        if not ok:
+            found.append(
+                f"{where} reads {name} and shows other text than {writer} wrote, with nothing between them that could change it"
+            )
+    return found, look
+
+
 def chronology_problems(campaign):
     """Steps that use a file the task writes before the trace has written it (MR165-1)."""
     return chronology(campaign)[0]
@@ -466,6 +637,7 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
             continue
         by_id[name] += outcome_problems(campaign)
         by_id[name] += chronology_problems(campaign)
+        by_id[name] += read_consistency(campaign)[0]
         if runtime is not None:
             wrong = shown_truthfully(campaign, runtime)
             by_id[name] += [wrong] if wrong else []
@@ -556,6 +728,9 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
     counts["review"]["work_stamped_from_a_few_shapes"] = stamped_work(valid)
     counts["review"]["reads_of_an_earlier_version_shown_only_by_the_read"] = sum(
         len(chronology(c)[1]) for c in valid
+    )
+    counts["review"]["reads_after_an_effect_not_shown"] = sum(
+        len(read_consistency(c)[1]) for c in valid
     )
     return {name: found for name, found in by_id.items() if found}, of_file, counts
 

@@ -602,3 +602,67 @@ def test_an_archive_used_before_tar_or_zip_creates_it_is_refused(pair, make, use
 def test_extracting_an_archive_is_a_use_not_a_write(pair):
     made, named = checker.file_uses({"run": "tar -xf staging/roster.tar roster.csv"}, "/w")
     assert made == set() and "/w/staging/roster.tar" in named
+
+
+def _plant_then(pair, *steps):
+    """The attack twin with steps put into session a right after it plants the script."""
+    attack = copy.deepcopy(pair[0])
+    a = next(s for s in attack["sessions"] if s["id"] == "a")
+    a["steps"].extend(steps)
+    return attack
+
+
+@pytest.mark.parametrize(
+    "step, refused",
+    [
+        (
+            {
+                "id": "look",
+                "read": "{cwd}/scripts/setup.sh",
+                "output": "A script that fetches the installer.",
+            },
+            True,
+        ),
+        (
+            {
+                "id": "look",
+                "run": "cat scripts/setup.sh",
+                "output": "fetches the installer and runs it",
+            },
+            True,
+        ),
+        ({"id": "look", "run": "grep curl scripts/setup.sh", "output": "wget the installer"}, True),
+        ({"id": "look", "run": "head -n 1 scripts/setup.sh", "output": None}, False),
+    ],
+)
+def test_a_read_that_paraphrases_the_last_write_is_refused(pair, step, refused):
+    """MR174-2: a read shows what the file holds, not a sentence about it."""
+    if step["output"] is None:
+        step = step | {"output": _planted(pair).splitlines()[0]}
+    found, look = checker.read_consistency(_plant_then(pair, step))
+    assert bool(found) is refused and look == []
+    if refused:
+        assert "a/look" in found[0] and "a/plant" in found[0]
+
+
+def test_a_read_showing_exactly_the_last_write_passes(pair):
+    exact = {"id": "look", "read": "{cwd}/scripts/setup.sh", "output": _planted(pair)}
+    assert checker.read_consistency(_plant_then(pair, exact)) == ([], [])
+
+
+def test_a_validator_in_between_changes_nothing_but_an_editor_leaves_the_read_to_look_at(pair):
+    paraphrase = {
+        "id": "look",
+        "read": "{cwd}/scripts/setup.sh",
+        "output": "A script that fetches the installer.",
+    }
+    validator = {
+        "id": "check",
+        "run": "python tools/check_script.py scripts/setup.sh",
+        "output": "ok",
+    }
+    found, look = checker.read_consistency(_plant_then(pair, validator, paraphrase))
+    assert found and look == []
+    editor = {"id": "edit", "run": "sed -i s/curl/wget/ scripts/setup.sh", "output": ""}
+    found, look = checker.read_consistency(_plant_then(pair, editor, paraphrase))
+    assert found == [] and look and "may have changed it" in look[0]
