@@ -17,7 +17,9 @@ from .hostfacts_profile import compile_profile, resolve, section
 # The layout of the state built here. Kai reads it, so once Kai is trained or measured on it a
 # change to state() below is a change to Kai's input and needs a new version.
 # v2 (MR195-1): the "Host facts:" section, written from the host-fact profile's resolution.
-LAYOUT = "agentarmor-state/v2"
+# v3 (MR196): Summarizer's history section ends with an account of each file the call names that
+# a recorded session looked at or changed, saying what was searched and what it cannot observe.
+LAYOUT = "agentarmor-state/v3"
 TIERS = ("hard_deny", "soft_deny", "allow")
 # agents/policy.example.jsonl, used when no policy file is given.
 _DEFAULT = (

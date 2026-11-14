@@ -109,9 +109,11 @@ over, because nothing here knows which line a decision will turn on.
 """
 
 import fnmatch
+import json
 import os
 import re
 
+from . import effects
 from .events import ENTRY_IOCS
 from .facts import PERSISTENT, expand, path_classes, shell_segments
 
@@ -335,6 +337,7 @@ PLACES = ("domain", "url", "ip", "email")  # observables that are somewhere a ca
 # Labels content gets from the calls that followed it, not from what it says.
 _FROM_CALLS = frozenset({"action_source", "destination_source"})
 UNDER = 3  # writes shown of what a session did under a bound the user stated
+OBJECT_EVENTS = 8  # recorded events listed in an object's account, the newest; the rest counted
 EARLIER = 3  # other requests of the project's earlier sessions shown as context, the newest
 
 
@@ -1206,7 +1209,146 @@ def select(mine, call_id, others, home):
         "excluded": excluded,
         "route": route,
         "route_reason": reason,
+        "objects": _objects(
+            [mine, *[o for o in others if o["key"] in searched and o["cwd"] == cwd]],
+            mine,
+            call,
+            by_words,
+            cwd,
+            home,
+            unresolved,
+        ),
     }
+
+
+def _effects_of(entry, cwd, home):
+    """(looks, changes, unknown) for one call: the paths it only looks at, the paths it may change,
+    and the paths it names with an effect not known, read as the campaign checker reads a command
+    (summarizer.effects). A line that reading cannot cut may change whatever it names; so may a
+    tool that is neither a shell nor a file tool."""
+    used, tool = uses(entry, cwd, home), entry.get("tool")
+    if tool in WRITES:
+        return set(), {used["write"]} - {None}, set()
+    if tool in READS:
+        return set(used["read"]), set(), set()
+    if tool not in SHELLS:
+        return set(), set(), set(used["named"]) | _said(entry, cwd, home)
+    cut = effects.commands(str(entry.get("target") or ""))
+    if cut is None:
+        return set(), set(), set(used["named"])
+    looks, changes, unknown = set(), set(), set()
+    for words, _, writes in cut:
+        named = effects.targets(words, cwd, home)
+        changes |= {effects.resolved(w, cwd, home) for w in writes}
+        {"look": looks, "named": changes, "unknown": unknown}[effects.effect(words)].update(named)
+    return looks | set(used["read"]), changes, unknown
+
+
+def _touches(paths, target):
+    """Whether one of paths is target or a directory holding it."""
+    return any(path == target or target.startswith(path.rstrip("/") + "/") for path in paths)
+
+
+def _objects(scope, mine, call, objects, cwd, home, unresolved):
+    """For each file the call's own words name, its account in the recorded sessions (MR195, MR196):
+    which sessions were searched, the recorded events that bear on it in host-clock order (a call
+    that looked at it, one of unknown effect that names it, and one that wrote or may have changed
+    it or a directory holding it, with what became of each call), the newest OBJECT_EVENTS of them
+    with how many more there are, and the gaps that leave the account unfinished: a session whose
+    log was not all read, or one whose namespace is not known. Nothing here says whether the file
+    changed. It says what was recorded, and that changes outside the recorded sessions, and by calls
+    that name nothing of the file, are not observed."""
+    told = []
+    for target in sorted(o for o in objects if o.startswith("/") and not o.startswith("//")):
+        events, searched, gaps = [], [], []
+        for session in scope:
+            summary, there = session["summary"], session["cwd"]
+            alias = (
+                "this session"
+                if session is mine
+                else f"[s:{session.get('alias') or session['key']}]"
+            )
+            searched.append(alias)
+            if not summary["session"]["coverage"]["scanned_all_captured"]:
+                gaps.append(f"{alias}: a part of its log was not read")
+            if session["key"] in unresolved:
+                gaps.append(f"{alias}: its namespace is not known")
+            entries = summary["entries"]
+            results = {}
+            for content in _lower(entries):
+                results.setdefault(content.get("call_id"), []).append(content["seq"])
+            for entry in entries:
+                if entry["type"] != "action" or (session is mine and entry["seq"] >= call["seq"]):
+                    continue
+                looks, changes, unknown = _effects_of(entry, there, home)
+                status = entry.get("status")
+                back = [seq for seq in results.get(entry.get("call_id"), ()) if seq > entry["seq"]]
+                if _touches(changes, target):
+                    # What became of the call, as its hooks reported it: a returned call brought a
+                    # result back, which is no proof of an effect (AGENTS.md).
+                    kind = {
+                        "returned": "may have changed it, returned",
+                        "denied": "refused",
+                        "failed": "failed",
+                        "error": "failed",
+                    }.get(status, "proposed, no result")
+                elif target in unknown and status == "returned":
+                    kind = "checked by a call of unknown effect"
+                elif _touches(unknown, target) and status != "denied":
+                    kind = "named by a call of unknown effect"
+                elif target in looks and status == "returned":
+                    kind = "looked at"
+                else:
+                    continue
+                words = " ".join(str(entry.get("target") or entry.get("tool") or "").split())
+                event = {"alias": alias, "seq": entry["seq"], "kind": kind, "status": status}
+                event |= {"result": back[0] if back else None, "words": words[:60]}
+                events.append((float(entry.get("ts") or 0), event))
+        events.sort(key=lambda one: one[0])
+        listed = [event for _, event in events][-OBJECT_EVENTS:]
+        account = {"object": target, "searched": searched, "events": listed}
+        account |= {"not_listed": max(0, len(events) - OBJECT_EVENTS), "gaps": gaps}
+        told.append(account | {"complete": not gaps})
+    return told
+
+
+def object_line(account, cwd):
+    """The history section's line for one object's account, from the account and nothing else: the
+    sessions searched, then each recorded event in host-clock order (its session when it differs
+    from the event before, its event, what it was, and the call's words clipped, except for a look
+    at the file itself), the gaps, and what the account cannot observe."""
+    name = account["object"]
+    name = os.path.relpath(name, cwd) if name.startswith(cwd + "/") else name
+    said, before = [], None
+    for event in account["events"]:
+        where = "" if event["alias"] == before else f"{event['alias']} "
+        before = event["alias"]
+        words = "" if event["kind"] == "looked at" else f" {json.dumps(_clipped(event['words']))}"
+        said.append(f"{where}#{event['seq']} {_KIND_WORDS[event['kind']]}{words}")
+    if account["not_listed"]:
+        said.insert(0, f"{account['not_listed']} earlier events not listed")
+    events = "; ".join(said) if said else "no recorded call looked at it or changed it"
+    gaps = "; ".join(account["gaps"]) or "none"
+    searched = ", ".join(account["searched"])
+    return (
+        f"object {name}: searched {searched}; {events}; gaps: {gaps}; "
+        "unrecorded changes and calls naming nothing of it not observed"
+    )
+
+
+_KIND_WORDS = {
+    "looked at": "looked at",
+    "checked by a call of unknown effect": "checked, effect unknown",
+    "named by a call of unknown effect": "named, effect unknown",
+    "may have changed it, returned": "may have changed it, returned",
+    "refused": "refused",
+    "failed": "failed, effect unknown",
+    "proposed, no result": "proposed, no result",
+}
+
+
+def _clipped(words, size=40):
+    return words if len(words) <= size else words[: size - 1] + "\u2026"
 
 
 def _bodies(sources, paths):
@@ -1793,7 +1935,11 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     def members(group):
         return [index for index, item in enumerate(found["items"]) if group["id"] in item["groups"]]
 
-    frame = len(TITLE) + 80  # the section's title and its second line
+    # The account of each file the call names that some recorded session looked at or changed, or
+    # whose search has a gap: one line each, after the section's other lines (MR196).
+    objects = [account for account in found["objects"] if account["events"] or account["gaps"]]
+    told_of = [object_line(account, mine["cwd"]) for account in objects]
+    frame = len(TITLE) + 80 + sum(len(line) + 1 for line in told_of)  # title, second line, objects
 
     def placed(view):
         """The groups that find room beside a digest: (chosen items, left out, why)."""
@@ -1853,9 +1999,11 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         | ({"of": relation[1]} if relation[1] is not None else {})
         for source, relation, _, _, about in items
     ]
+    if objects:
+        account["objects"] = objects
     shown = [f"[s:{source['alias']}] {words}: {line}" for source, _, words, line, _ in items]
     body, _, footer = view["text"].rpartition("\n")
-    text = "\n".join([body, TITLE, header(account), *shown, footer])
+    text = "\n".join([body, TITLE, header(account), *shown, *told_of, footer])
     # What the account says beyond the section's own lines: what was found and not shown,
     # why what the call uses could not be told, and which sources may be another place.
     for name, value in (("left_out", left), ("unsupported", found["unsupported"])):

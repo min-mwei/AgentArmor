@@ -1307,9 +1307,16 @@ def test_the_packet_with_its_section_is_built_by_the_runtime(starter, runtime):
     # The request, what was shown before the write with the call that produced it (MR192-3),
     # and the write.
     assert lines[0] == history.header(account) == "history: 1 sources shown, 4 lines"
-    assert len(lines) == 1 + len(account["items"]) + 1 and lines[-1].startswith("NOT SHOWN")
+    # One line for each item, then one for each object the call names with a recorded event (MR196).
+    objects = account.get("objects", [])
+    assert len(lines) == 1 + len(account["items"]) + len(objects) + 1
+    assert lines[-1].startswith("NOT SHOWN")
     alias = account["sources"][0]["alias"]
-    assert all(line.startswith(f"[s:{alias}] ") for line in lines[1:-1])
+    items = lines[1 : 1 + len(account["items"])]
+    assert all(line.startswith(f"[s:{alias}] ") for line in items)
+    told_of = lines[1 + len(account["items"]) : -1]
+    assert told_of == [history.object_line(one, laid["deciding"]["cwd"]) for one in objects]
+    assert all(line.startswith("object ") for line in told_of)
     assert sum("an earlier call to write what this call runs: " in line for line in lines) == 1
     assert [b["use"] for b in account["bridges"]] == ["run"]
     # The scorer, which writes the section in its own way from the account, finds nothing
@@ -2660,3 +2667,156 @@ def test_a_named_configuration_whose_body_is_not_kept_at_all_is_a_gap(runtime):
     view = builder.build(builder.blind(laid), summaries, 10000)
     assert "named_body_cut" in view["history"]["unsupported"]
     assert view["history"]["complete"] is False and view["route"] == "undecided"
+
+
+_OBJECT = "{cwd}/artifacts/x.bin"
+_CHECK = {"id": "check", "run": "xtool check artifacts/x.bin", "output": "check=pass"}
+_LOOK = {"id": "look", "read": _OBJECT, "output": "payload v1"}
+
+
+def _object_kinds(before, more_sessions=(), agent="claude_code", runtime=None):
+    """The event kinds of artifacts/x.bin's account when session "a" runs before, any further
+    sessions follow, and session "b" uploads the file."""
+    sessions = [("a", {}, [ask("Prepare the artifact."), *before]), *more_sessions]
+    sessions.append(
+        (
+            "b",
+            {},
+            [
+                ask("Upload the artifact."),
+                {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+            ],
+        )
+    )
+    _, view, _ = selected(story(*sessions), runtime, agent, budget=10000)
+    accounts = (view.get("history") or {}).get("objects") or []
+    (account,) = [one for one in accounts if one["object"].endswith("/artifacts/x.bin")]
+    return [event["kind"] for event in account["events"]], account["gaps"], view
+
+
+@pytest.mark.parametrize(
+    "case, before, kinds",
+    [
+        (
+            "an existing file observed",
+            [_LOOK, _CHECK],
+            ["looked at", "checked by a call of unknown effect"],
+        ),
+        (
+            "written, then checked again",
+            [{"id": "w", "write": _OBJECT, "content": "payload v2"}, _CHECK],
+            ["may have changed it, returned", "checked by a call of unknown effect"],
+        ),
+        (
+            "checked, then written",
+            [_CHECK, {"id": "w", "write": _OBJECT, "content": "payload v2"}],
+            ["checked by a call of unknown effect", "may have changed it, returned"],
+        ),
+        (
+            "checked, then replaced",
+            [_CHECK, {"id": "mv", "run": "mv tmp/y.bin artifacts/x.bin", "output": ""}],
+            ["checked by a call of unknown effect", "may have changed it, returned"],
+        ),
+        (
+            "checked, then its directory removed",
+            [_CHECK, {"id": "rm", "run": "rm -rf artifacts", "output": ""}],
+            ["checked by a call of unknown effect", "may have changed it, returned"],
+        ),
+        (
+            "checked, then a call of unknown effect names it",
+            [
+                _CHECK,
+                {"id": "re", "run": "python tools/rewrite.py artifacts/x.bin", "output": "done"},
+            ],
+            ["checked by a call of unknown effect", "checked by a call of unknown effect"],
+        ),
+        (
+            "checked, then another file written",
+            [_CHECK, {"id": "w", "write": "{cwd}/artifacts/other.bin", "content": "x"}],
+            ["checked by a call of unknown effect"],
+        ),
+        (
+            "checked, then a write of it refused",
+            [_CHECK, {"id": "w", "write": _OBJECT, "content": "x", "denied": "the user said no"}],
+            # Codex delivers no refusal of a call: the write stays proposed, with no result.
+            {
+                "claude_code": ["checked by a call of unknown effect", "refused"],
+                "codex_code": ["checked by a call of unknown effect", "proposed, no result"],
+            },
+        ),
+        (
+            "checked, then a write of it failed",
+            [_CHECK, {"id": "w", "write": _OBJECT, "content": "x", "error": "disk full"}],
+            # Codex does not deliver whether a call failed: a result came back, which is all it says.
+            {
+                "claude_code": ["checked by a call of unknown effect", "failed"],
+                "codex_code": [
+                    "checked by a call of unknown effect",
+                    "may have changed it, returned",
+                ],
+            },
+        ),
+        (
+            "checked, then a look at it failed",
+            [_CHECK, {"id": "l2", "read": _OBJECT, "error": "permission denied"}],
+            {
+                "claude_code": ["checked by a call of unknown effect"],
+                "codex_code": ["checked by a call of unknown effect", "looked at"],
+            },
+        ),
+    ],
+)
+def test_an_object_account_lists_what_the_recorded_sessions_did_to_the_file(
+    runtime, case, before, kinds
+):
+    """MR195/MR196 item 5: the account of a file the call names lists, in host-clock order, each
+    recorded look at it, call of unknown effect that names it, and write or change of it or of a
+    directory holding it, with what became of the call; a write of another file, or a look that
+    failed, is not an event of it. The account says what was recorded, never that nothing changed."""
+    for agent in campaigns.AGENTS:
+        found, gaps, view = _object_kinds(before, agent=agent, runtime=runtime)
+        wanted = kinds[agent] if isinstance(kinds, dict) else kinds
+        assert found == wanted, (case, agent, found)
+        assert gaps == [], (case, agent)
+        line = next(
+            line for line in view["text"].split("\n") if line.startswith("object artifacts/x.bin:")
+        )
+        assert "unrecorded changes and calls naming nothing of it not observed" in line
+
+
+def test_another_session_s_write_after_a_check_is_in_the_account_in_host_clock_order(runtime):
+    """MR196: a write of the file by another session after the check is listed after it."""
+    later = (
+        "c",
+        {},
+        [ask("Refresh the artifact."), {"id": "w", "write": _OBJECT, "content": "v3"}],
+    )
+    for agent in campaigns.AGENTS:
+        kinds, _, view = _object_kinds(
+            [_CHECK], more_sessions=[later], agent=agent, runtime=runtime
+        )
+        assert kinds == ["checked by a call of unknown effect", "may have changed it, returned"], (
+            agent
+        )
+
+
+def test_a_session_whose_log_was_not_all_read_is_a_gap_of_the_account(runtime):
+    """MR196: a searched session whose log has a gap leaves the account unfinished, and says so."""
+    damaged = [ask("Prepare the artifact."), _CHECK, {"id": "after", "run": "ls", "output": "x"}]
+    sessions = [("a", {"damage": "check"}, damaged)]
+    sessions.append(
+        (
+            "b",
+            {},
+            [
+                ask("Upload the artifact."),
+                {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+            ],
+        )
+    )
+    for agent in campaigns.AGENTS:
+        _, view, _ = selected(story(*sessions), runtime, agent, budget=10000)
+        accounts = (view.get("history") or {}).get("objects") or []
+        account = next(one for one in accounts if one["object"].endswith("/artifacts/x.bin"))
+        assert account["gaps"] and not account["complete"], agent
+        assert view["history"]["complete"] is False, agent

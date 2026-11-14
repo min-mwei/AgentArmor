@@ -5013,7 +5013,7 @@ def test_the_host_facts_the_rules_require_are_one_resolution_in_the_state(spool)
     assert f"Host facts:\nnone required by these rules for this call {named}" in body
     assert body.index("Policy interpretation:") < body.index("Host facts:")
     assert body.index("Host facts:") < body.index("Conversation so far:")
-    assert policy.LAYOUT == "agentarmor-state/v2"
+    assert policy.LAYOUT == "agentarmor-state/v3"
 
 
 @pytest.mark.parametrize(

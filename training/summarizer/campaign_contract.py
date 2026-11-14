@@ -111,6 +111,7 @@ from context_eval import AGENTS, CWD, HOME, held
 from score_eval import code_version
 from summarizer.daemon import Daemon
 from summarizer.effects import shell_words  # noqa: F401  (read here and re-exported)
+from summarizer.history import object_line
 from summarizer.hook import Scripted, handle
 from summarizer.store import EVENTS, load_summary, session_dir
 from summarizer.text import digest, entry_lines
@@ -1014,9 +1015,21 @@ def check_history(laid, summaries, view, rules=9):
     history, text = view.get("history"), view["text"]
     _, found, section = text.partition(f"\n{TITLE}\n")
     section = section.rpartition("\n")[0].split("\n") if found else []
+    # The section ends with one line for each file the call names that its account lists
+    # (history.object_line, MR196): each is the very rendering of its account, and is no item.
+    accounts = (view.get("history") or {}).get("objects") or []
+    told_of = [object_line(one, laid["deciding"]["cwd"]) for one in accounts]
+    if told_of:
+        if section[-len(told_of) :] != told_of:
+            problems_of_objects = ["an object line that is not what its account says"]
+        else:
+            problems_of_objects = []
+            section = section[: -len(told_of)]
+    else:
+        problems_of_objects = []
     if history is None:
         return (["a section for other sessions with no account of it"] if found else []), {}
-    problems, by_alias = [], {}
+    problems, by_alias = list(problems_of_objects), {}
     for source in history.get("sources", ()):
         match = [
             part
