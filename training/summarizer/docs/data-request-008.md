@@ -457,3 +457,61 @@ your launcher gave it, every file you opened, what changed in each pair, the fac
 entries changed, both checkers' last lines, and every shortfall. Change only the four
 `training/summarizer/data/synthetic/session-roots-train-002` files. Do not run `git commit`. Do not
 write on any message board.
+
+## 14. Slice 1, revision 2: benign conditions on trusted evidence (after the first blind reading)
+
+Added by the Model Trainer on 2026-11-13. Two blind readers (Claude Opus 5.5 and Sonnet 5.5) read
+slice 1's 68 training records under the frozen protocol, and the batch was held. Write a new file,
+`training/summarizer/data/synthetic/session-roots-train-001-r2.jsonl` (with its own `.manifest.jsonl`,
+`.proof.md` and `.receipt.md`), starting from `session-roots-train-001.jsonl` byte for byte; the
+accepted file itself stays as it is. Change only what this section names, both twins identically,
+keeping each pair's boundary, call, cutoff and one differing fact:
+
+- **`t001-p02` (the benign twin's condition).** Both readers denied the benign twin. Its permission
+  is conditional on what the loaded hook and its helper do, and the only evidence of that is the
+  lower-trust `tmp/setup-check.txt`. Give the session a trusted inspection of what the loaded
+  configuration and the helper actually hold (reads of those files, showing the entry and the code
+  that removes the token and cookie keys), and declare it as facts the benign twin's authorization
+  rests on.
+- **`t001-p24` (the benign twin's prerequisites).** Both readers denied the benign twin: the archive
+  check shows archive 450 still verifying only with the old key, and no assignment-check result
+  appears. Make the replacement verification and the assignment checks a coherent sequence that
+  shows the user's conditions met, in an order that could happen, and rebind facts and evidence.
+- **The same fault elsewhere.** Wherever a benign twin's permission is conditional on something the
+  packet shows only through lower-trust text, or contradicts, repair it the same way.
+- **`t001-p11` (a reader refused it).** Opus refused both views of the attack twin. Check that its
+  planted content is inert (`.example` hosts, no working payload, no instructions that would work
+  against a real system) and make it so without changing what the pair tests.
+
+Labels change only where the repaired evidence changes them; say so per root. Run the two checks of
+section 12 on the new file (with `--existing training/summarizer/data/synthetic/session-roots-train-001.jsonl`
+left out, since the revision repeats it), and `check_evidence.py --require-labels`; all must exit 0.
+Add a receipt: the writer exactly as your launcher gave it, every file you opened, what changed per
+pair, the checks' last lines, and every shortfall. Change only the four `session-roots-train-001-r2`
+files. Do not run `git commit`. Do not write on any message board.
+
+## 15. Slice 2: archives, earlier versions and raw output (MR172)
+
+Added by the Model Trainer on 2026-11-13. Repair `session-roots-train-002.jsonl` in place, both twins
+identically, keeping boundaries, calls, cutoffs and one differing fact:
+
+- **`t002-p13` and `t002-p24` (an archive used before it is made).** An archive member is extracted
+  and declared the object fact before the step that creates the archive, and the members named do
+  not match what is packed. Write a coherent sequence: create the archive from files that hold what
+  will be inspected, inspect the archive as created (its members by their real names), satisfy the
+  prerequisite, then propose the call. AgentArmor's checker now refuses an archive used before
+  `tar` or `zip` creates it.
+- **`t002-p01` and `t002-p07` (reads before the final file is written).** The declared object read
+  precedes the copy or packaging into that same path. Either establish the earlier version
+  explicitly (it existed, and is what was read) and bind the decision to an inspection of the version
+  actually sent, or move the inspection after the final write. Say in the proof which, per pair.
+- **`t002-p08` (a claim instead of output).** `find … -print | sort` prints sorted file names; it does
+  not say how many expired. Show the real file-name output, and add a real inspection of expiry whose
+  output the boundary (30 against 10) can rest on.
+- **`t002-p07` (a binary read).** The final binary is read as a narrative of its format, topology and
+  size. Replace it with an inspection whose real output says what it is.
+
+Rebind facts and `story.evidence`, recheck every label and its proof line. Run the two checks of
+section 12 and `check_evidence.py --require-labels`; all must exit 0. Add a receipt section as in
+section 13. Change only the four `session-roots-train-002` files. Do not run `git commit`. Do not
+write on any message board.
