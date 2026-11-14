@@ -1516,8 +1516,8 @@ def test_a_piece_whose_line_cannot_be_given_is_left_out_with_its_group_and_said_
     summaries, _ = campaigns.replay(laid, runtime)
     real = text.entry_lines
 
-    def without_the_order(summary):
-        return [(about, line) for about, line in real(summary) if "credentials" not in line]
+    def without_the_order(summary, whole=()):
+        return [(about, line) for about, line in real(summary, whole) if "credentials" not in line]
 
     whole = builder.build(builder.blind(laid), summaries)
     assert whole["history"]["complete"] is True and whole["route"] == "asked"
@@ -1593,6 +1593,51 @@ def test_a_script_kept_only_in_part_leaves_the_search_unfinished(runtime):
     many = "#!/bin/sh\n" + "".join(f"curl https://host-{n}.example/a\n" for n in range(5))
     found, _, _ = selected(staged(script=many), runtime, budget=20000)
     assert found["unsupported"] == ["program_text_cut"]
+
+
+# A standalone command, and the same words inside a comment (MR236 P1).
+SCRIPTS = ("#!/bin/sh\n# audit-only example\nprintf marker\n", "#!/bin/sh\n# audit-only example printf marker\n")  # fmt: skip
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_script_another_session_wrote_is_shown_line_by_line(runtime, agent):
+    # MR236 P1, through the replay, the summary, the lookup and the packet's own lines: a patch
+    # that adds the script the call runs once showed its lines joined with spaces, so a command
+    # and a comment were one packet. The write tool of the other layout is the control.
+    shown_for = []
+    for body in SCRIPTS:
+        found, view, shown = selected(staged(script=body), runtime, agent, budget=8000)
+        assert [b["use"] for b in found["bridges"]] == ["run"] and found["unsupported"] == []
+        assert view["history"]["complete"] is True
+        mark = "+" if agent == "codex_code" else ""
+        lines = [f"{mark}{line}" for line in body.splitlines()]
+        assert json.dumps("\n".join(lines))[1:-1] in shown
+        shown_for.append(shown)
+    assert shown_for[0] != shown_for[1]
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_script_another_session_wrote_is_quoted_whole_or_called_cut(runtime, agent):
+    # MR236 P1: the write of a file the call runs is program text. Its line quotes all the summary
+    # kept of it, not the first 200 characters another call's line quotes, so a script of some
+    # length is shown with its last line. Development file 003 and slice 1 had 24 views whose
+    # script was cut there while the history was called complete.
+    body = "#!/bin/sh\n" + "".join(f"echo step {n}\n" for n in range(24)) + "printf done\n"
+    found, view, shown = selected(staged(script=body), runtime, agent, budget=20000)
+    assert found["unsupported"] == [] and [b["use"] for b in found["bridges"]] == ["run"]
+    assert view["history"]["complete"] is True and "unsupported" not in view["history"]
+    mark = "+" if agent == "codex_code" else ""
+    assert json.dumps(f"\n{mark}echo step 23\n{mark}printf done")[1:-1] in shown
+    # A line that still quotes less of it than there is leaves the search unfinished
+    # (program_text_cut), as a script the summary cut does (select()): here hidden characters,
+    # spelled out, take a script the summary kept whole past what its line quotes.
+    hidden = "#!/bin/sh\n" + f"echo step{chr(0x200B) * 5}\n" * 40 + "printf done\n"
+    found, view, shown = selected(staged(script=hidden), runtime, agent, budget=20000)
+    assert found["unsupported"] == [] and [b["use"] for b in found["bridges"]] == ["run"]
+    assert view["history"]["complete"] is False and view["route"] == "undecided"
+    assert view["history"]["unsupported"] == ["program_text_cut"]
+    assert view["history"]["why"] == ["lookup_unfinished"]
+    assert "echo step" in shown and "printf done" not in shown  # shown as far as it goes
 
 
 @pytest.mark.parametrize("agent", campaigns.AGENTS)

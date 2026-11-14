@@ -1094,6 +1094,12 @@ PATCH = "\n".join(
         "@@",
         '-  "deny": ["Bash(curl:*)"],  // REMOVED-MARK-4410',
         '+  "deny": [],  // ADDED-MARK-9027',
+        # Past what a summary keeps of a call's text (ACTION_CHARS): only the call has the tail.
+        *(
+            f'+  "note{n}": "a line that carries the patch past a summary\'s text",'
+            for n in range(24)
+        ),
+        '+  "tail": "TAIL-MARK-5521"',
         "*** End Patch",
     ]
 )
@@ -1118,11 +1124,13 @@ def test_a_saved_call_is_whole_only_when_its_logged_arguments_are_shown(spool, s
         if r["trigger"]["type"] == "action"
     ]
     state, _ = next(s for s in service.seen if "Proposed tool call:" in s[0])
-    # Summarizer's own text for a patch lists its files and added lines. The line the patch
-    # removes is only in the call's arguments, which the daemon finds in the event log.
+    # Summarizer's own text for a patch is the patch as written (MR236 P1), what it removes
+    # included, as far as a summary keeps a call's text. The rest is only in the call's
+    # arguments, which the daemon finds in the event log.
     shown = state.split("Proposed tool call:")
-    assert "REMOVED-MARK-4410" not in shown[0] and "REMOVED-MARK-4410" in shown[1]
-    assert "ADDED-MARK-9027" in shown[1]
+    assert "REMOVED-MARK-4410" in shown[0] and "ADDED-MARK-9027" in shown[0]
+    assert "TAIL-MARK-5521" not in shown[0] and "TAIL-MARK-5521" in shown[1]
+    assert "REMOVED-MARK-4410" in shown[1] and "ADDED-MARK-9027" in shown[1]
     about = record["packet"]
     assert (about["call_source"], about["call_chars_not_shown"]) == ("log", 0)
     assert about["complete"] is True and record["trigger"]["call_sha256"] == call_sha256(
@@ -1134,7 +1142,7 @@ def test_a_saved_call_is_whole_only_when_its_logged_arguments_are_shown(spool, s
     service.seen.clear()
     reduced = escalate.detect(kai.KaiClient(service.url), summary, entry)
     state, _ = service.seen[-1]
-    assert "REMOVED-MARK-4410" not in state and "ADDED-MARK-9027" in state
+    assert "TAIL-MARK-5521" not in state and "REMOVED-MARK-4410" in state
     about = reduced["packet"]
     assert about["call_source"] == "representation" and about["call_chars_not_shown"] is None
     assert about["ready"] is True and about["complete"] is False

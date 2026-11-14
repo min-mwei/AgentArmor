@@ -14,7 +14,7 @@ import json
 import re
 from collections import Counter
 
-from .events import call_words
+from .events import ACTION_CHARS, call_words
 from .facts import visible
 from .labels import COMPLETED
 from .store import call_state
@@ -188,9 +188,9 @@ def _mark(subject):
     )
 
 
-def entry_line(entry, marks=True):
+def entry_line(entry, marks=True, limit=200):
     """One timeline line: where the entry came from, what became of it, its marks and its text."""
-    head, text = _what(entry)
+    head, text = _what(entry, limit)
     mark = f" {_mark(entry)}" if marks and entry["level"] != "none" else ""
     again = ""
     if entry.get("seen_again"):  # the same text arrived from elsewhere too
@@ -348,12 +348,14 @@ def _bearing(summary, target):
     return key, related
 
 
-def _lines(summary, focus, budget, state):
+def _lines(summary, focus, budget, state, whole=frozenset()):
     """Every candidate line in display order, as (rank, key, section, text, cut).
 
     rank orders the competition for room: its first number is a tier (tier 0 is always shown) and
     the rest break ties. key marks evidence that a decision about the focus call, or any reading
-    of the session's task, should not go without.
+    of the session's task, should not go without. whole names the events of calls whose lines
+    quote all the summary kept of them, as far as ACTION_CHARS, instead of the first 200
+    characters: program text another session's call runs (history.packet(), MR236 P1).
     """
     session, entries = summary["session"], summary["entries"]
     coverage, counts = session["coverage"], session["marked"]
@@ -476,13 +478,16 @@ def _lines(summary, focus, budget, state):
             rank = (_TIER[entry["level"]], 0, -entry["confidence"])
         else:
             rank = (6 if entry["seq"] in latest else 8, 1, -entry["seq"])
-        limit = 200 if entry["type"] == "action" else _content_limit(entry)
+        limit = _content_limit(entry)
+        if entry["type"] == "action":  # a call named in whole is quoted as far as it was kept
+            limit = ACTION_CHARS if entry["seq"] in whole else 200
         meta = {"entry": entry, "limit": limit}
         # Something the agent did that is marked medium or high is part of any decision about
         # what it does next: if such a call does not fit, that is key evidence dropped, and if
         # its line shows less of it than there is, that is key evidence cut.
         acted = entry["type"] == "action" and entry["level"] in ("high", "medium")
-        lines.append((rank, rank[0] == 1 or acted, 3, entry_line(entry), _cut(entry, limit), meta))
+        line = entry_line(entry, limit=limit)
+        lines.append((rank, rank[0] == 1 or acted, 3, line, _cut(entry, limit), meta))
     mine = set(target.get("iocs", ())) if target else set()
     for order, ioc in enumerate(summary.get("iocs", ())):
         if f"{ioc['kind']}:{ioc['value']}" in mine:
@@ -515,7 +520,7 @@ def _lines(summary, focus, budget, state):
     return lines
 
 
-def entry_lines(summary):
+def entry_lines(summary, whole=()):
     """[(account, line)] for every entry a digest of the summary shows when it has room
     for all: each line with the account of the very entry it was written for.
 
@@ -523,8 +528,9 @@ def entry_lines(summary):
     event and can share their first words, so a line found again by its event or by how
     its text begins can be another piece's. Whoever shows a source's line for an entry
     takes it from here, by the account's identity, and never looks for it in the text.
+    whole names the events of calls quoted as far as the summary kept them (_lines()).
     """
-    lines = _lines(summary, None, 10**7, None)
+    lines = _lines(summary, None, 10**7, None, frozenset(whole))
     return [(_occurrence(rest[1]), text) for _, _, _, text, *rest in lines if len(rest) > 1]
 
 

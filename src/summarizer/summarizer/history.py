@@ -2664,7 +2664,14 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # Each source's own lines, every one with the account of the entry it was written for
     # (text.entry_lines). A line of another session is shown as that session's summary
     # words it, for the very entry its account names, and is never found again by text.
-    lines = {key: entry_lines(parts[key]["summary"]) for key in found["sources"]}
+    # Program text, a write of a file the call runs or loads, is quoted as far as the summary
+    # kept it, not to the first 200 characters of other calls (MR236 P1): what it does is
+    # evidence only whole, and a line that still cuts it leaves the search unfinished (below).
+    programs = {(b["key"], b["seq"]) for b in found["bridges"] if b["use"] in ("run", *LOADS)}
+    lines = {
+        key: entry_lines(parts[key]["summary"], {seq for one, seq in programs if one == key})
+        for key in found["sources"]
+    }
     rendered = []
     for item in found["items"]:
         other, made = parts[item["key"]], []
@@ -2758,6 +2765,19 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         if set(inside) <= chosen and any(about["shown"] != about["of"] for about in lines):
             if "keyed_observation_cut" not in unsupported:
                 unsupported.append("keyed_observation_cut")
+            if "lookup_unfinished" not in why:
+                why.append("lookup_unfinished")
+    # Program text is evidence only whole (MR236 P1): a write of a file the call runs or loads,
+    # shown on a line that quotes less of that write than there is (one the summary cut, or longer
+    # than its line), leaves what the script does past the cut unknown. That is said as for a
+    # script the summary cut (program_text_cut, select()), and it is shown as far as it goes.
+    for index in chosen:
+        item = found["items"][index]
+        if item["type"] != "action" or (item["key"], item["seq"]) not in programs:
+            continue
+        if any(about["shown"] != about["of"] for *_, about in rendered[index]):
+            if "program_text_cut" not in unsupported:
+                unsupported.append("program_text_cut")
             if "lookup_unfinished" not in why:
                 why.append("lookup_unfinished")
     items = [line for index in sorted(chosen) for line in rendered[index]]

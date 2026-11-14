@@ -113,11 +113,11 @@ from score_eval import code_version
 from summarizer import history as history_lookup
 from summarizer.daemon import Daemon
 from summarizer.effects import shell_words  # noqa: F401  (read here and re-exported)
-from summarizer.events import call_words
+from summarizer.events import ACTION_CHARS, call_words
 from summarizer.history import condition_line, object_line
 from summarizer.hook import Scripted, handle
 from summarizer.store import EVENTS, load_summary, session_dir
-from summarizer.text import condition_line_for, digest, entry_lines
+from summarizer.text import condition_line_for, digest, entry_line, entry_lines
 
 SCORER = "campaign-contract/9"
 # Version 10 is computed beside version 9 and replaces nothing: a result names the version it
@@ -934,7 +934,15 @@ def reference(laid, summaries, budget=3000):
         if made is not None:  # a result keeps the call that produced it (MR192-3)
             wanted[part["id"]].setdefault(made, ("recent", None, None))
     items, sources = [], []
-    paired = {name: entry_lines(summaries[name]) for name in wanted}
+    # A bridged write of a file the call runs or loads is program text, quoted as far as the
+    # summary kept it, as history.packet() quotes it (MR236 P1).
+    programs = {}
+    for bridge in campaign.get("bridges", ()):
+        if bridge["use"] in ("run", *history_lookup.LOADS):
+            part = parts[bridge["session"]]
+            seq = part["laid"]["where"][bridge["step"]]["proposed"]
+            programs.setdefault(part["id"], set()).add(seq)
+    paired = {name: entry_lines(summaries[name], programs.get(name, ())) for name in wanted}
     for name, seqs in wanted.items():
         part = parts[name]
         shown = [about for about, _ in paired[name]]
@@ -1634,6 +1642,13 @@ def check_history(laid, summaries, view, rules=9):
     items, views, claimed = list(history.get("items", ())), {}, set()
     if len(items) != len(section) - 1 and section:
         problems.append("lines of the section and their accounts are not one to one")
+    # The write of a file a bridge the section claims runs or loads is program text: its line
+    # may quote it as far as the summary kept it, and no further (history.packet(), MR236 P1).
+    programs = {
+        (bridge.get("alias"), bridge.get("seq"))
+        for bridge in history.get("bridges", ())
+        if bridge.get("use") in ("run", *history_lookup.LOADS)
+    }
     for line, about in zip(section[1:], items, strict=False):
         parsed = _LINE.match(line)
         part = by_alias.get(about.get("alias"))
@@ -1646,7 +1661,14 @@ def check_history(laid, summaries, view, rules=9):
         summary = summaries[part["id"]]
         lines, _ = own_lines(summary)
         entry = _entry(summary, about)
-        if entry is None or parsed.group(3) not in lines.get(about["seq"], ()):
+        own = list(lines.get(about["seq"], ()))
+        if (
+            entry is not None
+            and entry["type"] == "action"
+            and (about["alias"], about["seq"]) in programs
+        ):
+            own.append(entry_line(entry, limit=ACTION_CHARS))
+        if entry is None or parsed.group(3) not in own:
             # Not what that session's summary says of that event: another kind, trust,
             # status, path or text, or an event it does not have.
             problems.append("a line that is not that session's own line for that event")

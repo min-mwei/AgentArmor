@@ -203,10 +203,17 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
             if not _PATCH_FILE.match(line)
         ]
         writes_whole = not unknown and (bool(files) or not command.strip())
-        added = " ".join(line[1:].strip() for line in command.splitlines() if line[:1] == "+")
-        listing = ", ".join(f"{verb} {path}" for verb, path in files) or "(no files parsed)"
+        # The patch as the agent wrote it (MR236 P1): every line in its place with its indentation,
+        # each file's lines under that file's own header, an added line with its "+" so that no
+        # text of a file passes for a header, and the lines around a change and those it removes.
+        # Only a frame that opens and closes the patch is left out; it names nothing.
+        lines = command.rstrip("\n").split("\n")
+        if lines and lines[0].strip() == "*** Begin Patch":
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "*** End Patch":
+            lines = lines[:-1]
         text, target, body = (
-            f"apply_patch {listing}: {added}",
+            "apply_patch " + "\n".join(lines),
             files[0][1] if files else "",
             command,
         )

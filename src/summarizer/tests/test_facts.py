@@ -313,7 +313,97 @@ def test_apply_patch_names_every_file_it_touches():
     patch = "*** Begin Patch\n*** Add File: .codex/hooks.json\n+{}\n*** Update File: a.py\n-x\n+y\n*** End Patch"
     call = describe_call("apply_patch", {"command": patch}, CWD, HOME)
     assert set(call["paths"]) == {f"{CWD}/.codex/hooks.json", f"{CWD}/a.py"}
-    assert "persistence_write" in call["flags"] and call["text"].startswith("apply_patch add ")
+    assert "persistence_write" in call["flags"]
+    assert call["text"] == "apply_patch " + patch.removeprefix("*** Begin Patch\n").removesuffix(
+        "\n*** End Patch"
+    )
+
+
+def _framed(*lines):
+    return "\n".join(("*** Begin Patch", *lines, "*** End Patch"))
+
+
+# A standalone command, and the same words inside a comment (MR236 P1).
+SCRIPTS = ("#!/bin/sh\n# audit-only example\nprintf marker\n", "#!/bin/sh\n# audit-only example printf marker\n")  # fmt: skip
+
+
+@pytest.mark.parametrize("tool", ["apply_patch", "Write"])
+def test_a_written_script_is_shown_line_by_line(tool):
+    # MR236 P1: a patch that adds a script once had its lines joined with spaces, so a command
+    # and a comment read alike in what is shown and in what is read before anything is clipped.
+    # The write tool is the control: it always kept them apart.
+    path = f"{CWD}/tools/example.sh"
+
+    def described(body):
+        if tool == "Write":
+            return describe_call(tool, {"file_path": path, "content": body}, CWD, HOME)
+        added = [f"+{line}" for line in body.splitlines()]
+        return describe_call(tool, {"command": _framed(f"*** Add File: {path}", *added)}, CWD, HOME)
+
+    command, comment = (described(body) for body in SCRIPTS)
+    assert command["text"] != comment["text"] and command["whole"] != comment["whole"]
+    for call, body in ((command, SCRIPTS[0]), (comment, SCRIPTS[1])):
+        lines = body.splitlines()
+        if tool == "apply_patch":
+            assert call["text"].split("\n") == [f"apply_patch *** Add File: {path}"] + [
+                f"+{line}" for line in lines
+            ]
+        else:
+            assert call["text"].split("\n") == [f"Write {path}: {lines[0]}", *lines[1:]]
+        assert call["whole"] == call["text"] and call["writes"] == [path]
+
+
+def test_a_patch_is_shown_as_written_each_file_under_its_own_header():
+    # MR236 P1: indentation, the lines around a change, what it removes, and which file each
+    # line belongs to are kept. Only the frame that opens and closes the patch is left out.
+    body = (
+        "*** Add File: tools/run.sh",
+        "+#!/bin/sh",
+        "+if [ -f ready ]; then",
+        "+    sh tools/apply.sh",
+        "+fi",
+        "*** Update File: src/app.py",
+        "@@ def main():",
+        "     load()",
+        "-    old()",
+        "+    new()",
+        "*** End of File",
+        "*** Delete File: notes.txt",
+        "*** Update File: a.cfg",
+        "*** Move to: b.cfg",
+        "@@",
+        "-x = 1",
+        "+x = 2",
+    )
+    call = describe_call("apply_patch", {"command": _framed(*body)}, CWD, HOME)
+    assert call["text"] == call["whole"] == "apply_patch " + "\n".join(body)
+    files = ("tools/run.sh", "src/app.py", "notes.txt", "a.cfg", "b.cfg")
+    assert call["writes"] == [f"{CWD}/{name}" for name in files] and call["writes_whole"]
+
+
+def test_an_added_line_that_reads_like_a_header_stays_a_line_of_its_file():
+    # An added line keeps its "+": a file's text cannot pass for another file's header, so a
+    # line of a script the agent will run is never read as a line of a note.
+    body = ("*** Add File: tools/run.sh", "+echo start", "+*** Add File: notes.txt", "+rm -r build")
+    call = describe_call("apply_patch", {"command": _framed(*body)}, CWD, HOME)
+    assert call["text"].endswith("\n+echo start\n+*** Add File: notes.txt\n+rm -r build")
+    assert call["writes"] == [f"{CWD}/tools/run.sh"] and call["writes_whole"]
+
+
+def test_a_patch_without_its_frame_or_with_more_around_it_is_shown_whole():
+    bare = "*** Add File: a.sh\n+echo a"
+    assert (
+        describe_call("apply_patch", {"command": bare}, CWD, HOME)["text"] == f"apply_patch {bare}"
+    )
+    # A frame is left out only where it opens and closes the patch: what stands around it is
+    # the agent's too, and is shown.
+    around = "note before\n*** Begin Patch\n*** Add File: a.sh\n+echo a\n*** End Patch\ntrailer"
+    call = describe_call("apply_patch", {"command": around}, CWD, HOME)
+    assert call["text"] == f"apply_patch {around}"
+    # Nothing the reading knows as a file: the patch is shown as it is, and what it writes is
+    # not all known.
+    odd = describe_call("apply_patch", {"command": "*** Begin Patch\n*** Rename: a\n*** End Patch"}, CWD, HOME)  # fmt: skip
+    assert odd["text"] == "apply_patch *** Rename: a" and odd["writes_whole"] is False
 
 
 def blocks(tool, tool_input, response):
