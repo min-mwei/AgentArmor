@@ -600,7 +600,8 @@ def test_an_archive_used_before_tar_or_zip_creates_it_is_refused(pair, make, use
 
 
 def test_extracting_an_archive_is_a_use_not_a_write(pair):
-    made, named = checker.file_uses({"run": "tar -xf staging/roster.tar roster.csv"}, "/w")
+    step = {"run": "tar -xf staging/roster.tar roster.csv", "output": ""}
+    made, named = checker.file_uses(step, "/w")
     assert made == set() and "/w/staging/roster.tar" in named
 
 
@@ -836,3 +837,29 @@ def test_printf_reads_its_format_once_and_its_values_as_they_are(pair, command, 
         step = {"id": "run", "run": command, "output": output}
         found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
         assert bool(found) is refused, (command, output)
+
+
+@pytest.mark.parametrize(
+    "step, writes, refused",
+    [
+        ({"id": "copy", "run": "cp src/a.txt out/a.txt"}, False, True),
+        ({"id": "copy", "run": "cp src/a.txt out/a.txt", "output": ""}, True, False),
+        ({"id": "copy", "run": "cp src/a.txt out/a.txt", "pending": True}, False, False),
+        ({"id": "copy", "run": "cp src/a.txt out/a.txt", "denied": "no"}, False, False),
+        (
+            {"id": "copy", "run": "cp src/a.txt out/a.txt", "error": "cp: no such file"},
+            False,
+            False,
+        ),
+        ({"id": "note", "write": "{cwd}/out/a.txt", "content": "x"}, True, False),
+    ],
+)
+def test_the_checker_reads_outcomes_as_the_replay_renders_them(pair, step, writes, refused):
+    """MR186-2: a command with no output is a proposal never answered and establishes nothing; an
+    empty output is a returned call; pending, refused and failed calls write nothing; a write
+    returns. MR186-1: an unanswered step that is not marked so is refused."""
+    assert checker.returned(step) is writes
+    made, _ = checker.file_uses(step, "/w")
+    assert bool(made) is writes
+    found = checker.unanswered(_plant_then(pair, step))
+    assert bool(found) is refused

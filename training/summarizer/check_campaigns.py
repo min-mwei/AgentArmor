@@ -158,6 +158,35 @@ def _resolved(word, cwd):
     return os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd, path))
 
 
+def returned(step):
+    """Whether the replay shows a result for this tool step, by the renderer's own rule
+    (case_contract._step_events with context_eval._call; MR186-2): not when it was refused
+    ("denied"), failed ("error") or is pending; always for a write; for a command, a read, a
+    fetch or any other tool, only when it has an output, which may be empty. A step with no
+    output is a call that was proposed and never answered: it establishes nothing, however its
+    words read."""
+    if "denied" in step or "error" in step or step.get("pending"):
+        return False
+    return "write" in step or step.get("output") is not None
+
+
+def unanswered(campaign):
+    """The tool steps before the call that were proposed and never answered: no output where the
+    replay needs one, and not marked pending, refused or failed (MR186-1). Each renders as a
+    proposal with no result; a quiet command that returned shows an empty output instead."""
+    deciding = (campaign["decide"]["session"], campaign["decide"]["step"])
+    return [
+        f"{session}/{step['id']}"
+        for session, step, _ in timeline(campaign)
+        if (session, step["id"]) != deciding
+        and any(key in step for key in ("run", "read", "fetch", "mcp", "tool"))
+        and not returned(step)
+        and not step.get("pending")
+        and "denied" not in step
+        and "error" not in step
+    ]
+
+
 def file_uses(step, cwd):
     """(paths a step writes, paths it reads or names) by a plain reading of the step.
 
@@ -169,11 +198,12 @@ def file_uses(step, cwd):
     archive names it. Whether a named file is read is not settled here: naming a file the task
     writes later is enough to look at. What else a command makes is not read here.
 
-    A step whose call was refused, failed, or has no result reported ("denied", "error",
-    "pending") writes nothing and reads nothing as far as the trace shows (MR166-2): a refused
-    or failed write establishes no version of its file, and a failed read of a file not yet
-    written is coherent. A write's version is established only by a write that returned."""
-    if any(outcome in step for outcome in ("denied", "error", "pending")):
+    A step whose call was refused, failed, is pending, or has no output where the replay needs one
+    (returned()) writes nothing and reads nothing as far as the trace shows (MR166-2, MR186-2): a
+    refused or failed write establishes no version of its file, a command proposed and never
+    answered establishes nothing, and a failed read of a file not yet written is coherent. A
+    write's version is established only by a write that returned."""
+    if not returned(step):
         return set(), set()
     if "write" in step:
         return {os.path.normpath(step["write"])}, set()
@@ -705,7 +735,7 @@ def _read_checks(campaign):
     order = timeline(campaign)
     last, found, after, unchecked = {}, [], [], []  # path -> (writer, its text or None, changed by)
     for at, (session, step, cwd) in enumerate(order, 1):
-        if any(outcome in step for outcome in ("denied", "error", "pending")):
+        if not returned(step):
             continue
         where = f"{session}/{step['id']} (step {at})"
         if "write" in step:
@@ -994,6 +1024,11 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
             continue
         by_id[name] += outcome_problems(campaign)
         by_id[name] += chronology_problems(campaign)
+        by_id[name] += [
+            f"{where} has no output and is not marked pending, refused or failed: a call that "
+            "returned shows its output, an empty one when it printed nothing"
+            for where in unanswered(campaign)
+        ]
         by_id[name] += read_consistency(campaign)[0]
         if runtime is not None:
             wrong = shown_truthfully(campaign, runtime)
