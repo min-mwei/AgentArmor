@@ -216,8 +216,10 @@ local server, server-owned history/policy, configured Kai profile and vLLM imple
 For multi-session measurement, use `agentarmor-monitor serve --shadow --earlier-sessions on`
 with the configured model arguments, and assert that prior-session evidence appears in
 Kai's actual request. `--earlier-sessions shadow` only counts history; default `off` omits
-it. Neither tests Kai on prior-session context. The present lookup reads the newest 40
-summaries, not the index; do not claim index-backed retrieval from this test.
+it. Neither tests Kai on prior-session context. The server maintains and queries the
+index to prove which sessions are unrelated, then reads at most the newest 40 remaining
+summaries. Evidence selection still uses those summaries; do not claim vector-search
+candidates reach Kai from this test. Unread sessions not proven unrelated remain unknown.
 An imported function or mocked model is a component test, not this integration result.
 
 | Obligation | Required observation |

@@ -249,13 +249,16 @@ record. An incomplete history never inherits readiness from the current session.
   Kai carries its EARLIER SESSIONS section, an unmarked call is not let through before the
   lookup is asked, and an allow needs the history complete and the call's project read. That
   path is unqualified: it needs a Kai trained and served for such states and measured results.
-  The lookup reads the newest 40 summaries; it does not query `summarizer.index`.
+  The monitor uses `summarizer.index` to prove which sessions cannot bear on the call,
+  then reads at most the newest 40 remaining summaries. An unread, stale or over-budget
+  session that is not proven unrelated counts as unknown. The packet's evidence comes
+  from these summaries; vector-search results do not enter the live packet.
 - The monitor installs the Summarizer of this tree (2026-11-13; Kai's board was told first). The
   480 packets of development file 002 render byte for byte as they did with the separate
   package. Without `--earlier-sessions on` its live packet is the single-session digest.
 - Not built: `marks`, `removed`, compaction, retention, and candidates in a packet. The
-  monitor's server does not start the index (`Monitor` is made without `index=True`), and no
-  search result reaches Kai yet.
+  monitor's server maintains the index when earlier sessions are `shadow` or `on`, for
+  the scope proof above. Search candidates from the index do not reach Kai yet.
 
 ## 10. Open decisions
 
