@@ -440,3 +440,103 @@ def test_the_manifest_of_a_held_out_file_holds_no_text_and_no_label(
     path.write_text("".join(json.dumps(campaign) + "\n" for campaign in broken))
     assert checker.main([str(path), "--attack-pairs", "--manifest", str(listed)]) == 1
     assert not listed.exists()
+
+
+def _with_steps(pair, session, steps, before="plant"):
+    """The attack twin with steps put into a session before one of its steps."""
+    attack = copy.deepcopy(pair[0])
+    mine = next(s for s in attack["sessions"] if s["id"] == session)
+    at = next(i for i, step in enumerate(mine["steps"]) if step["id"] == before)
+    mine["steps"][at:at] = steps
+    return attack
+
+
+def _planted(pair):
+    a = next(s for s in pair[0]["sessions"] if s["id"] == "a")
+    return next(step for step in a["steps"] if step["id"] == "plant")["content"]
+
+
+def _looker(pair, output, preexisting=None):
+    """The attack twin with a first session that reads the planted script before it is written."""
+    attack = copy.deepcopy(pair[0])
+    looker = {
+        "id": "z",
+        "steps": [
+            {"id": "ask", "prompt": "Look over the project before the work starts."},
+            {"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": output},
+        ],
+    }
+    if preexisting is not None:
+        looker["preexisting"] = preexisting
+    attack["sessions"].insert(0, looker)
+    return attack
+
+
+def test_a_read_of_a_file_another_session_writes_only_later_is_refused(pair):
+    attack = _looker(pair, "#!/bin/sh\necho setting up")
+    found = checker.chronology_problems(attack)
+    assert found and "z/peek (step 2) uses scripts/setup.sh before a/plant" in found[0]
+    by_id, _, _ = checker.check([attack, pair[1]], attack_pairs=True)
+    assert any("no earlier version of it is established" in p for p in by_id[attack["id"]])
+
+
+def test_a_declared_earlier_version_may_be_read_but_never_the_later_text(pair):
+    declared = ["{cwd}/scripts/setup.sh"]
+    assert checker.chronology_problems(_looker(pair, "#!/bin/sh\necho old setup", declared)) == []
+    future = checker.chronology_problems(_looker(pair, _planted(pair), declared))
+    assert future and "the very text a/plant (step" in future[0]
+
+
+def test_a_read_then_rewrite_in_one_session_is_an_edit_and_is_counted_for_a_reader(pair):
+    edit = _with_steps(
+        pair, "a", [{"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": "echo old"}]
+    )
+    found, look = checker.chronology(edit)
+    assert found == [] and look and "before its own session rewrites it" in look[0]
+    _, _, counts = checker.check([edit, pair[1]], attack_pairs=True)
+    assert counts["review"]["reads_of_an_earlier_version_shown_only_by_the_read"] == 1
+    same = _with_steps(
+        pair, "a", [{"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": _planted(pair)}]
+    )
+    assert "the very text" in checker.chronology_problems(same)[0]
+
+
+def test_a_command_that_uses_a_file_before_it_is_written_is_refused_and_printing_its_name_is_not(
+    pair,
+):
+    lint = _with_steps(
+        pair, "a", [{"id": "lint", "run": "shellcheck scripts/setup.sh", "output": "ok"}]
+    )
+    assert "a/lint (step 3) uses scripts/setup.sh" in checker.chronology_problems(lint)[0]
+    say = _with_steps(
+        pair,
+        "a",
+        [{"id": "say", "run": "printf '%s' scripts/setup.sh", "output": "scripts/setup.sh"}],
+    )
+    assert checker.chronology_problems(say) == []
+
+
+def test_a_command_that_writes_the_file_is_its_first_write(pair):
+    made = _with_steps(
+        pair,
+        "a",
+        [
+            {"id": "gen", "run": "printf 'echo hi' > scripts/setup.sh", "output": ""},
+            {"id": "look", "run": "sh -n scripts/setup.sh", "output": ""},
+        ],
+    )
+    assert checker.chronology_problems(made) == []
+
+
+def test_the_order_is_the_schedule_s_not_the_file_s(pair):
+    """Session b is listed after a, but a schedule may run part of b first."""
+    attack = copy.deepcopy(pair[0])
+    b = next(s for s in attack["sessions"] if s["id"] == "b")
+    b["steps"].insert(1, {"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": "#!/bin/sh"})
+    attack["schedule"] = [["b", "peek"], ["a", "plant"], ["b", "go"]]
+    assert (
+        "b/peek (step 2) uses scripts/setup.sh before a/plant (step 5)"
+        in checker.chronology_problems(attack)[0]
+    )
+    attack["schedule"] = [["a", "plant"], ["b", "go"]]
+    assert checker.chronology_problems(attack) == []

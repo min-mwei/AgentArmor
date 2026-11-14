@@ -28,7 +28,19 @@ What it refuses (each is a line `{"id" or "file", "problems": [...]}` and exit s
 - in a family of handoffs between agents, a campaign whose writer and user of the file are
   the same agent;
 - with `--require NAME=N`, fewer than N campaigns in which NAME holds at the cutoff;
-- a `story.area` that is not one of the six areas a request may ask an attack to name.
+- a `story.area` that is not one of the six areas a request may ask an attack to name;
+- a step that uses a file the task itself writes before the trace has written it (MR165-1).
+  Laid out in the order its steps happen, a read of the file, or a command naming it (other
+  than printf or echo), comes before the first step that writes it, and no earlier version
+  of it is established. An earlier version is established in two ways only: a session
+  declares the file `preexisting` (files of its project that exist before the trace begins,
+  paths as its steps write them, `{cwd}` allowed); or the read is in the very session that
+  then writes the file, and shows text other than what that session writes (the ordinary
+  read-then-edit). A read that shows the very text a later write produces is refused even so.
+  Declaring a file preexisting is a statement about the story, not a way to excuse a read: a
+  later write never justifies an earlier read. A paraphrase of a later version, read in the
+  session that writes it, cannot be told from an earlier version by this check: such reads
+  are counted under `review` for a person to look at.
 
 With `--manifest PATH` a file that passes also gets a manifest: for each campaign its id,
 pair, group, family, numbers of sessions and steps and the hash of its content, and a
@@ -52,18 +64,21 @@ partial diagnostic and not the check a request asks for. No campaign text is pri
 import argparse
 import hashlib
 import json
+import os
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from campaign_contract import (
     AGENTS,
+    HOME,
     SCORER,
     code_version,
     layout,
     reference,
     replay,
     score,
+    shell_words,
     validate,
 )
 
@@ -113,6 +128,118 @@ def outcome_problems(campaign):
         if not events & set(OUTCOMES):
             found.append(f"the write at {at[0]}/{at[1]} has no outcome among the facts")
     return found
+
+
+def timeline(campaign):
+    """Every step that happens before the call, in the order campaign_contract.layout replays
+    them, as (session, step with its paths filled in, cwd)."""
+    laid = layout(campaign)
+    parts = {part["id"]: part for part in laid["parts"]}
+    order = []
+    for name, start, upto in laid["schedule"]:
+        part = parts[name]
+        steps = {step["id"]: step for step in part["laid"]["case"]["steps"]}
+        here = sorted(
+            (min(marks.values()), sid)
+            for sid, marks in part["laid"]["where"].items()
+            if start < min(marks.values()) <= upto
+        )
+        order += [(name, steps[sid], part["cwd"]) for _, sid in here]
+    return order
+
+
+_MAKES = {">", ">>", "-o", "--out", "--output"}  # the word after one of these is written
+_SAYS = {"printf", "echo"}  # commands whose words are printed, not files used
+
+
+def _resolved(word, cwd):
+    path = HOME + word[1:] if word == "~" or word.startswith("~/") else word
+    return os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd, path))
+
+
+def file_uses(step, cwd):
+    """(paths a step writes, paths it reads or names) by a plain reading of the step.
+
+    A write step writes its file and a read step reads its own. A command writes what follows
+    a redirection or an output option and the destination of cp, mv, install or tee, and names
+    every other word (the value after an option's = included). Whether a named file is read
+    is not settled here: naming a file the task writes later is enough to look at."""
+    if "write" in step:
+        return {os.path.normpath(step["write"])}, set()
+    if "read" in step:
+        return set(), {os.path.normpath(step["read"])}
+    command = step.get("run")
+    if not isinstance(command, str):
+        return set(), set()
+    found = shell_words(command)
+    words = [word for word, _ in found] if found is not None else command.split()
+    says = bool(words) and words[0] in _SAYS  # its words are printed; a redirection still writes
+    made, named = set(), set()
+    for at, word in enumerate(words):
+        if word in _MAKES or at == 0:
+            continue
+        before = words[at - 1]
+        if before in _MAKES or (words[0] == "tee" and not word.startswith("-")):
+            made.add(_resolved(word, cwd))
+        elif word.startswith(">"):
+            made.add(_resolved(word.lstrip(">"), cwd))
+        elif words[0] in ("cp", "mv", "install") and at == len(words) - 1:
+            made.add(_resolved(word, cwd))
+        elif not says:
+            for part in (word, word.split("=", 1)[1] if "=" in word else ""):
+                if part and not part.startswith("-"):
+                    named.add(_resolved(part, cwd))
+    if words and not says:
+        named.add(_resolved(words[0], cwd))  # a script run by its own path
+    return made, named - made
+
+
+def chronology(campaign):
+    """(problems, reads to look at): steps that use a file the task writes before the trace has
+    written it (MR165-1), and reads of an earlier version established only by the read itself."""
+    order = timeline(campaign)
+    first, texts = {}, defaultdict(list)
+    for at, (session, step, cwd) in enumerate(order, 1):
+        made, _ = file_uses(step, cwd)
+        for path in made:
+            first.setdefault(path, (at, session, step["id"]))
+            if "write" in step:
+                texts[path].append(str(step.get("content", "")).strip())
+    cwds = {part["id"]: part["cwd"] for part in layout(campaign)["parts"]}
+    declared = {
+        os.path.normpath(path.replace("{cwd}", cwds[session["id"]]).replace("{home}", HOME))
+        for session in campaign["sessions"]
+        for path in session.get("preexisting", ())
+    }
+    found, look = [], []
+    for at, (session, step, cwd) in enumerate(order, 1):
+        _, used = file_uses(step, cwd)
+        for path in sorted(used):
+            made = first.get(path)
+            if made is None or made[0] <= at:
+                continue
+            where = f"{session}/{step['id']} (step {at})"
+            writer = f"{made[1]}/{made[2]} (step {made[0]})"
+            shown, said = os.path.relpath(path, cwd), str(step.get("output", "")).strip()
+            if "read" in step and said in texts[path]:
+                found.append(f"{where} reads in {shown} the very text {writer} writes later")
+            elif path in declared:
+                continue
+            elif "read" in step and made[1] == session:
+                look.append(
+                    f"{where} reads {shown} before its own session rewrites it at step {made[0]}"
+                )
+            else:
+                found.append(
+                    f"{where} uses {shown} before {writer} writes it, and no earlier version of it "
+                    "is established"
+                )
+    return found, look
+
+
+def chronology_problems(campaign):
+    """Steps that use a file the task writes before the trace has written it (MR165-1)."""
+    return chronology(campaign)[0]
 
 
 def step_strings(campaign):
@@ -298,6 +425,7 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
         if refused:
             continue
         by_id[name] += outcome_problems(campaign)
+        by_id[name] += chronology_problems(campaign)
         if runtime is not None:
             wrong = shown_truthfully(campaign, runtime)
             by_id[name] += [wrong] if wrong else []
@@ -386,6 +514,9 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
     counts["bridged_pairs_by_write_outcome"] = {k: len(v) for k, v in sorted(outcomes.items())}
     counts["review"] = {"prose_in_more_than_4_pairs_once_names_are_masked": prose_clusters(valid)}
     counts["review"]["work_stamped_from_a_few_shapes"] = stamped_work(valid)
+    counts["review"]["reads_of_an_earlier_version_shown_only_by_the_read"] = sum(
+        len(chronology(c)[1]) for c in valid
+    )
     return {name: found for name, found in by_id.items() if found}, of_file, counts
 
 
