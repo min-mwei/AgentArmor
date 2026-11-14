@@ -90,8 +90,9 @@ def packet(summary, entry, max_chars, sessions=None):
     them. The packet is then Summarizer's lookup (summarizer.history.packet): this session's
     digest and, in the same budget, an EARLIER SESSIONS section, with the lookup's own account
     under "history". Such a packet is ready only if the history is complete by that account
-    and every other session listed could be read up to date: a section that left something
-    out, or sessions nobody could read, are no evidence that nothing more bears on the call.
+    and every other session of the call's own project could be read up to date: a section that
+    left something out, or sessions of the project nobody could read, are no evidence that
+    nothing more bears on the call.
     """
     focus = entry.get("call_id") or None
     if sessions is None:
@@ -114,9 +115,11 @@ def packet(summary, entry, max_chars, sessions=None):
     if sessions is not None:
         account = shown.get("history") or {}
         counts = sessions["counts"]
-        known = sum(counts[k] for k in ("no_summary_or_unreadable", "summary_behind_its_log"))
+        unread = counts.get("unread_in_project", 1) + counts.get("beyond_the_cap_in_project", 0)
         lookup = {"complete": account.get("complete", True), "why": account.get("why", [])}
-        lookup |= {"coverage_known": known + counts["beyond_the_cap"] == 0, "sessions": counts}
+        # Coverage of the call's own project (MR169-1): a session of another project that
+        # cannot be read is counted, and is no veto on every call.
+        lookup |= {"coverage_known": unread == 0 and "error" not in counts, "sessions": counts}
         lookup |= {
             "sources": len(account.get("sources", ())),
             "lines": len(account.get("items", ())),

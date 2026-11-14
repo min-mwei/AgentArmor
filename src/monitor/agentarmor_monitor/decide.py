@@ -29,6 +29,8 @@ from pathlib import Path
 
 from summarizer.store import AGENTS, EVENTS, load_summary, read_events, session_dir
 
+from summarizer import history
+
 from . import earlier as earlier_sessions
 from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
@@ -182,10 +184,13 @@ def judge(
     with_earlier ("on" mode of --earlier-sessions) puts in the state the decision model reads,
     within the same budget, what Summarizer's lookup finds in the other sessions on this
     machine (summarizer.history): an EARLIER SESSIONS section, with the lookup's account
-    under the record's packet.history. The other sessions are read only for a call that is
-    put to the model. An allow then counts only if that history is complete by the lookup's
-    own account and every other session listed could be read up to date: sessions nobody
-    could read are no evidence that nothing in them bears on the call.
+    under the record's packet.history. An unmarked call is not let through before the lookup
+    is asked (MR169-1): one that an earlier session bears on is put to the model, and one whose
+    earlier history in its own project cannot all be read is "undecided", why
+    "earlier_history_unknown". An allow then counts only if that history is complete by the
+    lookup's own account and every other session of the call's project could be read up to
+    date: sessions nobody could read are no evidence that nothing in them bears on the call,
+    while a session of another project that cannot be read is no veto on every call.
 
     A record says how far the session's log had been read when its evidence was taken
     ("evidence"), how the call was routed ("routing": asked or not, and the level and
@@ -233,13 +238,6 @@ def judge(
     if stale:  # overtaken, or not known: the log could not be read to its end
         unknown = stale == "log_unread"
         return unasked("undecided", stale, "proposal_unknown" if unknown else "proposal_overtaken")
-    if not marked:
-        # "Not marked" is a finding only when Summarizer scanned everything it captured.
-        if coverage["scanned_all_captured"]:
-            return unasked("abstain", None, "below_threshold")
-        return unasked("undecided", "coverage", "below_threshold_with_gaps")
-    if client is None:  # marked, and nothing to put it to
-        return unasked("undecided", "no_decision_model", "no_decision_model")
     sessions = None
     if with_earlier:
         try:
@@ -247,10 +245,33 @@ def judge(
         except Exception as error:  # nothing could be listed: no other session is known
             others = []
             counts = dict.fromkeys(("listed", "read", "summary_behind_its_log"), 0)
-            counts |= {"nothing_before_the_call": 0, "beyond_the_cap": 0}
+            counts |= {"nothing_before_the_call": 0, "beyond_the_cap": 0, "unread_in_project": 1}
+            counts |= {"beyond_the_cap_in_project": 0}
             counts |= {"no_summary_or_unreadable": 1, "error": type(error).__name__}
         mine = earlier_sessions.known(agent, directory.name, summary)
         sessions = {"mine": mine, "others": others, "counts": counts, "home": str(Path.home())}
+        if not marked:
+            # What other sessions hold is asked before an unmarked call is let through
+            # (MR169-1): a call an earlier session bears on is put to the decision model, and
+            # one whose earlier history in its project cannot all be read is not a finding.
+            try:
+                route = history.select(mine, call_id, others, sessions["home"]).get("route")
+            except Exception:
+                route = "undecided"
+            routing["earlier_route"] = route
+            if route == "asked":
+                marked = True
+                routing |= {"eligible": True, "eligible_by": "earlier_sessions"}
+            elif route == "undecided" or not earlier_sessions.project_coverage_known(counts):
+                routing["earlier_sessions"] = counts
+                return unasked("undecided", "earlier_history_unknown", "unmarked_earlier_unknown")
+    if not marked:
+        # "Not marked" is a finding only when Summarizer scanned everything it captured.
+        if coverage["scanned_all_captured"]:
+            return unasked("abstain", None, "below_threshold")
+        return unasked("undecided", "coverage", "below_threshold_with_gaps")
+    if client is None:  # marked, and nothing to put it to
+        return unasked("undecided", "no_decision_model", "no_decision_model")
     record = detect(
         client,
         summary,

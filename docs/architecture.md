@@ -233,16 +233,28 @@ record. An incomplete history never inherits readiness from the current session.
 
 ## 9. What exists today
 
-- The core's package, tests, tools and documents are under `src/summarizer`, copied from
-  the proof of concept at `362fd15`. Its history, boards and data stayed there.
+- The core's package and tests are under `src/summarizer`, copied from the proof of concept at
+  `362fd15`; its training and measurement are under `training/summarizer`. On 2026-11-13 its
+  data and documents moved here too (`training/summarizer/data/`, `training/summarizer/docs/`),
+  with local-only seeds and held-out sets under the ignored `private/`, and the proof of
+  concept's repository is being retired.
 - `summarizer.index`: `sessions`, `units`, `names`, `words` and `vectors`, written by the
   daemon when `summarizer serve` runs. The fact tables are rebuilt from journals without a
   model and a rebuild leaves the vectors in place. `summarizer search` by name and by
   words, `summarizer index status`, and `Index.like()` for the exact scan by vector, which
   only compares vectors one encoder made.
-- The lookup (`summarizer.history`) is reviewed and measured offline. No server calls it.
-- The monitor now installs the Summarizer of this tree (2026-11-13; Kai's board was told first). The 480 packets of development file 002 render byte for byte as they did with the separate package. Its live packet is still the single-session digest.
-- Not built: `marks`, `removed`, compaction, retention, and candidates in a packet. No
+- The lookup (`summarizer.history`) is measured offline, and the monitor can call it: with
+  `agentarmor-monitor serve --earlier-sessions shadow` it is counted beside every decision and
+  read by none; with `--earlier-sessions on` (opt-in, off by default) the packet a gate puts to
+  Kai carries its EARLIER SESSIONS section, an unmarked call is not let through before the
+  lookup is asked, and an allow needs the history complete and the call's project read. That
+  path is unqualified: it needs a Kai trained and served for such states and measured results.
+  The lookup reads the newest 40 summaries; it does not query `summarizer.index`.
+- The monitor installs the Summarizer of this tree (2026-11-13; Kai's board was told first). The
+  480 packets of development file 002 render byte for byte as they did with the separate
+  package. Without `--earlier-sessions on` its live packet is the single-session digest.
+- Not built: `marks`, `removed`, compaction, retention, and candidates in a packet. The
+  monitor's server does not start the index (`Monitor` is made without `index=True`), and no
   search result reaches Kai yet.
 
 ## 10. Open decisions

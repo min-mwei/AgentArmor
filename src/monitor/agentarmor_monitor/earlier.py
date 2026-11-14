@@ -41,7 +41,7 @@ import threading
 import time
 from pathlib import Path
 
-from summarizer.store import list_sessions, load_summary, private_dir, session_dir
+from summarizer.store import EVENTS, list_sessions, load_summary, private_dir, session_dir
 
 from summarizer import history
 
@@ -68,19 +68,40 @@ def known(agent, name, held):
     return fields | {"agent": agent, "session_id": name}
 
 
+def cwd_of(directory):
+    """The working directory a session's first logged event names, or None when it says none."""
+    try:
+        with open(Path(directory) / EVENTS, "rb") as handle:
+            first = json.loads(handle.readline() or b"null")
+        return str((first or {}).get("event", {}).get("cwd") or "") or None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def others_of(agent, name, summary, call_id, newest=NEWEST):
     """(the other sessions as the lookup takes them, oldest first, each cut at the call's time;
-    counts of how far they could be read). Shared by the shadow count and the "on" mode."""
+    counts of how far they could be read). Shared by the shadow count and the "on" mode.
+
+    Besides the counts over every session listed, "unread_in_project" and
+    "beyond_the_cap_in_project" count the sessions of the call's own project (the same working
+    directory, or one their log does not name) that could not be read up to date or were not
+    looked at (MR169-1): what such a session holds may bear on the call, while a session of
+    another project that cannot be read is no veto on every call."""
     call = next(
         e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
     )
     cut = float(call.get("ts") or 0.0)
-    listed = [(a, n) for a, n, _, _ in list_sessions() if (a, n) != (agent, name)]
+    here = str(summary["session"].get("cwd") or "")
+    listed = [(a, n, d) for a, n, d, _ in list_sessions() if (a, n) != (agent, name)]
     sessions = {"listed": len(listed), "read": 0, "no_summary_or_unreadable": 0}
     sessions |= {"summary_behind_its_log": 0, "nothing_before_the_call": 0}
     sessions["beyond_the_cap"] = len(listed[newest:])
+    sessions["unread_in_project"] = 0
+    sessions["beyond_the_cap_in_project"] = sum(
+        cwd_of(d) in (here, None) for _, _, d in listed[newest:]
+    )
     others = []
-    for a, n in listed[:newest]:
+    for a, n, directory in listed[:newest]:
         try:
             held = load_summary(a, n)
             entries = held["entries"] if held is not None else None
@@ -88,12 +109,15 @@ def others_of(agent, name, summary, call_id, newest=NEWEST):
             entries = None
         if entries is None:
             sessions["no_summary_or_unreadable"] += 1
+            sessions["unread_in_project"] += cwd_of(directory) in (here, None)
             continue
         before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
         if not held.get("fresh"):
             # What its log holds beyond the summary is not known, before the call or
             # after: it is searched as far as it goes and counted as behind.
             sessions["summary_behind_its_log"] += 1
+            there = str(held["session"].get("cwd") or "") or cwd_of(directory)
+            sessions["unread_in_project"] += there in (here, None)
         elif not before:
             sessions["nothing_before_the_call"] += 1
         else:
@@ -108,6 +132,12 @@ def coverage_known(sessions):
     """Whether every other session listed could be read up to date (MR159-2)."""
     unread = sessions["no_summary_or_unreadable"] + sessions["summary_behind_its_log"]
     return unread + sessions["beyond_the_cap"] == 0
+
+
+def project_coverage_known(sessions):
+    """Whether every other session of the call's own project could be read up to date (MR169-1)."""
+    unread = sessions.get("unread_in_project", 1) + sessions.get("beyond_the_cap_in_project", 0)
+    return unread == 0 and "error" not in sessions
 
 
 def observed(agent, name, call_id, summary, max_chars, identity=None, newest=NEWEST):

@@ -103,6 +103,8 @@ def test_what_earlier_sessions_hold_is_counted_apart_and_nothing_of_them_is_reco
         "summary_behind_its_log": 0,
         "nothing_before_the_call": 0,
         "beyond_the_cap": 0,
+        "unread_in_project": 0,
+        "beyond_the_cap_in_project": 0,
     }
     assert seen["limits"] == earlier.LIMITS and isinstance(seen["ms"], int)
     # Counts only: nothing a session said, wrote or named.
@@ -357,3 +359,79 @@ def test_a_server_measures_earlier_sessions_in_shadow_or_sends_them_never_both(s
     with pytest.raises(ValueError):
         Decider(None, earlier=earlier.Shadow(5000), include_earlier=True)
     assert Decider(None, include_earlier=True).about()["earlier_sessions"] == "on"
+
+
+def log_at(session, cwd, *events):
+    common = {"cwd": cwd, "permission_mode": "default", "session_id": session}
+    for item in events:
+        append_event("claude_code", session, build_record("claude_code", common | item))
+
+
+def unmarked_call(command="ls docs"):
+    """A later session in the project that proposes an ordinary, unmarked command."""
+    run = {"command": command}
+    log(
+        "s-late",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "List the docs folder."},
+        *tool(1, "Bash", run),
+    )
+    return call_sha256("Bash", run)
+
+
+def judged_on(identity, model, call="call-1"):
+    return decide.judge(
+        "claude_code", "s-late", call, identity, model, "low", 12000, with_earlier=True
+    )
+
+
+def test_on_asks_the_lookup_before_letting_an_unmarked_call_through(spool):
+    """MR169-1: an unmarked call that an earlier session bears on is put to the model."""
+    identity = two_sessions()  # the earlier session wrote the script the unmarked call runs
+    model = Answering("deny")
+    verdict, record, _ = judged_on(identity, model)
+    assert verdict == "deny" and len(model.states) == 1 and "EARLIER SESSIONS" in model.states[0]
+    assert record["routing"]["eligible_by"] == "earlier_sessions"
+    assert record["routing"]["earlier_route"] == "asked"
+
+
+def test_on_holds_an_unmarked_call_when_its_project_has_an_unreadable_session(spool):
+    identity = two_sessions(summarize_early=False)  # same project, logged, never summarized
+    model = Answering("allow")
+    verdict, record, why = judged_on(identity, model)
+    assert (verdict, why) == ("undecided", "earlier_history_unknown") and model.states == []
+    assert record["routing"]["earlier_sessions"]["unread_in_project"] == 1
+
+
+def test_on_lets_an_unmarked_call_through_on_complete_unrelated_history(spool):
+    log(
+        "s-early",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Fix the typo in the changelog."},
+        *tool(
+            1,
+            "Edit",
+            {"file_path": f"{CWD}/CHANGELOG.md", "old_string": "teh", "new_string": "the"},
+            "ok",
+        ),
+    )
+    identity = unmarked_call()
+    summarized("s-early", "s-late")
+    model = Answering("allow")
+    verdict, record, why = judged_on(identity, model)
+    assert (verdict, why) == ("abstain", None) and model.states == []
+    assert record["routing"]["earlier_route"] == "unasked"
+
+
+def test_on_is_not_vetoed_by_an_unreadable_session_of_another_project(spool):
+    log_at(
+        "s-elsewhere",
+        "/srv/work/other-project",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Rotate the staging key."},
+    )
+    identity = unmarked_call()
+    summarized("s-late")  # the other project's session is never summarized
+    verdict, record, why = judged_on(identity, Answering("allow"))
+    assert (verdict, why) == ("abstain", None)
+    assert record["routing"]["earlier_route"] == "unasked"
