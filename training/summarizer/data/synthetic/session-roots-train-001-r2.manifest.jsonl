@@ -2,17 +2,17 @@
 {"id": "t001-stage-benign", "pair_id": "t001-p01", "group": "t001-g01", "family": "staged_exfiltration", "sessions": 2, "steps": 32, "sha256": "7cd1bd53048a82c0e1a60afba7ffafd644026bc79f1c83cd2246c8636889381f"}
 {"id": "t001-control-attack", "pair_id": "t001-p02", "group": "t001-g02", "family": "poisoned_control", "sessions": 3, "steps": 22, "sha256": "106374becdfa99d8204edf90357ede35efae67349f66468ec3aa144e6116f15d"}
 {"id": "t001-control-benign", "pair_id": "t001-p02", "group": "t001-g02", "family": "poisoned_control", "sessions": 3, "steps": 22, "sha256": "a3aa10803baed0a6af626371091b7c0f37983b6626e11b3e5db27a9914c0b6e8"}
-{"id": "t001-approval-attack", "pair_id": "t001-p03", "group": "t001-g03", "family": "claimed_approval", "sessions": 2, "steps": 17, "sha256": "5ad91117f48b7093c8e5b0a29ac5b4dad503a7cd82b602fe642dfe458708dda3"}
+{"id": "t001-approval-attack", "pair_id": "t001-p03", "group": "t001-g03", "family": "claimed_approval", "sessions": 2, "steps": 17, "sha256": "88b14961e2906704ce07d578e5bdb83d6369f3982a02160a329b1648979a9f4b"}
 {"id": "t001-approval-benign", "pair_id": "t001-p03", "group": "t001-g03", "family": "claimed_approval", "sessions": 2, "steps": 17, "sha256": "df295b10b7d12e968494904a7b0d6177b5cf33dee29b89e88a662ed9b287d70f"}
 {"id": "t001-credential-attack", "pair_id": "t001-p04", "group": "t001-g04", "family": "credential_moved", "sessions": 4, "steps": 19, "sha256": "193b935529caf520d414fa5ead4cdfd18e845397b8ad48a5c2635cd5f6721742"}
 {"id": "t001-credential-benign", "pair_id": "t001-p04", "group": "t001-g04", "family": "credential_moved", "sessions": 4, "steps": 19, "sha256": "1a2f903f3f6fd07ea4a810eab41861b746eef2ab1e3afa02bedaa26b586c4690"}
 {"id": "t001-limit-attack", "pair_id": "t001-p05", "group": "t001-g05", "family": "limit_crossed", "sessions": 2, "steps": 16, "sha256": "699cfdad8d5548402eed081fb01212bf465ec8a98d71746e79f6cc9db3e24583"}
 {"id": "t001-limit-benign", "pair_id": "t001-p05", "group": "t001-g05", "family": "limit_crossed", "sessions": 2, "steps": 16, "sha256": "27b57d1b45a41a8684d412cff611589a904d5ddfda2a1b40f292889e990b9476"}
-{"id": "t001-handoff-attack", "pair_id": "t001-p06", "group": "t001-g06", "family": "agent_handoff", "sessions": 3, "steps": 22, "sha256": "946a6dbaf18760719c7cdd95ac93e7dfcbd61a0709b3baa9a2cd5894ca655ae8"}
+{"id": "t001-handoff-attack", "pair_id": "t001-p06", "group": "t001-g06", "family": "agent_handoff", "sessions": 3, "steps": 22, "sha256": "2ecfac0e7d29885667f6ebe56e67784ca9d7c9105b86494d72b946c44f22d3d6"}
 {"id": "t001-handoff-benign", "pair_id": "t001-p06", "group": "t001-g06", "family": "agent_handoff", "sessions": 3, "steps": 22, "sha256": "d1a5d483d2fa5888864ba57875b79488bbcb808786e3323750a42dcf9356d4cd"}
 {"id": "t001-source-attack", "pair_id": "t001-p07", "group": "t001-g07", "family": "changed_source", "sessions": 3, "steps": 21, "sha256": "5da83fded427217185957efa577f3691e47b1b9bb31432ea76c58e508426eb81"}
 {"id": "t001-source-benign", "pair_id": "t001-p07", "group": "t001-g07", "family": "changed_source", "sessions": 3, "steps": 21, "sha256": "e585b92939c6a138dcffc485641bb5a54fa23a77594dc96934dd2dd7d4d8884f"}
-{"id": "t001-claim2-attack", "pair_id": "t001-p08", "group": "t001-g08", "family": "claimed_approval", "sessions": 2, "steps": 18, "sha256": "0c17199192d70969d6dfd765b19f15539c44ad01a07c5876a231844d198f909b"}
+{"id": "t001-claim2-attack", "pair_id": "t001-p08", "group": "t001-g08", "family": "claimed_approval", "sessions": 2, "steps": 18, "sha256": "bb9d4eb4ffaad1fa6bcd2ea92424acf4dcbef6319eebcd0a4fbe4a8d079c44dd"}
 {"id": "t001-claim2-benign", "pair_id": "t001-p08", "group": "t001-g08", "family": "claimed_approval", "sessions": 2, "steps": 18, "sha256": "dbfccbf55ab1c8e52d035f0913065568e87e1158b035e30517c1bc95ab041f47"}
 {"id": "t001-credential2-attack", "pair_id": "t001-p09", "group": "t001-g09", "family": "credential_moved", "sessions": 3, "steps": 18, "sha256": "725dd5042d2a555f778800001a3b2bd766471becfef1ce4a538b617c43936539"}
 {"id": "t001-credential2-benign", "pair_id": "t001-p09", "group": "t001-g09", "family": "credential_moved", "sessions": 3, "steps": 18, "sha256": "14641e2723db32471bacba77ff1f120e3b7e0d227df81f3616b1c0a4ea9236cb"}
@@ -24,7 +24,7 @@
 {"id": "t001-control2-benign", "pair_id": "t001-p12", "group": "t001-g12", "family": "poisoned_control", "sessions": 3, "steps": 20, "sha256": "1fcafcc135d5c44fa276ab9d735f62f1e729495aca5d61fc9d7f1f670f5b3e42"}
 {"id": "t001-notes-attack", "pair_id": "t001-p13", "group": "t001-g13", "family": "poisoned_notes", "sessions": 2, "steps": 18, "sha256": "786928e7326e8ad78ffc22f6bcbc1c82f5a2def172597ecc1146e7922e26e5d2"}
 {"id": "t001-notes-benign", "pair_id": "t001-p13", "group": "t001-g13", "family": "poisoned_notes", "sessions": 2, "steps": 18, "sha256": "3b8728eaed45817935b5f7ac0e298a9c78338d3f3f012adf4e6541c50f4d4ff7"}
-{"id": "t001-slow-attack", "pair_id": "t001-p14", "group": "t001-g14", "family": "slow_interleaved", "sessions": 4, "steps": 23, "sha256": "23c329374bb495cad5eb689ae47ac96f7881645b57484e856f6d0a7c8e5b3b44"}
+{"id": "t001-slow-attack", "pair_id": "t001-p14", "group": "t001-g14", "family": "slow_interleaved", "sessions": 4, "steps": 23, "sha256": "3bcf064875ee43b522b116463c0f5b6b60f51789cfcb84f52078ee127b1ec833"}
 {"id": "t001-slow-benign", "pair_id": "t001-p14", "group": "t001-g14", "family": "slow_interleaved", "sessions": 4, "steps": 23, "sha256": "51ae66478c3b5198b7e9b5bb88b75e3d349815a40dc9b97055289d740f488f28"}
 {"id": "t001-stage2-attack", "pair_id": "t001-p15", "group": "t001-g15", "family": "staged_exfiltration", "sessions": 3, "steps": 22, "sha256": "4a048d88ff27c62fc44e952e945adfe8d92497df71d77f6acfc98429f72a263f"}
 {"id": "t001-stage2-benign", "pair_id": "t001-p15", "group": "t001-g15", "family": "staged_exfiltration", "sessions": 3, "steps": 22, "sha256": "54d0ee7ba7c05fc37a634b56d42e2815873a63d58e3f12c59517bf9b0374b90e"}
@@ -32,8 +32,8 @@
 {"id": "t001-handoff2-benign", "pair_id": "t001-p16", "group": "t001-g16", "family": "agent_handoff", "sessions": 3, "steps": 21, "sha256": "5608dde112ebcab4b750634b82122a4abeb9bf99d9a574313a64341a2c31064e"}
 {"id": "t001-source2-attack", "pair_id": "t001-p17", "group": "t001-g17", "family": "changed_source", "sessions": 3, "steps": 20, "sha256": "cbafe16e5b823088b131fc46de549254875bdddbcc7c1b5eecea41faaa1cd9d8"}
 {"id": "t001-source2-benign", "pair_id": "t001-p17", "group": "t001-g17", "family": "changed_source", "sessions": 3, "steps": 20, "sha256": "434deaa226aa3caea21b70c96cc942fccdc48d3867e9aa2221568b37ddac3b1b"}
-{"id": "t001-claim3-attack", "pair_id": "t001-p18", "group": "t001-g18", "family": "claimed_approval", "sessions": 2, "steps": 16, "sha256": "6d45677d8f4bcf3b9fb2ddb394531a577eba464395dab782aab1c834dab30808"}
-{"id": "t001-claim3-benign", "pair_id": "t001-p18", "group": "t001-g18", "family": "claimed_approval", "sessions": 2, "steps": 16, "sha256": "059feb95fea552e7172aec4e4a6a69c0130820dd6d31267a690b810e5606de75"}
+{"id": "t001-claim3-attack", "pair_id": "t001-p18", "group": "t001-g18", "family": "claimed_approval", "sessions": 2, "steps": 14, "sha256": "7cf06153dddef8443d576b2c1a666c75994290689d9b44808727401e9e7cb560"}
+{"id": "t001-claim3-benign", "pair_id": "t001-p18", "group": "t001-g18", "family": "claimed_approval", "sessions": 2, "steps": 14, "sha256": "c49a252e4f43dc91e21ef339aac0fe6c7ec4f3cd5d516ae3828b7d4eda71435a"}
 {"id": "t001-credential3-attack", "pair_id": "t001-p19", "group": "t001-g19", "family": "credential_moved", "sessions": 3, "steps": 20, "sha256": "81936e3afdca6cb3ddbed44951c9f69f2eac9276ec1e6ce4f987ec5177ee6219"}
 {"id": "t001-credential3-benign", "pair_id": "t001-p19", "group": "t001-g19", "family": "credential_moved", "sessions": 3, "steps": 20, "sha256": "521196974e6d2d59487baad1feee4e9b6baf50f5cf0580a53d1ce18a3e25c871"}
 {"id": "t001-limit3-attack", "pair_id": "t001-p20", "group": "t001-g20", "family": "limit_crossed", "sessions": 2, "steps": 16, "sha256": "df2c764bdf425abc2813b5c8f75ad4aa8c6c8e21c1d359a607cfffe0086d1672"}
@@ -44,8 +44,8 @@
 {"id": "t001-control3-benign", "pair_id": "t001-p22", "group": "t001-g22", "family": "poisoned_control", "sessions": 3, "steps": 18, "sha256": "14743c93fbc1e0776f9525cc43a20ea514f1abc5c74d055faf56dbcf80641523"}
 {"id": "t001-notes2-attack", "pair_id": "t001-p23", "group": "t001-g23", "family": "poisoned_notes", "sessions": 2, "steps": 17, "sha256": "5c6f2883fb7bc97ddd164abb3f9df5f0e3e3a71ba21b9e4c7cfa8868809b77d0"}
 {"id": "t001-notes2-benign", "pair_id": "t001-p23", "group": "t001-g23", "family": "poisoned_notes", "sessions": 2, "steps": 17, "sha256": "96cb1484f68961733c888df83c9da53580ac7161d59cfc57e0c2b411c6c1e57f"}
-{"id": "t001-slow2-attack", "pair_id": "t001-p24", "group": "t001-g24", "family": "slow_interleaved", "sessions": 4, "steps": 22, "sha256": "28707246a00c270199d1cc3c9913878aafd76685e3ba752f5acb68a04b5b0b88"}
+{"id": "t001-slow2-attack", "pair_id": "t001-p24", "group": "t001-g24", "family": "slow_interleaved", "sessions": 4, "steps": 22, "sha256": "b8b665edf02fc97792b5694d417b7894bfd0e46140b93e8364e68ffc49c6e463"}
 {"id": "t001-slow2-benign", "pair_id": "t001-p24", "group": "t001-g24", "family": "slow_interleaved", "sessions": 4, "steps": 22, "sha256": "c82955658e203d4d0bf3848d3e33daa3a975bb6dffe4537f519fc7fcced267cd"}
 {"id": "t001-stage3-attack", "pair_id": "t001-p25", "group": "t001-g25", "family": "staged_exfiltration", "sessions": 3, "steps": 21, "sha256": "7d43fd935a896257b617bfd2fa10f1f12326e4902f4e9fd24a314d98e7bc61ca"}
 {"id": "t001-stage3-benign", "pair_id": "t001-p25", "group": "t001-g25", "family": "staged_exfiltration", "sessions": 3, "steps": 21, "sha256": "38aaace9085ab10cd930f5ebf8dbbfb746855021bb1244191f418680100f5456"}
-{"file_sha256": "a5ae89f0ad946cab152d10e0235a4b6154e9de391375093191791329615d339e", "campaigns": 50, "pairs": 25}
+{"file_sha256": "ab47d13af6e6b5acddcf46e4000d94afab08010216f74abecd1606c34a5b8d64", "campaigns": 50, "pairs": 25}
