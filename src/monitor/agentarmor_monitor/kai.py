@@ -14,6 +14,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -188,14 +189,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def transport_failure(error):
     """What became of a request that brought nothing back, in a word a record can be counted by:
-    "timeout", "connection_refused", or the type of the error. urllib wraps the socket's own error
-    in a URLError (its reason)."""
+    "timeout", "connection_refused", "dns_failure", or the type of the error. urllib wraps the
+    socket's own error in a URLError (its reason)."""
     reason = getattr(error, "reason", None)
     for cause in (error, reason):
         if isinstance(cause, TimeoutError):  # socket.timeout is TimeoutError
             return "timeout"
         if isinstance(cause, ConnectionRefusedError):
             return "connection_refused"
+        if isinstance(cause, socket.gaierror):  # the name of the service did not resolve
+            return "dns_failure"
     return type(reason if isinstance(reason, BaseException) else error).__name__
 
 

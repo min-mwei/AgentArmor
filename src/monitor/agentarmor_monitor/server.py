@@ -113,7 +113,8 @@ class Relay:
 # The words a relayed failure may keep (kai.transport_failure, KaiClient._call): fixed categories
 # and a status code, never text a service sent or any part of a packet.
 FAILURE = re.compile(
-    r"timeout|connection_refused|malformed_answer|request too large to send|HTTP [1-5]\d\d"
+    r"timeout|connection_refused|dns_failure|malformed_answer|request too large to send"
+    r"|HTTP [1-5]\d\d"
     r"|[A-Z][A-Za-z]*Error"
 )
 

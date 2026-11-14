@@ -1601,6 +1601,23 @@ def test_an_http_status_is_kept_by_the_client_and_through_the_relay(code, kind):
         service.shutdown()
 
 
+class _Unresolved:
+    """A client whose service's name did not resolve, as urllib reports it."""
+
+    def _call(self, path, body=None):
+        failure = urllib.error.URLError(socket.gaierror(8, "nodename nor servname provided"))
+        raise kai.marked(kai.KaiUnavailable(kai.transport_failure(failure)), 1, False)
+
+
+def test_a_name_that_does_not_resolve_is_a_dns_failure_through_the_relay():
+    """MR253: a DNS failure said "gaierror" directly and "RuntimeError" through the relay."""
+    failure = urllib.error.URLError(socket.gaierror(8, "nodename nor servname provided"))
+    assert kai.transport_failure(failure) == "dns_failure"
+    with pytest.raises(kai.KaiUnavailable, match="^dns_failure$") as caught:
+        serving.InProcess(_Relayed(_Unresolved()))._call("/x", {"a": 1})
+    assert (caught.value.attempts, caught.value.responded) == (1, False)
+
+
 def test_a_request_nothing_usable_came_back_for_says_what_became_of_it():
     """The record of an unavailable Kai said only the error's type ("URLError", and from the
     server's relay "RuntimeError"), so a timeout could not be told from a refused connection."""
