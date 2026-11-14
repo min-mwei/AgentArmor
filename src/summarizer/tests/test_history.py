@@ -3235,6 +3235,46 @@ def test_a_script_a_patch_writes_after_its_first_file_is_bridged(runtime):
         assert bridges and bridges[0]["use"] == "run", (agent, found["bridges"])
 
 
+def test_a_group_or_subshell_is_cut_without_its_brackets():
+    """The brackets of a group or subshell are no part of a word: "(du -sh a b) >/dev/null" runs
+    du on a and b, and its redirection stays with the group's last command. A bracket inside
+    quotes stays in its word (dev 003: the bracket was read into the program and the last path)."""
+    from summarizer import effects
+
+    assert effects.commands("(du -sh rehearsal/a rehearsal/b) >/dev/null") == [
+        (["du", "-sh", "rehearsal/a", "rehearsal/b"], True, ["/dev/null"])
+    ]
+    assert effects.commands("(cd sub && make) > build.log") == [
+        (["cd", "sub"], False, []),
+        (["make"], True, ["build.log"]),
+    ]
+    assert effects.commands('echo "(note)" > n.txt') == [(["echo", '"(note)"'], True, ["n.txt"])]
+
+
+def test_a_look_inside_a_subshell_is_in_the_object_account(runtime):
+    """A size check run in a subshell after the file was written is a look at that file, in the
+    runtime's account and in the oracle's reading alike."""
+    steps = [
+        ask("Prepare the artifact."),
+        {"id": "w", "write": _OBJECT, "content": "payload v2"},
+        {"id": "size", "run": "(du -sh artifacts/x.bin notes/a.txt) >/dev/null", "output": ""},
+    ]
+    upload = [
+        ask("Upload the artifact."),
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(story(("a", {}, steps), ("b", {}, upload)), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        assert [e["kind"] for e in _account(view)["events"]] == [
+            "may have changed it, returned",
+            "looked at",
+        ], agent
+        score = campaigns.score(laid, summaries, view, 11000, 16)
+        assert score["forged"] == 0 and score["objects_missing"] == 0, agent
+
+
 def test_an_object_account_counts_every_event_it_does_not_list(runtime):
     """MR198-1, a bounded count: thirty calls that name the file list the newest eight, and the count
     of the rest is the count of every other event, kept or catalogued."""

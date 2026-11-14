@@ -209,6 +209,25 @@ CONTROL = {"|", "||", "&&", ";", "&"}
 REDIRECT = re.compile(r"(\d*)(>>?|<|&>)(.*)")
 
 
+def _ungrouped(command):
+    """A line with the brackets of a group or subshell, "(du -sh a b) >/dev/null", taken out of
+    its words: an opening one begins a command, and a closing one ends nothing, so a redirection
+    after the group stays with the group's last command and the file it writes is still counted.
+    A bracket inside quotes is part of its word, as the shell has it."""
+    out, quote = [], ""
+    for char in command:
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char == "(":
+            char = " ; "
+        elif char == ")":
+            char = " "
+        out.append(char)
+    return "".join(out)
+
+
 def commands(command):
     """The simple commands of a command line, each as (its words without redirections, whether it
     has a redirection, the files its output redirections write), or None when the line holds a
@@ -222,7 +241,7 @@ def commands(command):
     elif "$(" in command or "`" in command:
         return None
     else:
-        words = command.split()
+        words = _ungrouped(command).split()
     commands, current, redirected, writes, skip = [], [], False, [], None
     for word in words:
         if skip is not None:

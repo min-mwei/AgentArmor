@@ -987,6 +987,7 @@ def object_accounts(laid, summaries):
 _OBSERVING = {"cat", "head", "tail", "sed", "grep", "egrep", "fgrep", "wc", "nl", "od", "jq"}
 _OBSERVING |= {"sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "md5sum", "b2sum"}
 _OBSERVING |= {"shasum", "cksum", "stat", "file", "ls", "du", "hexdump", "less", "more"}
+_OBSERVING |= {"diff", "cmp"}  # each reads the files it compares
 _NAMING_ONLY = {"echo", "printf", "test", "["}
 _KINDS_FOR = {  # (what the step is, what became of it) -> the kinds its event may have
     ("write", "returned"): {"may have changed it, returned"},
@@ -1160,7 +1161,7 @@ def _oracle_steps(laid, summaries):
                     words = segment.split()
                     if not words:
                         continue
-                    program = os.path.basename(words[0])
+                    program = os.path.basename(words[0].lstrip("({"))  # "(du ...)": du
                     written = {w for w in re.findall(r">>?\s*(\S+)", segment)}
                     surely |= _oracle_paths(" ".join(written), cwd)
                     maybe |= _oracle_paths(" ".join(written), cwd)
