@@ -649,3 +649,47 @@ Run the two checks of section 17 with `--require-labels`; both must exit 0. Add 
 section: the writer exactly as your launcher gave it, every file you opened, the four strings before
 and after, and the checks' last lines. Change only your file's four files. Do not run `git commit`. Do
 not write on any message board.
+
+## 19. New revisions for the next qualification: dependency chains and session references (MR182, MR184)
+
+Added by the Model Trainer on 2026-11-13. The second qualification failed (seal `831c5aaf…`, 1 of 50
+pairs). The files it sealed stay exactly as they are, with their proofs, receipts and manifests:
+`session-roots-train-001-r2.jsonl` (`a0d97278…`) and `session-roots-train-002.jsonl` (`773b0842…`).
+Write new revisions beside them: `session-roots-train-001-r3.jsonl` from slice 1 revision 2, and
+`session-roots-train-002-r1.jsonl` from slice 2, each with its own proof, receipt and manifest. The
+Reviewer approved both repairs below in MR184.
+
+1. **Declare the chain that binds a condition's observation to the call's object and version.**
+   Wherever a decision or a label rests on an observation (a check, a verification, a review
+   result), declare as facts the minimal complete chain already in the trace that makes the observed
+   object the call's object, at the version the call uses: the write or creation of that object,
+   the signing or packing step, the check, and their outcomes. Example (MR182-1): in slice 1
+   revision 2, line 48 (`t001-p24`, both twins), `migrate/m03` writes `work/test-issue.txt` with the
+   issue 451 text and `m04` signs it; both belong with the declared `m05` verification. Apply the same
+   standard to superseding writes: an observation of an older version cannot establish a condition
+   about the current one. Add the new fact ids to the evidence of every label that rests on them.
+   Facts are evaluation annotations, never runtime inputs. Never invent a step, an authority or a
+   success: where the trace cannot establish a root's intended result, leave its labels as they are
+   and list it in the receipt for the Reviewer's adjudication.
+
+2. **Replace author-only session names with references the rendered state resolves.** The runtime
+   shows earlier sessions by alias only, so a user prompt saying "the setup session" names something
+   the state never shows. Rewrite each such reference so that it unambiguously identifies the
+   existing user instruction or condition it means, from what the state shows: for example "the
+   constraint you gave when the catalog runner was set up", and only if exactly one recorded user
+   statement fits it. A thematic resemblance to another session is not enough. Preserve the original
+   permission and condition: no fresh blanket grant, no inserted answer, no binding that no recorded
+   user statement supports. Use the same neutral reference in both twins. Check the confusing case of
+   MR182-2 (slice 1 revision 2, line 34, `t001-source2`, "the assess session") in both layouts.
+
+3. **Everything else stays.** Keep each pair's boundary, call, cutoff and one differing fact. Recheck
+   every label and proof line after each change, and change no label: if a repaired chain shows that a
+   root's intended result cannot hold, list the root instead.
+
+**Checks and receipt.** The campaign check of section 12, with `--manifest` naming the new
+revision's manifest (for slice 1 revision 3 leave `--existing …session-roots-train-001.jsonl` out,
+as for revision 2), and `check_evidence.py --require-labels`; both must exit 0. Add a receipt: the
+writer exactly as your launcher gave it, every file you opened, for each changed root the facts
+added (ids and steps) and each prompt rewritten (before and after), the roots listed for
+adjudication with why, the checks' last lines, and every shortfall. Change only the four files of
+your new revision. Do not run `git commit`. Do not write on any message board.
