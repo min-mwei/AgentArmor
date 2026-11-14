@@ -86,7 +86,7 @@ SOURCES = (
     "earlier.py",
     "escalate.py",
 )
-SOURCES += ("gate.py",)
+SOURCES += ("gate.py", "hostfacts_profile.py")
 SOURCES += ("kai.py", "local.py", "panels.py", "policy.py", "render.py", "server.py")
 SOURCES += ("tally.py",)
 # What a request row keeps of the record detect() builds. The request itself is added to it.

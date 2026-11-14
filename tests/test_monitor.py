@@ -1031,6 +1031,7 @@ def test_watching_sends_on_everything_marked_and_the_gate_asks_from_medium_up(sp
         "requests": None,
         "level": "low",
         "threshold": "medium",
+        "host_facts": "none_required",  # the default policy requires none (MR195-1)
         "reason": "below_threshold",
     }
     (record,) = watched_records("s-low")  # the daemon did ask
@@ -2043,7 +2044,8 @@ def test_a_render_refuses_what_it_cannot_stand_behind_and_writes_nothing(tmp_pat
     listed = good | {"events": [event | {"session_id": ["s"]} for event in good["events"]]}
     assert "session_id is a non-empty string" in refused(listed)
     tagged = good | {"rules": [RULES[0] | {"label": "attack"}, RULES[1]]}
-    assert "a rule holds id, tier and description, and nothing else" in refused(tagged)
+    # An unknown field is refused by the host-fact profile with its rule id (MR195-1).
+    assert "unknown_rule_field: rule 'task': unknown field 'label'" in refused(tagged)
     assert "files maps absolute paths to text" in refused(good | {"files": {"notes.md": "x"}})
     assert "unknown fields: label" in refused(good | {"label": "attack"})
     assert "view_id is a non-empty string" in refused(good | {"view_id": ""})
@@ -4769,6 +4771,11 @@ def test_packets_built_elsewhere_become_the_requests_the_monitor_would_make(tmp_
         policy.load_rules(), rows[0]["packet"], ("Bash", none[0]["state"].split("arguments: ")[1])
     )
     assert "Proposed tool call:\n  tool: Bash" in none[0]["state"]
+    # The host facts the rules require of the call, as the state says them, are on record for
+    # Kai's preparation to check: the default policy requires none (MR195-1).
+    host = none[0]["_meta"]["host_facts"]
+    assert host["status"] == "none_required" and host["derivation"] == "profile: none required"
+    assert "Host facts:\nnone required by these rules for this call" in none[0]["state"]
     # The call is redacted as a gate redacts a call it holds: no secret reaches a request.
     assert secret not in none[0]["state"] and none[0]["_meta"]["call_redactions"] == 1
     assert "files.example/up" in none[0]["state"] and none[0]["_meta"]["call_whole"] is True
@@ -4987,3 +4994,79 @@ def test_an_arms_name_never_chooses_where_a_panel_is_written(tmp_path):
     ]
     assert set(told["arms"]) == {"none", "newest", "history", "reference", "arm-2_b"}
     assert kept.read_text() == "mine\n"
+
+
+def test_the_host_facts_the_rules_require_are_one_resolution_in_the_state(spool):
+    """MR195-1: the host-fact profile's resolution of a call is written into the state, between the
+    interpretation and the conversation, under a named profile with its identity. The default
+    policy declares no path or limit predicate, so it requires no host fact of any call."""
+    from agentarmor_monitor import hostfacts_profile
+
+    rules = policy.load_rules()
+    call = ("Bash", json.dumps({"command": PEEK}))
+    host = hostfacts_profile.resolve(rules, call)
+    assert host["status"] == "none_required" and hostfacts_profile.allows(host)
+    assert host["profile"] == "agentarmor-hostfacts-profile/v1" and host["facts"] == []
+    assert hostfacts_profile.resolve(rules)["sha256"] == host["sha256"]  # one identity
+    body = policy.state(rules, "SESSION SUMMARY", call)
+    named = f"(agentarmor-hostfacts-profile/v1, profile {host['sha256'][:12]})"
+    assert f"Host facts:\nnone required by these rules for this call {named}" in body
+    assert body.index("Policy interpretation:") < body.index("Host facts:")
+    assert body.index("Host facts:") < body.index("Conversation so far:")
+    assert policy.LAYOUT == "agentarmor-state/v2"
+
+
+@pytest.mark.parametrize(
+    "extra, code",
+    [
+        ({"label": "attack"}, "unknown_rule_field"),
+        ({"paths": {"within": "/srv/data", "for": ["write"]}}, "host_facts_not_computed"),
+        ({"paths": {"within": "/srv/data", "for": ["fly"]}}, "bad_paths_field"),
+        (
+            {"limit": {"measure": "file_size", "max": "2 GB", "units": "binary"}},
+            "measures_not_configured",
+        ),
+    ],
+)
+def test_a_policy_whose_host_facts_this_host_cannot_give_is_refused_at_load(extra, code):
+    """MR195-1: an unknown field is never ignored; a path or limit predicate is compiled by its
+    pinned reference module (a malformed one refused as that module refuses it) and a well formed
+    one is refused too while this host computes none of its facts. Never "none required"."""
+    from agentarmor_monitor import hostfacts_profile
+
+    rules = [dict(rule) for rule in policy.DEFAULT_RULES]
+    rules[0] |= extra
+    with pytest.raises(hostfacts_profile.ProfileError) as refused:
+        policy.check_rules(rules)
+    assert refused.value.code == code and refused.value.rule_id == rules[0]["id"]
+
+
+def test_a_call_whose_required_host_facts_are_not_there_is_refused_unasked(spool, monkeypatch):
+    """MR195-1: when the rules require a host fact the host does not have, an allow cannot stand,
+    and the decision model is not asked to stand in for it: the call is denied, for every call,
+    marked or not, with the resolution on record."""
+    from agentarmor_monitor import decide, hostfacts_profile
+
+    class Counts:
+        asked = 0
+
+        def ask(self, state, questions):
+            Counts.asked += 1
+            answers = {kai.XPIA: 0.01, kai.DECISION: {"choice": "allow", "p_deny": 0.02}}
+            return {"answers": answers, "service": {"model": "kai-4b"}}
+
+    runtime = Runtime(HashEmbedder())
+    watch = Monitor(runtime, kai.Unsent(), log=lambda message: None)
+    quiet("s-host")
+    asked = asking_logged("s-host", 2, "Bash", {"command": PEEK}, watch)
+    watch.close()
+    missing = {"profile": hostfacts_profile.PROFILE, "sha256": "0" * 64, "status": "missing"}
+    missing |= {"facts": [{"kind": "armor-hostfacts-paths-v1", "why": "snapshot_failed"}]}
+    missing["derivation"] = hostfacts_profile.STATUSES["missing"]
+    monkeypatch.setattr(decide, "resolve", lambda rules, call: missing)
+    options = {"wait": 1.0, "settle": 0.2}
+    verdict, record, why = decide.judge(
+        "claude_code", "s-host", "call-2", asked["call_sha256"], Counts(), "low", **options
+    )
+    assert (verdict, why) == ("deny", "host_facts") and Counts.asked == 0
+    assert record["host_facts"] == missing and record["routing"]["reason"] == "host_facts_required"

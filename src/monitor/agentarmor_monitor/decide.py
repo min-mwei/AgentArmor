@@ -34,6 +34,7 @@ from summarizer import history
 from . import earlier as earlier_sessions
 from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
+from .hostfacts_profile import allows, resolve
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
 from .policy import LAYOUT, load_rules
 
@@ -230,15 +231,27 @@ def judge(
     stale, checked = since_proposal(directory, entry, call_id, read_to["log_bytes"], settle)
     settle = max(0.0, settle - (time.monotonic() - began))
     applicable = {"before_routing": stale is None, "why": stale} | checked
+    host = None  # the host facts the rules require of the call, once resolved
 
     def unasked(verdict, why, reason):  # read off the summary, with nobody asked
         found = outcome(agent, session, call_id, why or "unmarked", summary)
         found |= {"evidence": read_to, "routing": routing | {"reason": reason}}
+        if host is not None:
+            found["host_facts"] = host
         return verdict, found | {"applicable": applicable}, why
 
     if stale:  # overtaken, or not known: the log could not be read to its end
         unknown = stale == "log_unread"
         return unasked("undecided", stale, "proposal_unknown" if unknown else "proposal_overtaken")
+    # The host facts the rules require of this call (MR195-1), for every call, marked or not.
+    # An allow never stands without them, and the decision model, whose sufficiency answer is
+    # untrained, is not asked to stand in for them: the host refuses.
+    host = resolve(
+        rules if rules is not None else load_rules(), (entry.get("tool"), entry.get("text"))
+    )
+    routing["host_facts"] = host["status"]
+    if not allows(host):
+        return unasked("deny", "host_facts", "host_facts_required")
     sessions = None
     if with_earlier:
         try:
@@ -287,7 +300,7 @@ def judge(
     counts = record.get("requests") or {}
     sent = counts.get("transport_attempts", 0)
     reason = "marked" if sent else "marked_and_not_sent"  # too large to put to the model
-    record |= {"evidence": read_to, "applicable": applicable}
+    record |= {"evidence": read_to, "applicable": applicable, "host_facts": host}
     record["routing"] = routing | {"requests_sent": sent, "requests": counts, "reason": reason}
     if record["status"] != "scored":
         return "undecided", record, record["status"]

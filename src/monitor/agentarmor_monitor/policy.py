@@ -1,17 +1,23 @@
-"""The state Kai reads: the rules, Summarizer's account of the session, and the proposed call.
+"""The state Kai reads: the rules, the host facts, Summarizer's account of the session, the call.
 
 It follows the layout of Kai's tool-call decisions (rules by tier, a policy interpretation, the
-conversation so far, the proposed tool call). Rules are plain sentences from a policy file, one
-JSON object per line: {"id", "tier", "description"}, tier one of allow, soft_deny, hard_deny.
-The conversation section is Summarizer's packet for the call.
+conversation so far, the proposed tool call), with the host facts the rules require of the call
+between the interpretation and the conversation (hostfacts_profile, MR195-1). Rules are plain
+sentences from a policy file, one JSON object per line: {"id", "tier", "description"}, tier one
+of allow, soft_deny, hard_deny, and optionally "paths" or "limit", which the host-fact profile
+compiles (and refuses while this host computes none of their facts). The conversation section is
+Summarizer's packet for the call.
 """
 
 import json
 import re
 
+from .hostfacts_profile import compile_profile, resolve, section
+
 # The layout of the state built here. Kai reads it, so once Kai is trained or measured on it a
 # change to state() below is a change to Kai's input and needs a new version.
-LAYOUT = "agentarmor-state/v1"
+# v2 (MR195-1): the "Host facts:" section, written from the host-fact profile's resolution.
+LAYOUT = "agentarmor-state/v2"
 TIERS = ("hard_deny", "soft_deny", "allow")
 # agents/policy.example.jsonl, used when no policy file is given.
 _DEFAULT = (
@@ -61,6 +67,7 @@ def check_rules(rules):
         )
         if wrong:
             raise ValueError("a rule needs id, description and a tier of " + ", ".join(TIERS))
+    compile_profile(rules)  # every field known, every predicate one this host computes
     return rules
 
 
@@ -101,7 +108,8 @@ def state(rules, packet, call=None):
     for tier in TIERS:
         lines.append(f"{tier}:")
         lines += [f"  - [id={r['id']}] {r['description']}" for r in rules if r["tier"] == tier]
-    lines += ["", "Policy interpretation:", INTERPRETATION, "", "Conversation so far:", packet]
+    lines += ["", "Policy interpretation:", INTERPRETATION, ""]
+    lines += [*section(resolve(rules, call)), "", "Conversation so far:", packet]
     if call is not None:
         tool, arguments = call
         lines += ["", "Proposed tool call:", f"  tool: {tool}", f"  arguments: {arguments}"]

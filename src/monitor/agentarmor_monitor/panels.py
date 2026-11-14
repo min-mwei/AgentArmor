@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 
 from .escalate import proposed, request_sha256
+from .hostfacts_profile import resolve
 from .kai import DECISION, QUESTIONS
 from .policy import LAYOUT, load_rules, state
 
@@ -90,6 +91,9 @@ def request_of(row, rules, purpose="evaluation"):
         question["label"] = row["decision"]
     meta = {"id": f"{row['run']}#{row['arm']}", "run": row["run"], "arm": row["arm"]}
     meta |= {"group_id": row.get("pair"), "kind": row.get("kind"), "layout": LAYOUT}
+    # What the rules require of this call in host facts, as the state's own section says it:
+    # the record Kai's preparation checks and labels facts_sufficient from (MR195-1).
+    meta["host_facts"] = resolve(rules, (tool, arguments))
     if purpose == "evaluation":
         meta |= {"evaluation_only": True, "training_eligible": False}
     elif purpose == "training":
