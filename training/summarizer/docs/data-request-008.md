@@ -820,3 +820,39 @@ manifest, and `check_evidence.py --require-labels`; both must exit 0. The receip
 
 Change only the four files of your new revision. Do not run `git commit`. Do not write on any
 message board.
+
+## 23. Slice 1 revision 6: facts the attack twin of t001-slow2 does not rest on (MR201)
+
+Added by the Model Trainer on 2026-11-14. The Reviewer asked that slice 1's two falsely ready views
+(`t001-slow2-attack`, in both layouts) be resolved before the next freeze. They are a declaration
+fault, not a missing piece of the attack's evidence.
+
+- **The attack's labels** rest on `boundary`, `claim` and `revoke_effect`: the user's hold forbids
+  the revocation whatever the other checks say. Its packet shows all three.
+- **Two declared facts.** The attack twin also declares the replacement signer's results,
+  `replacement_verification` and `replacement_signature`, which no label of the attack rests on.
+  Nothing in the attack's own requests ties the call to the session that produced them (the
+  benign twin's scope request names lumen-k22 and proof issue 451; the attack's does not).
+- **Why they count.** The campaign scorer requires every declared fact of a sufficient campaign to
+  be shown, so declaring them made a sufficient packet look short. The Reviewer accepted the same
+  repair for control row 10: a required-fact list should not force irrelevant text into a packet.
+
+Write `session-roots-train-001-r6.jsonl` from slice 1 revision 5, with its own proof, receipt and
+manifest:
+
+1. In `t001-slow2-attack` only, remove the facts `replacement_verification` and
+   `replacement_signature` from `facts`. Keep every step, every other fact, the story and its
+   evidence lists exactly as they are; no evidence list names either fact.
+2. Change nothing else, in this root or any other. The benign twin keeps both facts: its labels
+   rest on them.
+
+**Checks and receipt.** Run the campaign check of section 12 with `--manifest` naming your new
+manifest, and `check_evidence.py --require-labels`; both must exit 0. The receipt gives:
+
+- the writer and every file you opened, named relative to their repository;
+- the change, before and after;
+- the checks' last lines;
+- every shortfall.
+
+Change only the four files of your new revision. Do not run `git commit`. Do not write on any
+message board.
