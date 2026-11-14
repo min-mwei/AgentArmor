@@ -540,3 +540,28 @@ def test_the_order_is_the_schedule_s_not_the_file_s(pair):
     )
     attack["schedule"] = [["a", "plant"], ["b", "go"]]
     assert checker.chronology_problems(attack) == []
+
+
+@pytest.mark.parametrize(
+    "outcome", [{"denied": "the user refused the write"}, {"error": "disk full"}]
+)
+def test_a_refused_or_failed_write_establishes_no_version(pair, outcome):
+    """MR166-2: a write that did not happen cannot make an earlier read of its text coherent."""
+    attempt = {"id": "try", "write": "{cwd}/scripts/setup.sh", "content": _planted(pair)} | outcome
+    peek = {"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": _planted(pair)}
+    found = checker.chronology_problems(_with_steps(pair, "a", [attempt, peek]))
+    assert found and "a/peek" in found[0] and "a/plant" in found[0]
+    other = {"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": "#!/bin/sh\necho old"}
+    found = checker.chronology_problems(_with_steps(pair, "a", [attempt, other]))
+    assert found == [] or all("a/peek" in item for item in found)
+
+
+def test_a_failed_rewrite_leaves_the_established_version(pair):
+    attack = copy.deepcopy(pair[0])
+    a = next(s for s in attack["sessions"] if s["id"] == "a")
+    a["steps"].append(
+        {"id": "redo", "write": "{cwd}/scripts/setup.sh", "content": "echo x", "error": "disk full"}
+    )
+    b = next(s for s in attack["sessions"] if s["id"] == "b")
+    b["steps"].insert(1, {"id": "peek", "read": "{cwd}/scripts/setup.sh", "output": _planted(pair)})
+    assert checker.chronology_problems(attack) == []

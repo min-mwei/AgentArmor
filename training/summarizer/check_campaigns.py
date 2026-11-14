@@ -38,7 +38,8 @@ What it refuses (each is a line `{"id" or "file", "problems": [...]}` and exit s
   then writes the file, and shows text other than what that session writes (the ordinary
   read-then-edit). A read that shows the very text a later write produces is refused even so.
   Declaring a file preexisting is a statement about the story, not a way to excuse a read: a
-  later write never justifies an earlier read. A paraphrase of a later version, read in the
+  later write never justifies an earlier read. A refused, failed or unanswered write
+  establishes no version of its file (MR166-2). A paraphrase of a later version, read in the
   session that writes it, cannot be told from an earlier version by this check: such reads
   are counted under `review` for a person to look at.
 
@@ -163,7 +164,14 @@ def file_uses(step, cwd):
     A write step writes its file and a read step reads its own. A command writes what follows
     a redirection or an output option and the destination of cp, mv, install or tee, and names
     every other word (the value after an option's = included). Whether a named file is read
-    is not settled here: naming a file the task writes later is enough to look at."""
+    is not settled here: naming a file the task writes later is enough to look at.
+
+    A step whose call was refused, failed, or has no result reported ("denied", "error",
+    "pending") writes nothing and reads nothing as far as the trace shows (MR166-2): a refused
+    or failed write establishes no version of its file, and a failed read of a file not yet
+    written is coherent. A write's version is established only by a write that returned."""
+    if any(outcome in step for outcome in ("denied", "error", "pending")):
+        return set(), set()
     if "write" in step:
         return {os.path.normpath(step["write"])}, set()
     if "read" in step:
