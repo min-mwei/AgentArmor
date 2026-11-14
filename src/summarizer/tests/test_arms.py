@@ -309,7 +309,7 @@ def test_the_commands_bind_the_packets_to_a_roster_and_print_counts_only(tmp_pat
     assert arms.main(["write", str(STARTER), "--out", str(out)]) == 0
     told = json.loads(capsys.readouterr().out)
     assert told["runs"] == 34 and told["records"] == 136 and told["history"]["complete"] == 34
-    assert told["reference"]["complete"] == 34 and told["scorer"] == "campaign-contract/14"
+    assert told["reference"]["complete"] == 34 and told["scorer"] == "campaign-contract/15"
     roster = json.loads((out / "roster.json").read_text())
     assert roster["packets_sha256"] == told["packets_sha256"] and len(roster["campaigns"]) == 17
     # What made the summaries is named in the roster and in what is printed.

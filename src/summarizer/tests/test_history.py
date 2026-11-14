@@ -56,7 +56,8 @@ def test_a_planted_script_is_found_with_what_was_shown_before_it(starter, runtim
     laid, _, view, result = built(starter["planted-script-run-later"], runtime, agent)
     assert result["passes"] and result["forged"] == 0, result
     relations = [item["relation"] for item in view["history"]["items"]]
-    assert relations[:3] == ["request", "before_write", "writer"]
+    # What was shown before the write keeps the call that produced it (MR192-3).
+    assert relations[:4] == ["request", "recent", "before_write", "writer"]
     assert view["route"] == "asked" and view["history"]["complete"] is True
     (bridge,) = view["history"]["bridges"]
     assert (bridge["use"], bridge["match"]) == ("run", "path")
@@ -1036,7 +1037,9 @@ def test_an_earlier_write_of_a_file_the_call_names_is_kept_with_what_stands_arou
     assert group["key"] and group["bears"] and view["route"] == "asked"
     assert found["route_reason"] == "earlier_session_bears_on_call"
     mine = [item for item in found["items"] if group["id"] in item["groups"]]
-    assert [item["relation"] for item in mine if item["type"] != "content"] == ["request", "recent"]
+    # The look that produced the note, then the write; each "recent" (MR192-3).
+    calls = [item["relation"] for item in mine if item["type"] != "content"]
+    assert calls == ["request", "recent", "recent"]
     assert {item["relation"] for item in mine if item["type"] == "content"} == {"shown"}
     for said in ("Tidy the build notes.", FOOTER, "mirror-elm.example/simple"):
         assert said in shown
@@ -1299,7 +1302,9 @@ def test_the_packet_with_its_section_is_built_by_the_runtime(starter, runtime):
     own, _, rest = view["text"].partition("\n" + history.TITLE + "\n")
     lines = rest.split("\n")
     account = view["history"]
-    assert lines[0] == history.header(account) == "history: 1 sources shown, 3 lines"
+    # The request, what was shown before the write with the call that produced it (MR192-3),
+    # and the write.
+    assert lines[0] == history.header(account) == "history: 1 sources shown, 4 lines"
     assert len(lines) == 1 + len(account["items"]) + 1 and lines[-1].startswith("NOT SHOWN")
     alias = account["sources"][0]["alias"]
     assert all(line.startswith(f"[s:{alias}] ") for line in lines[1:-1])
@@ -1453,7 +1458,11 @@ def test_where_a_piece_came_from_is_never_taken_for_what_it_says(runtime, agent)
     head, _, section = good["text"].partition(title)
     lines = section.split("\n")
     plain = next(n for n, line in enumerate(lines) if "build the wheel" in line)
-    echo = next(n for n, line in enumerate(lines) if line.endswith(json.dumps(origin)))
+    echo = next(
+        n
+        for n, line in enumerate(lines)
+        if line.endswith(json.dumps(origin)) and " content " in line  # not the call's own line
+    )
     assert plain != echo and json.dumps(origin) in lines[plain]  # quoted there as its origin
     items = good["history"]["items"]
     assert items[plain - 1]["sha256"] != items[echo - 1]["sha256"]
@@ -2265,3 +2274,91 @@ def test_what_has_not_happened_or_lives_elsewhere_is_never_shown(runtime):
         _, _, view, _ = built(campaign, runtime, agent, budget=10000)
         assert "run the rill helper" in view["text"], agent
         assert "Late note" not in view["text"] and "Other note" not in view["text"], agent
+
+
+def _producers_missing(view, summaries, laid):
+    """The content items of a view's history whose producing call (the action of the same call
+    in that source) is not an item of the same view."""
+    account = view.get("history") or {"items": []}
+    by_alias = {part["alias"]: summaries[part["id"]] for part in laid["parts"]}
+    shown = {(item["alias"], item["seq"]) for item in account["items"]}
+    missing = []
+    for item in account["items"]:
+        if item.get("type") != "content":
+            continue
+        entries = by_alias[item["alias"]]["entries"]
+        content = next(e for e in entries if e["type"] == "content" and e["seq"] == item["seq"])
+        call = next(
+            (
+                e
+                for e in entries
+                if e["type"] == "action" and e.get("call_id") == content.get("call_id")
+            ),
+            None,
+        )
+        if (
+            call is not None
+            and call["seq"] < content["seq"]
+            and (item["alias"], call["seq"]) not in shown
+        ):
+            missing.append((item["alias"], item["seq"]))
+    return missing
+
+
+@pytest.mark.parametrize("root_id", ["t002-p22-benign", "t002-p12-benign", "t002-p20-attack"])
+def test_a_result_keeps_the_call_that_produced_it_in_both_arms(runtime, root_id):
+    """MR192-3: one dependency closure in both arms. The reference keeps, for every declared
+    result of an earlier session, the call of its own step; the history lookup never shows a
+    result without the call that produced it."""
+    root = next(
+        r for r in read_jsonl(ROOTS / "session-roots-train-002-r3.jsonl") if r["id"] == root_id
+    )
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(root, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        parts = {part["id"]: part for part in laid["parts"]}
+        reference = campaigns.reference(laid, summaries, 20000)
+        items = {(i["alias"], i["seq"]) for i in reference["history"]["items"]}
+        for fact in root["facts"]:
+            part = parts[fact["session"]]
+            made = None if part["mine"] else campaigns.producer(part, fact)
+            if made is not None:
+                assert (part["alias"], made) in items, (agent, fact["id"])
+        history = builder.build(builder.blind(laid), summaries, 10000)
+        assert _producers_missing(history, summaries, laid) == [], agent
+        assert _producers_missing(reference, summaries, laid) == [], agent
+
+
+def test_under_version_15_a_result_without_its_call_or_with_its_call_clipped_is_not_shown(runtime):
+    """MR192-3: version 14 counted a result shown when its line was; version 15 counts it only
+    with the call that produced it, whole. Taking the call out, or clipping its words, loses the
+    result and the packet no longer passes."""
+    import check_evidence
+
+    root = next(
+        r
+        for r in read_jsonl(ROOTS / "session-roots-train-002-r3.jsonl")
+        if r["id"] == "t002-p22-benign"
+    )
+    laid = campaigns.layout(root, "claude_code")
+    summaries, _ = campaigns.replay(laid, runtime)
+    parts = {part["id"]: part for part in laid["parts"]}
+    view = campaigns.reference(laid, summaries, 20000)
+    assert campaigns.score(laid, summaries, view, 20000, 15)["passes"] is True
+    fact, made = next(
+        (f, campaigns.producer(parts[f["session"]], f))
+        for f in root["facts"]
+        if not parts[f["session"]]["mine"] and campaigns.producer(parts[f["session"]], f)
+    )
+    altered, removed = check_evidence.without(view, laid, fact, made)
+    assert removed == 1
+    old = campaigns.score(laid, summaries, altered, 20000, 14)
+    new = campaigns.score(laid, summaries, altered, 20000, 15)
+    assert old["support"][fact["id"]] is True
+    assert new["support"][fact["id"]] is False and new["passes"] is False
+    clipped = copy.deepcopy(summaries)
+    entries = clipped[fact["session"]]["entries"]
+    call = next(e for e in entries if e["type"] == "action" and e["seq"] == made)
+    call["text_chars"] = len(str(call.get("text") or "")) + 100
+    cut = campaigns.score(laid, clipped, view, 20000, 15)
+    assert cut["support"][fact["id"]] is False and cut["passes"] is False

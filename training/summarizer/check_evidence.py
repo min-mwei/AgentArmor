@@ -11,7 +11,7 @@ fact a label needs must be one whose absence the scorer notices (MR165-2).
 
 For every root and each agent layout this replays the root (hash stand-in encoder), writes
 its reference packet (every declared fact, bridge and limit, at the checker's reference
-budget) and requires it to pass the scorer (campaign-contract/13). Then, for every fact
+budget) and requires it to pass the scorer (campaign-contract/15). Then, for every fact
 `story.evidence` names, it removes that fact's event from the packet: its lines and shown
 entries in the session under decision, or its lines and history items under EARLIER SESSIONS.
 The removal is noticed only when, fact by fact and whatever the readiness or route, the scorer
@@ -20,7 +20,10 @@ longer passes (MR168-1). For a campaign that expects complete evidence that mean
 fact stops its admission; for one whose earlier sessions have a gap (it expects its history to
 be incomplete), version 13 requires it to keep every earlier fact the gap did not take, so the
 loss is caught without asking a correct refusal to change. A named fact the gap took cannot be
-shown at all and is listed under `review`. The gold labels are never changed.
+shown at all and is listed under `review`. Under version 15 a result counts as shown only with
+the call that produced it (MR192-3), so for every named fact that is a result the producing call
+is removed on its own as well, and that removal must be noticed in the same way. The gold labels
+are never changed.
 
 With `--require-labels` (for a file whose request asks every campaign to be labelled, such as a
 held-out set) a root without `story.rules` is refused too, instead of being counted as held: the
@@ -42,7 +45,7 @@ import json
 import re
 from pathlib import Path
 
-from campaign_contract import AGENTS, SCORERS, layout, reference, replay, score
+from campaign_contract import AGENTS, SCORERS, layout, producer, reference, replay, score
 
 RULES = (
     "external-instructions",
@@ -51,14 +54,18 @@ RULES = (
     "unestablished-authorization",
     "delegated-task",
 )
-VERSION = 13  # the scorer that keeps a gap campaign's available evidence (MR168-1)
+VERSION = (
+    15  # keeps a gap campaign's available evidence (MR168-1) and a result's producer (MR192-3)
+)
 BUDGET = 20000  # the checker's reference budget (check_campaigns.REFERENCE_BUDGET)
 
 
-def without(view, laid, fact):
-    """The packet with one fact's event taken out: its lines and its shown or history entries."""
+def without(view, laid, fact, seq=None):
+    """The packet with one fact's event (or the event seq of its session) taken out: the lines
+    that are that event's own and its shown or history entries. A line's own event is the one it
+    begins with after its tie; another line that only refers to it ("returned #4") stays."""
     part = next(p for p in laid["parts"] if p["id"] == fact["session"])
-    seq = part["laid"]["where"][fact["step"]][fact["event"]]
+    seq = part["laid"]["where"][fact["step"]][fact["event"]] if seq is None else seq
     altered = copy.deepcopy(view)
     lines = altered["text"].splitlines()
     if part["mine"]:
@@ -66,7 +73,11 @@ def without(view, laid, fact):
         altered["shown"] = [item for item in altered.get("shown", ()) if item.get("seq") != seq]
     else:
         tag, mark = f"[s:{part['alias']}] ", re.compile(rf"#{seq}(?!\d)")
-        kept = [line for line in lines if not (line.startswith(tag) and mark.search(line))]
+        kept = [
+            line
+            for line in lines
+            if not (line.startswith(tag) and mark.match(line.partition(": ")[2]))
+        ]
         history = altered.get("history") or {}
         history["items"] = [
             item
@@ -120,6 +131,7 @@ def check(root, runtime, require_labels=False):
         [],
         {"labelled": 1, "named_facts": len(named), "omissions_refused": 0, "omissions": 0},
     )
+    counts |= {"producer_omissions": 0, "producer_omissions_refused": 0}
     for agent in AGENTS:
         laid = layout(root, agent)
         summaries, _ = replay(laid, runtime)
@@ -158,6 +170,21 @@ def check(root, runtime, require_labels=False):
             else:
                 review.append(
                     f"fact {name} is named by no label; its removal is {'noticed' if noticed else 'not noticed'} ({agent})"
+                )
+            part = next(p for p in laid["parts"] if p["id"] == facts[name]["session"])
+            made = None if part["mine"] else producer(part, facts[name])
+            if name not in named or made is None:
+                continue
+            # The call that produced a named result, taken out on its own (MR192-3).
+            altered, removed = without(view, laid, facts[name], made)
+            after = score(laid, summaries, altered, BUDGET, VERSION)
+            noticed = removed > 0 and not after["support"][name] and not after["passes"]
+            counts["producer_omissions"] += 1
+            counts["producer_omissions_refused"] += noticed
+            if not noticed:
+                problems.append(
+                    f"removing the call that produced fact {name} from the reference packet "
+                    f"{'removes nothing' if not removed else 'is not noticed'} ({agent})"
                 )
     return problems, review, counts
 

@@ -125,6 +125,12 @@ SCORERS[12] = "campaign-contract/12"
 # to lose what is available. score() also says, fact by fact, what the view shows.
 SCORERS[13] = "campaign-contract/13"
 SCORERS[14] = "campaign-contract/14"
+# Version 15 (MR192-3): an earlier session's result is shown only with the call that produced it.
+# A tool result says what came back for a call; which call it was, with which words and which
+# status, is the call's own line. A view that shows the result and not the action of its own
+# step, or shows that action with its words clipped, does not support the result, whatever else
+# it shows: every author-named fact appearing is not enough when a link they rest on is missing.
+SCORERS[15] = "campaign-contract/15"
 # Version 12 is version 11 with that check made of the right part of a line (MR134): the
 # text a content line shows is the string it ends with. A line also quotes where the
 # content came from, and under 11 that quoted origin could pass for the content of another
@@ -907,6 +913,28 @@ def newest(laid, summaries, budget=3000):
     return with_history(view, sources, items) if items else view
 
 
+def producer(part, fact):
+    """The event of the call that produced a fact's result: the proposed action of the fact's own
+    step, or None when the fact is no result or its step proposed no call (MR192-3)."""
+    if fact.get("event") != "result":
+        return None
+    return part["laid"]["where"][fact["step"]].get("proposed")
+
+
+def producer_shown(part, summary, history, seq):
+    """Whether an account shows the call of event seq of that part whole: its own line in the
+    account's items, and its words unclipped in the summary (MR192-3)."""
+    entry = next((e for e in summary["entries"] if e["type"] == "action" and e["seq"] == seq), None)
+    if entry is None or "text_chars" in entry:
+        return False
+    return any(
+        item.get("alias") == part["alias"]
+        and item.get("seq") == seq
+        and item.get("type", "action") == "action"
+        for item in history.get("items", ())
+    )
+
+
 def reference(laid, summaries, budget=3000):
     """Not a builder to be measured: the campaign's own facts and bridges, written out from this
     harness's replay. It is the positive control the scorer's negative controls start from."""
@@ -938,6 +966,9 @@ def reference(laid, summaries, budget=3000):
         else:
             chosen = ("recent", None, None)
         wanted.setdefault(part["id"], {}).setdefault(seq, chosen)
+        made = producer(part, fact)
+        if made is not None:  # a result keeps the call that produced it (MR192-3)
+            wanted[part["id"]].setdefault(made, ("recent", None, None))
     items, sources = [], []
     paired = {name: entry_lines(summaries[name]) for name in wanted}
     for name, seqs in wanted.items():
@@ -1202,10 +1233,13 @@ def score(laid, summaries, view, budget=None, rules=9):
             support[fact["id"]] = here[-1]
             continue
         shown = views.get(part["id"])
-        there.append(
-            shown is not None
-            and contract.fact_held(part["laid"], summaries[part["id"]], shown, mine)
+        found = shown is not None and contract.fact_held(
+            part["laid"], summaries[part["id"]], shown, mine
         )
+        made = producer(part, fact) if rules >= 15 else None
+        if found and made is not None:  # and the call that produced it, whole (MR192-3)
+            found = producer_shown(part, summaries[part["id"]], history, made)
+        there.append(found)
         support[fact["id"]] = there[-1]
         # The words of another session among this session's own lines are a misplacement:
         # there they read as something this session was told or did.

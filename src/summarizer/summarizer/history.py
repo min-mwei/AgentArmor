@@ -1280,6 +1280,7 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
     entries = summary["entries"]
     items, bridges, groups, taken, pattern, written, reads = [], [], {}, {}, False, [], []
     candidates = []
+    calls = {e["call_id"]: e for e in entries if e["type"] == "action" and e.get("call_id")}
 
     def take(entry, relation, group, **more):
         at = (entry["seq"], entry["type"])
@@ -1290,6 +1291,12 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
             taken[at]["groups"].append(group)
         if more.get("bears"):  # an entry in two groups bears if it does in either
             taken[at]["bears"] = True
+        # A result keeps the call that produced it, in every group it stands in (MR192-3): what
+        # came back says nothing of which call it was, with which words and which status. The
+        # call is shown as recent, which is true of it, and claims nothing more.
+        made = calls.get(entry.get("call_id")) if entry["type"] == "content" else None
+        if made is not None and made["seq"] < entry["seq"]:
+            take(made, "recent", group)
 
     def shown_before(entry, group, relation, of=None):
         """The lower-trust content shown before a write (_antecedents): its turn, and what it
