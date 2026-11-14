@@ -292,6 +292,33 @@ _COMMAND_KINDS = (
 # the user states often names one, and what was observed of it elsewhere is its evidence.
 _TOKEN = re.compile(r"(?<![\w.-])(?=[\w-]*[A-Za-z])(?=[\w-]*\d)\w[\w-]*(?![\w-])")
 _PATHISH = re.compile(r"[\w.~{}/-]*[/.][\w.~{}/-]*")
+# A user's reference to a session by a name ("the setup session", "that intake session"). Only the
+# host names sessions (an alias, a session id); a name a user gives one is not bound by any of them.
+_SESSION_NAMED = re.compile(r"\b(?:the|that|this|our)\s+([A-Za-z0-9][\w:-]*)\s+session\b", re.I)
+_SESSION_NOT_NAMED = {
+    "earlier",
+    "previous",
+    "prior",
+    "last",
+    "first",
+    "next",
+    "other",
+    "same",
+    "current",
+    "new",
+    "old",
+    "original",
+    "latest",
+    "recent",
+    "final",
+    "whole",
+    "entire",
+    "claude",  # "this Claude session": the session's own agent, not a name
+    "codex",
+    "agent",
+    "assistant",
+}
+_QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”")
 LEVELS = {"none": 0, "low": 1, "medium": 2, "high": 3}
 LOADS = ("load", "may_load")
 PLACES = ("domain", "url", "ip", "email")  # observables that are somewhere a call can send to
@@ -820,6 +847,31 @@ def _known(namespace):
     return namespace not in (None, "")
 
 
+def unbound_sessions(statements, others):
+    """The session names in statements that bear on the call which no session the host knows
+    is: a name binds only to one earlier session's own alias or exact session id, inside the
+    sessions searched for this call (MR184, MR185). A name in quotation marks is a mention, not a
+    reference, and generic words ("the earlier session") name no session. A heuristic over one
+    phrasing, "the/that/this/our NAME session": a reference worded otherwise is not seen, and its
+    absence here is no evidence that every reference was bound."""
+    known = {}
+    for other in others:
+        for name in (other.get("alias"), other.get("session_id")):
+            if name:
+                known.setdefault(str(name).lower(), set()).add(other["key"])
+                known.setdefault(str(name).lower().rsplit(":", 1)[-1], set()).add(other["key"])
+    found = []
+    for statement in statements:
+        text = _QUOTED.sub(" ", str(statement.get("text") or ""))
+        for match in _SESSION_NAMED.finditer(text):
+            name = match.group(1).lower()
+            if name in _SESSION_NOT_NAMED:
+                continue
+            if len(known.get(name, ())) != 1:
+                found.append(match.group(0))
+    return found
+
+
 def select(mine, call_id, others, home):
     """What the other sessions hold for the call call_id of the session mine.
 
@@ -1047,6 +1099,12 @@ def select(mine, call_id, others, home):
     # to search: an earlier writer of it cannot be ruled out, so the search is unfinished.
     if unsupported and searched:
         why.append("lookup_unfinished")
+    # A statement that bears on the call names a session the host cannot point to: what it refers
+    # to is not known, so the view of earlier sessions is not complete (MR184, MR185).
+    if unbound_sessions(
+        bearing, [o for o in others if o["key"] in shown_in or o["key"] in searched]
+    ):
+        why.append("session_reference_unbound")
     why = sorted(set(why))
     marked = LEVELS.get(call.get("level"), 0) >= LEVELS["medium"]
     linked = any(b["bears"] for b in bridges) or any(item.get("bears") for item in items)
@@ -1431,6 +1489,7 @@ REASONS = {
     "key_group_left_out": "key evidence found no room",
     "context_left_out": "context found no room",
     "controls_unsupported": "controls are not searched",
+    "session_reference_unbound": "a session the user names is not one the summaries name",
 }
 
 

@@ -100,7 +100,7 @@ BAR = {
 }
 DRAWS = 10000  # resamples of the pairs for an interval
 SEED = 20261113
-RULES = 12  # the version of the contract a packet is scored under: the latest
+RULES = 14  # the version of the contract a packet is scored under: the latest
 ROSTER = "roster.json"
 
 

@@ -124,6 +124,7 @@ SCORERS[12] = "campaign-contract/12"
 # earlier fact that the gap did not take: refusing to call the history complete is not leave
 # to lose what is available. score() also says, fact by fact, what the view shows.
 SCORERS[13] = "campaign-contract/13"
+SCORERS[14] = "campaign-contract/14"
 # Version 12 is version 11 with that check made of the right part of a line (MR134): the
 # text a content line shows is the string it ends with. A line also quotes where the
 # content came from, and under 11 that quoted origin could pass for the content of another
@@ -147,7 +148,11 @@ REASONS = {
     "key_group_left_out": "key evidence found no room",
     "context_left_out": "context found no room",
     "controls_unsupported": "controls are not searched",
+    "session_reference_unbound": "a session the user names is not one the summaries name",
 }
+# Version 14 is version 13 that also knows the reason a statement bearing on the call names a
+# session no summary names (MR184, MR185); under earlier versions that reason is not on the list.
+SINCE = {"session_reference_unbound": 14}
 # How a line of another session is tied to the call: a fixed list. The words a packet shows
 # for a tie are written by tie_of() from the kind and from what the source itself reports,
 # never by a builder.
@@ -1079,7 +1084,7 @@ def check_history(laid, summaries, view, rules=9):
     why = history.get("why", ())
     if history.get("complete") not in (True, False) or bool(why) != (history["complete"] is False):
         problems.append("an account is complete, or incomplete with its reasons")
-    elif any(reason not in REASONS for reason in why):
+    elif any(reason not in REASONS or rules < SINCE.get(reason, 0) for reason in why):
         problems.append("a reason for an incomplete history that is not one of the list")
     elif not section or section[0] != header_of(history):
         # Its second line is the account's own, word for word: nothing can be added to it.

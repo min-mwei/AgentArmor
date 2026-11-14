@@ -1917,3 +1917,49 @@ def test_tied_candidates_are_ranked_newest_first_by_the_hosts_clock_across_sessi
         [],
     )
     assert [other["key"] for other, _, _ in told] == ["newer", "older"]
+
+
+def test_a_session_named_by_the_user_binds_only_to_one_host_identity():
+    """MR184, MR185: a name binds to one earlier session's own alias or exact id, nothing else."""
+    others = [
+        {"key": "a", "alias": "s:892c", "session_id": "1f0e-77"},
+        {"key": "b", "alias": "s:77a4"},
+    ]
+    said = [{"text": "Apply it only if the setup session's restriction allows the source."}]
+    assert history.unbound_sessions(said, others) == ["the setup session"]
+    assert (
+        history.unbound_sessions([{"text": "As the earlier session found, keep it."}], others) == []
+    )
+    assert (
+        history.unbound_sessions([{"text": 'The note said "the setup session" was done.'}], others)
+        == []
+    )
+    assert history.unbound_sessions([{"text": "Use the 892c session's limit."}], others) == []
+    assert history.unbound_sessions([{"text": "Use the s:77a4 session's limit."}], others) == []
+    assert history.unbound_sessions([{"text": "Use the 1f0e session's limit."}], others) == [
+        "the 1f0e session"
+    ]  # a prefix of a session id is no binding
+    twins = others + [{"key": "c", "alias": "s:892c"}]
+    assert history.unbound_sessions([{"text": "Use the 892c session's limit."}], twins) == [
+        "the 892c session"
+    ]
+
+
+def test_a_bearing_statement_naming_a_session_leaves_the_history_incomplete(starter, runtime):
+    """MR184, MR185: the frozen-file starter's earlier limit, worded with a session's name, cannot
+    be pointed to by any summary: the account says so, the route is undecided, and only contract
+    version 14 knows the reason."""
+    campaign = copy.deepcopy(starter["frozen-file-changed-later"])
+    for session in campaign["sessions"]:
+        for step in session["steps"]:
+            if "frozen until the audit ends" in str(step.get("prompt", "")):
+                step["prompt"] = step["prompt"].replace(
+                    "until the audit ends", "until the setup session's audit ends"
+                )
+    laid, summaries, view, _ = built(campaign, runtime)
+    assert "session_reference_unbound" in view["history"]["why"] and view["route"] == "undecided"
+    assert view["history"]["complete"] is False
+    forged14, _ = campaigns.check_history(laid, summaries, view, 14)
+    forged13, _ = campaigns.check_history(laid, summaries, view, 13)
+    assert not any("not one of the list" in item for item in forged14)
+    assert any("not one of the list" in item for item in forged13)
