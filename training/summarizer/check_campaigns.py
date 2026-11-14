@@ -384,14 +384,16 @@ _FIND_ACTS = {
 }
 _CURL_ELSEWHERE = ("-O", "--remote-name", "-J", "--remote-header-name", "-K", "--config")
 _CONTROL = {"|", "||", "&&", ";", "&"}
-_REDIRECT = re.compile(r"\d*(?:>>?|<|&>)(.*)")
+_REDIRECT = re.compile(r"(\d*)(>>?|<|&>)(.*)")
 
 
 def _commands(command):
     """The simple commands of a command line, each as (its words without redirections, whether it
-    has a redirection), or None when the line holds a substitution or an operator inside a word,
-    which this plain reading cannot cut. A redirection's target is counted as written by file_uses;
-    a command with a redirection is never compared as a read (MR180-2)."""
+    has a redirection, the files its output redirections write), or None when the line holds a
+    substitution or an operator inside a word, which this plain reading cannot cut. An output
+    redirection (">", ">>", "1>", "2>", "&>", with or without its target attached) writes its
+    target; an input redirection ("<") and a descriptor duplication (">&2", "2>&1") write no file
+    (MR181-3). A command with a redirection is never compared as a read (MR180-2)."""
     found = shell_words(command)
     if found is not None:
         words = [word for word, _ in found]
@@ -399,26 +401,33 @@ def _commands(command):
         return None
     else:
         words = command.split()
-    commands, current, redirected, skip = [], [], False, False
+    commands, current, redirected, writes, skip = [], [], False, [], None
     for word in words:
-        if skip:
-            skip = False
+        if skip is not None:
+            if skip:
+                writes.append(word)  # "> file": the file is the next word
+            skip = None
             continue
         if word in _CONTROL:
             if current:
-                commands.append((current, redirected))
-            current, redirected = [], False
+                commands.append((current, redirected, writes))
+            current, redirected, writes = [], False, []
             continue
         redirect = _REDIRECT.fullmatch(word)
         if redirect:
             redirected = True
-            skip = not redirect.group(1)  # "> file": the file is the next word
+            _, op, target = redirect.groups()
+            writing = op != "<" and not target.startswith("&")
+            if not target:
+                skip = writing
+            elif writing:
+                writes.append(target)
             continue
         if any(char in word for char in "|;&<>"):
             return None
         current.append(word)
     if current:
-        commands.append((current, redirected))
+        commands.append((current, redirected, writes))
     return commands
 
 
@@ -431,19 +440,21 @@ def _git_subcommand(words):
 
 def _targets(words, cwd):
     """Every path a command that may change only what it names could change, from the same words
-    _effect() reads (MR180-4): each word after the first, the value of an option written
-    --option=value, and what follows the letter of a short option written with its value attached
-    (-oFILE). Over-approximated on purpose: a path taken for a target is only looked at again."""
+    _effect() reads (MR180-4, MR181-2): each word after the first, the value of an option written
+    --option=value or of an operand written name=value (dd of=FILE), and what follows the letter of
+    a short option written with its value attached (-oFILE). Over-approximated on purpose: a path
+    taken for a target is only looked at again."""
     found = set()
     for word in words[1:]:
         if word.startswith("--"):
-            value = word.split("=", 1)[1] if "=" in word else ""
+            values = [word.split("=", 1)[1]] if "=" in word else []
         elif word.startswith("-"):
-            value = word[2:]
+            values = [word[2:]]
         else:
-            value = word
-        if value:
-            found.add(_resolved(value, cwd))
+            values = [word, word.split("=", 1)[1]] if "=" in word else [word]  # dd of=FILE
+        for value in values:
+            if value:
+                found.add(_resolved(value, cwd))
     return found
 
 
@@ -500,15 +511,34 @@ def _numbered(raw):
     return [f"{at:>6}\t{line}" for at, line in enumerate(raw, 1)]
 
 
+_COUNTS = {
+    "-c": lambda text: len(text.encode("utf-8")),
+    "-l": lambda text: text.count("\n"),
+    "-w": lambda text: len(text.split()),
+}
+
+
+class _Counted:
+    """What a counting form prints, made from the file's whole text and compared with the runs
+    of spaces wc pads its numbers with read as one."""
+
+    def __init__(self, make):
+        self.make = make
+
+
 def _read_form(words):
     """(file, what it prints) for a command in one of the forms the check compares (MR176-1), where
     what it prints turns the file's lines into the lines the command shows; None for any other form.
 
+    wc -c, -l or -w FILE (the count of the file's bytes, newlines or words, then its name; MR181);
     cat FILE; cat -n FILE (each line numbered as cat numbers it); head or tail with -n N, -nN, -N or
     --lines=N (10 lines when no count is given); tail -n +N (the lines from line N on); sed -n 'Np',
     'M,Np' or 'M,$p'; grep with -n, -i, -F or -e and one pattern, a fixed string (with -F, or with
     none of . [ ] * ^ $ and backslash): every line holding it, in order, as "N:line" with -n."""
     base, args = words[0], words[1:]
+    if base == "wc" and len(args) == 2 and args[0] in _COUNTS and not args[1].startswith("-"):
+        count, name = _COUNTS[args[0]], args[1]
+        return name, _Counted(lambda text: [f"{count(text)} {name}"])
     if base == "cat":
         if len(args) == 1 and not args[0].startswith("-"):
             return args[0], lambda raw: raw
@@ -592,6 +622,42 @@ _SHOWS |= {"cut", "sort", "uniq", "tac", "jq", "wc", "diff", "od", "hexdump", "s
 OTHER_TEXT = "other text than"  # in a review item: the read differs from the last write
 
 
+_QUIET = {"test", "[", "cp", "mv", "rm", "rmdir", "mkdir", "touch", "chmod", "chown", "ln"}
+
+
+def _prints(words):
+    """What a command prints when it succeeds, where that is known from its words alone (MR181), or
+    None: nothing for test and [ and for a copy, move, removal, directory, touch, mode, owner or
+    link command without a verbose or interactive option; exactly its text for echo (with -n, not
+    -e or -E) and for printf whose format holds only %s, %%, \\n and \\t, with one argument for
+    each %s. Anything else is not judged here."""
+    base, args = os.path.basename(words[0]), words[1:]
+    if base in ("test", "["):
+        return ""  # its operators (-v, -f, ...) are tests, never output
+    if base in _QUIET:
+        loud = any(
+            w in ("--verbose", "--interactive")
+            or (w.startswith("-") and not w.startswith("--") and ("v" in w[1:] or "i" in w[1:]))
+            for w in args
+        )
+        return None if loud else ""
+    if base == "echo":
+        if args and args[0] in ("-e", "-E", "-ne", "-en", "-nE", "-En"):
+            return None
+        return " ".join(args[1:] if args and args[0] == "-n" else args)
+    if base == "printf" and args:
+        form, rest = args[0], args[1:]
+        if re.search(r"%(?!s|%)", form) or "\\" in form.replace("\\n", "").replace("\\t", ""):
+            return None
+        if form.count("%s") != len(rest):
+            return None
+        text = form.replace("%%", "\0")
+        for value in rest:
+            text = text.replace("%s", value, 1)
+        return text.replace("\0", "%").replace("\\n", "\n").replace("\\t", "\t")
+    return None
+
+
 def _raw(text):
     """A text's lines: a final newline does not begin another line."""
     lines = str(text).split("\n")
@@ -629,8 +695,16 @@ def _read_checks(campaign):
             alone = commands is not None and len(commands) == 1 and not commands[0][1]
             read = _read_form(commands[0][0]) if alone else None
             shows = commands is None or any(
-                os.path.basename(words[0]) in _SHOWS for words, _ in commands
+                os.path.basename(words[0]) in _SHOWS for words, _, _ in commands
             )
+            prints = _prints(commands[0][0]) if alone else None
+            if prints is not None and shown is not None:
+                if _compared(_raw(shown)) != _compared(_raw(prints)):
+                    said = "nothing" if prints == "" else "exactly its own text"
+                    found.append(
+                        f"{where} runs `{' '.join(commands[0][0])}`, which prints {said}, and "
+                        "shows other output"
+                    )
             if read is not None:
                 target, how = _resolved(read[0], cwd), read[1]
                 form = f"`{' '.join(commands[0][0])}`"
@@ -644,7 +718,12 @@ def _read_checks(campaign):
         if target is not None and target in last and shown is not None:
             writer, text, changer = last[target]
             name = os.path.relpath(target, cwd)
-            same = text is not None and _compared(_raw(shown)) == _compared(how(_raw(text)))
+            if isinstance(how, _Counted):
+                same = text is not None and [
+                    " ".join(line.split()) for line in _compared(_raw(shown))
+                ] == how.make(text)
+            else:
+                same = text is not None and _compared(_raw(shown)) == _compared(how(_raw(text)))
             if changer is not None or text is None:
                 by = changer or writer
                 item = (
@@ -662,14 +741,17 @@ def _read_checks(campaign):
         if "run" not in step or not isinstance(step.get("run"), str):
             continue
         made, _ = file_uses(step, cwd)
+        made |= {_resolved(path, cwd) for _, _, writes in commands or () for path in writes}
         for path in made:
             last[path] = (where, None, None)
-        kinds = [_effect(words) for words, _ in commands] if commands is not None else ["unknown"]
+        kinds = (
+            [_effect(words) for words, _, _ in commands] if commands is not None else ["unknown"]
+        )
         if "unknown" in kinds:
             changed = list(last)
         else:
             targets = set()
-            for (words, _), kind in zip(commands, kinds, strict=True):
+            for (words, _, _), kind in zip(commands, kinds, strict=True):
                 targets |= _targets(words, cwd) if kind == "named" else set()
             changed = [p for p in last if any(p == t or p.startswith(t + os.sep) for t in targets)]
         for path in changed:

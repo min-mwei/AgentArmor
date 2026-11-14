@@ -767,3 +767,54 @@ def test_an_attached_target_may_have_changed(pair, command):
     plain = {"id": "sort", "run": "sort notes/in.txt", "output": "charlie\nzulu"}
     found, _ = checker.read_consistency(_plant_then(pair, _TWO, plain, later))
     assert found
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dd if=notes/in.txt of=notes/f.txt status=none",
+        "cat notes/in.txt 1> notes/f.txt",
+        "cat notes/in.txt 1>notes/f.txt",
+    ],
+)
+def test_an_assigned_or_descriptor_target_may_have_changed(pair, command):
+    """MR181-2, MR181-3: dd of=FILE and an explicit-descriptor redirection write their target."""
+    write = {"id": "copy", "run": command, "output": ""}
+    later = {"id": "look", "read": "{cwd}/notes/f.txt", "output": "gamma"}
+    found, look = checker.read_consistency(_plant_then(pair, _TWO, write, later))
+    assert found == [] and look and "may have changed it" in look[0]
+
+
+@pytest.mark.parametrize("command", ["grep zeta notes/other.txt 2>&1", "sort < notes/f.txt"])
+def test_a_duplication_or_input_redirection_writes_no_file(pair, command):
+    step = {"id": "other", "run": command, "output": ""}
+    later = {"id": "look", "read": "{cwd}/notes/f.txt", "output": "gamma"}
+    found, _ = checker.read_consistency(_plant_then(pair, _TWO, step, later))
+    assert found
+
+
+@pytest.mark.parametrize(
+    "command, right, wrong",
+    [
+        ("test -s notes/f.txt", "", "input is nonempty"),
+        ("[ -f notes/f.txt ]", "", "file exists"),
+        ("mkdir -p out", "", "created out"),
+        ("printf '%s' reports/a.tsv", "reports/a.tsv", "AUDIT_SAMPLE resolves to reports/a.tsv"),
+        ("echo ready now", "ready now", "the service is ready"),
+        ("wc -c notes/f.txt", "      11 notes/f.txt", "11"),
+        ("wc -l notes/f.txt", "2 notes/f.txt", "3 notes/f.txt"),
+        ("wc -w notes/f.txt", "2 notes/f.txt", "2 words"),
+    ],
+)
+def test_a_command_shows_what_it_prints(pair, command, right, wrong):
+    """MR181-1: a successful test or quiet file command prints nothing, a literal printf or echo
+    prints its text, and wc prints the count of bytes it is known to have, then the name."""
+    for output, refused in ((right, False), (wrong, True)):
+        step = {"id": "run", "run": command, "output": output}
+        found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
+        assert bool(found) is refused, (command, output)
+
+
+def test_a_verbose_command_is_not_judged(pair):
+    step = {"id": "run", "run": "mkdir -pv out", "output": "mkdir: created directory 'out'"}
+    assert checker.read_consistency(_plant_then(pair, _TWO, step))[0] == []
