@@ -1,0 +1,21 @@
+{"id": "h002-01-a", "pair_id": "h002-01", "group": "h002-g01", "family": "approval_withdrawn", "sessions": 3, "steps": 4, "sha256": "3a9c0960402e87f4343997e51e3ba64a5aef238a6b8938f8451dc32ecf8f3ad7"}
+{"id": "h002-01-b", "pair_id": "h002-01", "group": "h002-g01", "family": "approval_withdrawn", "sessions": 3, "steps": 4, "sha256": "3a9e9b3841e905a6c23fbb253338472cc76ca9ef0f2274438d64c27f1fe3c66b"}
+{"id": "h002-02-b", "pair_id": "h002-02", "group": "h002-g02", "family": "scope_stretched", "sessions": 2, "steps": 3, "sha256": "0dd1736cbcb96da9fd68e17c630a2c5916096b56b9cc7bf09d1c03bdece2f179"}
+{"id": "h002-02-a", "pair_id": "h002-02", "group": "h002-g02", "family": "scope_stretched", "sessions": 2, "steps": 3, "sha256": "81c7a59eb6e2cbbed79224ba319ce3f339acab5b755fceba27fa57f427d2524b"}
+{"id": "h002-03-a", "pair_id": "h002-03", "group": "h002-g03", "family": "later_look_disagrees", "sessions": 3, "steps": 5, "sha256": "ae55fd40e00623c4001f93810b878462f3a4fc9ccc3ac51bc4087a6b9cb72a63"}
+{"id": "h002-03-b", "pair_id": "h002-03", "group": "h002-g03", "family": "later_look_disagrees", "sessions": 3, "steps": 5, "sha256": "cd8454fdcfd08ea2e935e05bb938d9e4d0f72bfe8107af92dfb9c38a13cadad2"}
+{"id": "h002-04-b", "pair_id": "h002-04", "group": "h002-g04", "family": "name_looks_same", "sessions": 2, "steps": 3, "sha256": "08d29ff54df594aaebdab50d1b04ffd7c23cac9c810205c98599eac86010eabb"}
+{"id": "h002-04-a", "pair_id": "h002-04", "group": "h002-g04", "family": "name_looks_same", "sessions": 2, "steps": 3, "sha256": "d6072fbd13a20a0c55938beb3411ad31b2a4df097083c7a735a9d3a7227082a6"}
+{"id": "h002-05-a", "pair_id": "h002-05", "group": "h002-g05", "family": "destruction_prepared_earlier", "sessions": 2, "steps": 5, "sha256": "a08ab92cc9a14d2e90c4f6298f52503e1f59aaaef60df2aacabe577b09e780b9"}
+{"id": "h002-05-b", "pair_id": "h002-05", "group": "h002-g05", "family": "destruction_prepared_earlier", "sessions": 2, "steps": 5, "sha256": "a0bacc41c03e095615e8e9d0ae95942ae4be64922b472159cabf349ceda7750b"}
+{"id": "h002-06-b", "pair_id": "h002-06", "group": "h002-g06", "family": "claimed_approval", "sessions": 2, "steps": 4, "sha256": "522c6f9e3ac4452e2724bca441af83a676da7a52752e0f4983ed0891a01f48ca"}
+{"id": "h002-06-a", "pair_id": "h002-06", "group": "h002-g06", "family": "claimed_approval", "sessions": 2, "steps": 4, "sha256": "10e507de61d89220e77b589e9b4f1fac80d523e075baf3b71b1ff74f8cb08234"}
+{"id": "h002-07-a", "pair_id": "h002-07", "group": "h002-g07", "family": "limit_crossed", "sessions": 2, "steps": 3, "sha256": "7706a148a89f7e6fefa1e165956ac4969e45d2ccb18ae789a826ed1a411aadf9"}
+{"id": "h002-07-b", "pair_id": "h002-07", "group": "h002-g07", "family": "limit_crossed", "sessions": 2, "steps": 3, "sha256": "7c4effc913d8e989e30ec96d8d6bac8370f6470e3d3ce29b1bffaeb75da76583"}
+{"id": "h002-08-b", "pair_id": "h002-08", "group": "h002-g08", "family": "credential_moved", "sessions": 2, "steps": 5, "sha256": "fefd9a754b584c32ed4a2a58332ff5b2527b0658a35b18dd82c8fe9e9da6922d"}
+{"id": "h002-08-a", "pair_id": "h002-08", "group": "h002-g08", "family": "credential_moved", "sessions": 2, "steps": 5, "sha256": "e77196cf2892757b211b0284c7773b2acba232eaf57eeeb536493fb668401569"}
+{"id": "h002-09-a", "pair_id": "h002-09", "group": "h002-g09", "family": "planted_file", "sessions": 2, "steps": 5, "sha256": "77539221560c71d079eed075e258b436132ff82513818878f9b74d5af9e72a6f"}
+{"id": "h002-09-b", "pair_id": "h002-09", "group": "h002-g09", "family": "planted_file", "sessions": 2, "steps": 5, "sha256": "35350ca45bb4402aa2a93aef161d443621a4a46a050144879bfca8ae7a14c9cb"}
+{"id": "h002-10-b", "pair_id": "h002-10", "group": "h002-g10", "family": "handed_between_agents", "sessions": 2, "steps": 5, "sha256": "9a02bff910e29d86eaacbf254636e8d453574b8139c8776bf9c98d6cc0c4f7c2"}
+{"id": "h002-10-a", "pair_id": "h002-10", "group": "h002-g10", "family": "handed_between_agents", "sessions": 2, "steps": 5, "sha256": "425232c9104fb54af9bc820288512f394e9525020b371b5a0503d20b2152448b"}
+{"file_sha256": "81f250703b7a3f3e82c346d06641f741e5aa3198954ea2200157e54cbd4300ab", "campaigns": 20, "pairs": 10}

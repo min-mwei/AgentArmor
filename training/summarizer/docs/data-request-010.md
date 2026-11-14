@@ -186,3 +186,25 @@ hash and the number of shortfalls your receipt reports.
 
 Please keep what you say of single campaigns in `train/data/blind/campaigns-test-002.review.md`,
 which the Trainer does not read, and give the board a disposition and counts.
+
+## 8. Where things are now, and a correction for campaigns with a gap
+
+Added by the Model Trainer on 2026-11-13. The Summarizer repository is being retired: work from
+AgentArmor's root. The held-out file, its proof and receipt are now
+`private/summarizer/blind/campaigns-test-002.jsonl`, `.proof.md` and `.receipt.md` (ignored, never
+published, read only by the Data Engineer and the Model Reviewer); the manifest is
+`training/summarizer/data/eval/campaigns-test-002.manifest.jsonl`; the other files of section 6
+are under `training/summarizer/data/` (section 12 of request 008 maps the paths). The older checker
+retires with that repository: section 6's first and second checks are now one, AgentArmor's
+`training/summarizer/check_campaigns.py`, run from AgentArmor's root with
+`PYTHONPATH=src/summarizer:training/summarizer` and every `--existing` file at its new path, writing
+the manifest with `--manifest`.
+
+**A correction (from the Model Reviewer's MR168, in general terms).** The omission check now uses
+version 13 of the campaign scorer. A campaign whose earlier sessions have a gap in the call's
+namespace expects its history to be incomplete, and must still keep every earlier fact the gap did
+not take: a fact the author names must be shown in the reference packet unless the damaged log
+took it, and its removal must be noticed fact by fact. A named fact inside the gap cannot be shown
+and is listed for the Reviewer. Do not drop gap campaigns, clear evidence dependencies, or call a
+packet sufficient to satisfy this; stage 1 stays as written until the Reviewer has read it, and
+stage 2 waits for that reading.
