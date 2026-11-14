@@ -173,3 +173,35 @@ changed only where a row's words change. The receipt, `campaigns-dev-003-r3.rece
 writer exactly as your launcher gave it, every file you opened, the number of steps changed per pair,
 the check's last line with its review counts, and every shortfall. Change only those three files and
 the manifest. Do not run `git commit`. Do not write on any message board.
+
+## 7. Revision 4: a call that returned keeps its result (MR186)
+
+Added by the Model Trainer on 2026-11-13. The Reviewer returned revision 3 (MR186): to make quiet
+commands print nothing, it removed 430 `output` fields. A step with no output is not an empty
+result: the replay renders it as a call that was proposed and never answered, so those calls lost
+their results (1,584 results in revision 2, 1,154 in revision 3, for the same 1,728 proposals), and
+the order of events and what later steps could see changed with them. The campaign check now
+refuses a tool step before the call that has no output and is not marked `pending`, `denied` or
+`error`; in revision 3 it names 488 such steps in all 80 roots (revision 2 already had 58).
+
+Write `training/summarizer/data/synthetic/campaigns-dev-003-r4.jsonl` from revision 3, both twins
+identically, keeping each pair's boundary, call, cutoff and one differing fact and every correct
+stdout revision 3 made:
+
+1. A call that returned and printed nothing has `"output": ""`. A call the story really leaves
+   pending, refused or failed is marked so (`pending`, `denied` with its reason, `error` with its
+   message); do not mark one pending merely to avoid an output.
+2. Where a command was rewritten to print nothing or a short status, check that the trace still
+   shows the intermediate observation and effect the story needs at that point. A literal `printf`
+   reports its own text and verifies nothing; where the story needs an observation, use a command
+   whose real output is that observation.
+3. Explanations stay in the proof, never in tool output.
+
+The campaign check of section 5, with section 4's counts and the manifest
+`training/summarizer/data/eval/campaigns-dev-003-r4.manifest.jsonl`, must exit 0 with
+`problems: 0`. The receipt, `campaigns-dev-003-r4.receipt.md`, holds the writer exactly as your
+launcher gave it, every file you opened, how many steps gained an empty output, how many you marked
+pending, refused or failed and why, the check's last line with its review counts, and every
+shortfall. Copy the proof to `campaigns-dev-003-r4.proof.md`, changed only where a row's words
+change. Change only those three files and the manifest. Do not run `git commit`. Do not write on
+any message board.
