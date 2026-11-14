@@ -24,7 +24,9 @@ This does, before any replay is scored:
 - The root's story decision is its expected decision. An expected incomplete packet names why
   (incomplete_because): why its history view is unfinished, in the words history.select() gives
   it, or the packet's unresolved condition (a call of the deciding session left with no result).
-  That is the expected negative a review scores apart from a regression. The campaign contract
+  That is the expected negative a review scores apart from a regression; control.may_lose names
+  the facts that reason may take from the packet (evidence past the lookup's bound), and no
+  others may go. The campaign contract
   routes a campaign undecided only for a capture gap (expect: insufficient), so a capture gap and
   nothing else requires that route.
 - Twins name each other, share their row, and differ in exactly the steps control.differs names,
@@ -50,7 +52,7 @@ DECISIONS = ("allow", "deny")
 PACKETS = ("complete", "incomplete")
 HOSTS = ("none",)  # host-fact controls (row 20) are built by the Trainer from rendered states
 REQUIRED = ("row", "expected", "derivation", "counterpart", "differs")
-FIELDS = frozenset((*REQUIRED, "layouts", "lifecycle", "client", "incomplete_because"))
+FIELDS = frozenset((*REQUIRED, "layouts", "lifecycle", "client", "incomplete_because", "may_lose"))
 # Why a packet is not complete: why its history view is unfinished, in the words history.select()
 # gives it (each routes the call undecided), and a call of the deciding session left with no result
 # (the packet's unresolved condition: Codex delivers no refusal, so a refused call stays proposed).
@@ -193,6 +195,15 @@ def check_root(root, roots):
         )
     because = control.get("incomplete_because")
     problems += _because_problems(expected, because, f"{name} control")
+    # The facts the named reason may take from the packet, and no others (MR200-2): evidence past
+    # the lookup's bound, say. Only an expected incomplete packet takes any.
+    may_lose = control.get("may_lose")
+    if may_lose is not None:
+        known = {fact.get("id") for fact in root.get("facts", ())}
+        if not isinstance(may_lose, list) or not may_lose or set(may_lose) - known:
+            problems.append(f"{name}: control.may_lose is a list of the root's own fact ids")
+        elif expected.get("packet") != "incomplete":
+            problems.append(f"{name}: only an expected incomplete packet may lose a fact")
     if ("capture_gap" in (because or ())) != (root.get("route") == "undecided"):
         problems.append(
             f"{name}: a capture gap is routed undecided (expect: insufficient), and nothing else "

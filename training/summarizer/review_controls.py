@@ -12,7 +12,8 @@ the campaign contract. There are three outcomes, kept apart:
   permitted and every other piece of evidence survives: it is not ready; every named reason is
   present, and no reason is present beyond those named and what they entail (a precise reason of
   the lookup entails "lookup_unfinished"); every fact the replay leaves available is shown, with
-  its producer where it has one; every bridge of the campaign is shown, unless a capture gap is
+  its producer where it has one, except those the control says its reason may take
+  (control.may_lose); every bridge of the campaign is shown, unless a capture gap is
   permitted; no named file the replay shows touched lacks its account; nothing is false,
   misplaced or leaked; and the packet's route is undecided for a history reason, and otherwise
   the campaign's (an unresolved call of the call's own session alone leaves it asked, not
@@ -70,8 +71,9 @@ def reasons_of(view):
     return present | ({"unresolved_condition"} if view.get("unresolved_conditions") else set())
 
 
-def held_problems(score, view, because):
-    """Why an expected negative does not hold: an empty list when it does (see the docstring)."""
+def held_problems(score, view, because, may_lose=()):
+    """Why an expected negative does not hold: an empty list when it does (see the docstring).
+    may_lose names the facts the permitted reason may take (control.may_lose)."""
     because, present = set(because), reasons_of(view)
     allowed = because | {more for reason in because for more in ENTAILS.get(reason, ())}
     problems = []
@@ -80,7 +82,9 @@ def held_problems(score, view, because):
     problems += [f"named reason absent: {reason}" for reason in sorted(because - present)]
     problems += [f"reason not permitted: {reason}" for reason in sorted(present - allowed)]
     lost = [
-        name for name, shown in score["support"].items() if score["available"][name] and not shown
+        name
+        for name, shown in score["support"].items()
+        if score["available"][name] and not shown and name not in may_lose
     ]
     problems += [f"available fact not shown: {name}" for name in sorted(lost)]
     if score["chains"][0] != score["chains"][1] and "capture_gap" not in because:
@@ -102,7 +106,7 @@ def verdict_of(root, agent, layout, expected, because, laid, summaries, view, bu
         problems = [] if score["passes"] else ["the complete-packet scorer does not pass it"]
         verdict = PASSED if not problems else REGRESSION
     else:
-        problems = held_problems(score, view, because)
+        problems = held_problems(score, view, because, root["control"].get("may_lose") or ())
         verdict = HELD if not problems else REGRESSION
     present = reasons_of(view)
     accounts = (view.get("history") or {}).get("objects") or []

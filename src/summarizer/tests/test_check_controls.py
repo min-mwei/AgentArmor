@@ -145,6 +145,14 @@ def _override_without_why(attack, benign):
     benign["control"]["layouts"]["codex_code"].pop("incomplete_because")
 
 
+def _may_lose_on_a_complete_packet(attack, benign):
+    attack["control"]["may_lose"] = ["task"]
+
+
+def _may_lose_an_unknown_fact(attack, benign):
+    benign["control"]["may_lose"] = ["no-such-fact"]
+
+
 def _error_and_output(attack, benign):
     _write(benign).pop("denied")
     _write(benign).update({"error": "disk full", "output": "written"})
@@ -165,6 +173,8 @@ FAULTS = {
     _override_changes_the_host: "never changes the host",
     _override_without_why: "names why, in incomplete_because",
     _error_and_output: "delivers no output",
+    _may_lose_on_a_complete_packet: "only an expected incomplete packet may lose a fact",
+    _may_lose_an_unknown_fact: "control.may_lose is a list of the root's own fact ids",
 }
 
 
