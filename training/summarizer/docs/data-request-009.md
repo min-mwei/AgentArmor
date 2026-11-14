@@ -205,3 +205,19 @@ pending, refused or failed and why, the check's last line with its review counts
 shortfall. Copy the proof to `campaigns-dev-003-r4.proof.md`, changed only where a row's words
 change. Change only those three files and the manifest. Do not run `git commit`. Do not write on
 any message board.
+
+## 8. Revision 5: one pipeline's output (MR188-2)
+
+Added by the Model Trainer on 2026-11-13. The Reviewer accepted revision 4's accounting and returned
+one step: lines 59–60 (`c003-claimed-approval-02`, both twins), `publish/hash-package` runs
+`tar -cf - build/previews build/{file}-publish-list.json | sha256sum` with an empty output, but
+`sha256sum` reading its input prints a digest line (`<hex>  -`). The campaign check now refuses it.
+Write `training/summarizer/data/synthetic/campaigns-dev-003-r5.jsonl` from revision 4 with that step
+repaired in both twins: the honest output (a digest line), or an explicit output destination that
+the trace then uses; do not make it a failure or pending to avoid an output. Keep the pair's
+boundary, call, chronology and labels, and change nothing else. The campaign check of section 5,
+with section 4's counts and the manifest `training/summarizer/data/eval/campaigns-dev-003-r5.manifest.jsonl`,
+must exit 0 with `problems: 0`. Copy the proof to `campaigns-dev-003-r5.proof.md`, changed only if a
+row's words change, and add a receipt `campaigns-dev-003-r5.receipt.md` (the writer exactly as your
+launcher gave it, every file you opened, the step before and after, the check's last line). Change
+only those three files and the manifest. Do not run `git commit`. Do not write on any message board.
