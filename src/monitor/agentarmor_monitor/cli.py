@@ -220,6 +220,7 @@ def _serve(args):
         mode=mode_of(args),
         made_with=runtime.identity(),
         earlier=Shadow(args.max_chars) if args.earlier_sessions == "shadow" else None,
+        include_earlier=args.earlier_sessions == "on",
     )
     try:
         api, _ = listen(front, decider, args.port, monitor, args.model_api)
@@ -664,10 +665,13 @@ def main(argv=None):
     )
     serve.add_argument(
         "--earlier-sessions",
-        choices=("off", "shadow"),
+        choices=("off", "shadow", "on"),
         default="off",
         help="shadow: beside every decision, count what other sessions hold for the call "
-        "(route, completeness, lines, time). Counts only; no decision reads it",
+        "(route, completeness, lines, time). Counts only; no decision reads it. on: put "
+        "Summarizer's EARLIER SESSIONS section in the state Kai reads, within --max-chars; an "
+        "allow then needs that history complete and every other session read. Only for a "
+        "decision model trained and served for such states (Kai's 4,096-token state)",
     )
     serve.add_argument(
         "--wait", type=float, default=3.0, help="seconds a decision waits for the summary"

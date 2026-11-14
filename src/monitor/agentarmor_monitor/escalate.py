@@ -79,17 +79,50 @@ def triggers(summary, minimum="low"):
     return sorted(found, key=lambda entry: entry["seq"])
 
 
-def packet(summary, entry, max_chars):
+def packet(summary, entry, max_chars, sessions=None):
     """(text, account, entries shown): Summarizer's digest for the call a trigger belongs to.
 
     The account is Summarizer's own, of what the text holds and what found no room. The
     entries are the ones the text shows, as digest() reports them: no text, only what each is.
+
+    sessions, when given, is what other sessions hold for the call ("on" mode of
+    --earlier-sessions): {"mine", "others", "counts", "home"} as earlier.others_of() makes
+    them. The packet is then Summarizer's lookup (summarizer.history.packet): this session's
+    digest and, in the same budget, an EARLIER SESSIONS section, with the lookup's own account
+    under "history". Such a packet is ready only if the history is complete by that account
+    and every other session listed could be read up to date: a section that left something
+    out, or sessions nobody could read, are no evidence that nothing more bears on the call.
     """
     focus = entry.get("call_id") or None
-    shown = digest(summary, max_chars, focus=focus, call_sha256=entry.get("call_sha256"))
+    if sessions is None:
+        shown = digest(summary, max_chars, focus=focus, call_sha256=entry.get("call_sha256"))
+    else:
+        from summarizer import history
+
+        shown = history.packet(
+            sessions["mine"],
+            focus,
+            sessions["others"],
+            sessions["home"],
+            max_chars,
+            entry.get("call_sha256"),
+        )
     coverage = summary["session"]["coverage"]
     gaps = shown["key_dropped"] or shown["key_clipped"] or shown["unresolved_conditions"]
     ready = bool(shown["fits"] and not gaps and coverage["scanned_all_captured"])
+    lookup = None
+    if sessions is not None:
+        account = shown.get("history") or {}
+        counts = sessions["counts"]
+        known = sum(counts[k] for k in ("no_summary_or_unreadable", "summary_behind_its_log"))
+        lookup = {"complete": account.get("complete", True), "why": account.get("why", [])}
+        lookup |= {"coverage_known": known + counts["beyond_the_cap"] == 0, "sessions": counts}
+        lookup |= {
+            "sources": len(account.get("sources", ())),
+            "lines": len(account.get("items", ())),
+        }
+        lookup |= {"route": shown.get("route"), "route_reason": shown.get("route_reason")}
+        ready = ready and lookup["complete"] and lookup["coverage_known"]
     # A call under decision must be the logged one. Content has no call of its own to verify:
     # the call it came back from is only where the packet is centred.
     ready = ready and (entry["type"] != "action" or shown["call"] == "verified")
@@ -113,6 +146,8 @@ def packet(summary, entry, max_chars):
         # Whether the packet holds what a decision needs, by Summarizer's own account.
         "ready": ready,
     }
+    if lookup is not None:
+        about["history"] = lookup
     return text, about, shown["shown"]
 
 
@@ -289,6 +324,7 @@ def detect(
     directory=None,
     asked=None,
     explain=False,
+    sessions=None,
 ):
     """Send one trigger's packet to Kai and return the detection record.
 
@@ -329,6 +365,10 @@ def detect(
     explain adds "shown" to the record: the entries the packet's text shows (entries_shown).
     It is for reading what a request rests on, and is left out of the records a monitor keeps.
 
+    sessions, when given, is what other sessions hold for the call (packet()): the state then
+    carries Summarizer's EARLIER SESSIONS section in the packet's room, and the packet is
+    complete only if that history is complete and every other session could be read.
+
     status is "scored", "call_too_large", "policy_too_large", "too_large_to_send" (refused
     here for its bytes on the wire, with nothing sent), "kai_rejected" (refused by the
     service), "kai_unavailable" or "kai_mismatch" (what answered is not the configured model).
@@ -357,7 +397,7 @@ def detect(
     counts = dict.fromkeys(COUNTED, 0)
     record |= {"requests_sent": 0, "requests": counts}
     while True:
-        text, about, emitted = packet(summary, entry, max(size, MIN_CHARS))
+        text, about, emitted = packet(summary, entry, max(size, MIN_CHARS), sessions)
         if explain:
             record["shown"] = entries_shown(summary, emitted)
         # Whole means the call's own arguments, all of them: a display text never qualifies.

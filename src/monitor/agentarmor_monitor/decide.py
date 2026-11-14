@@ -25,9 +25,11 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 
 from summarizer.store import AGENTS, EVENTS, load_summary, read_events, session_dir
 
+from . import earlier as earlier_sessions
 from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
@@ -153,6 +155,7 @@ def judge(
     settle=None,
     made_with=None,
     earlier=None,
+    with_earlier=False,
 ):
     """(verdict, record, why) for one proposed call, named as a hook event names it.
 
@@ -175,6 +178,14 @@ def judge(
     sessions hold (earlier.Ticket). The summary read here is offered to it without
     waiting, and it keeps its own record: no verdict, request, reason or field of the
     record here reads it, and it holds no decision slot. Whoever gave the ticket closes it.
+
+    with_earlier ("on" mode of --earlier-sessions) puts in the state the decision model reads,
+    within the same budget, what Summarizer's lookup finds in the other sessions on this
+    machine (summarizer.history): an EARLIER SESSIONS section, with the lookup's account
+    under the record's packet.history. The other sessions are read only for a call that is
+    put to the model. An allow then counts only if that history is complete by the lookup's
+    own account and every other session listed could be read up to date: sessions nobody
+    could read are no evidence that nothing in them bears on the call.
 
     A record says how far the session's log had been read when its evidence was taken
     ("evidence"), how the call was routed ("routing": asked or not, and the level and
@@ -229,7 +240,27 @@ def judge(
         return unasked("undecided", "coverage", "below_threshold_with_gaps")
     if client is None:  # marked, and nothing to put it to
         return unasked("undecided", "no_decision_model", "no_decision_model")
-    record = detect(client, summary, entry, max_chars, rules, directory=directory, explain=explain)
+    sessions = None
+    if with_earlier:
+        try:
+            others, counts = earlier_sessions.others_of(agent, directory.name, summary, call_id)
+        except Exception as error:  # nothing could be listed: no other session is known
+            others = []
+            counts = dict.fromkeys(("listed", "read", "summary_behind_its_log"), 0)
+            counts |= {"nothing_before_the_call": 0, "beyond_the_cap": 0}
+            counts |= {"no_summary_or_unreadable": 1, "error": type(error).__name__}
+        mine = earlier_sessions.known(agent, directory.name, summary)
+        sessions = {"mine": mine, "others": others, "counts": counts, "home": str(Path.home())}
+    record = detect(
+        client,
+        summary,
+        entry,
+        max_chars,
+        rules,
+        directory=directory,
+        explain=explain,
+        sessions=sessions,
+    )
     counts = record.get("requests") or {}
     sent = counts.get("transport_attempts", 0)
     reason = "marked" if sent else "marked_and_not_sent"  # too large to put to the model
@@ -286,6 +317,7 @@ class Decider:
         mode="enforce",
         made_with=None,
         earlier=None,
+        include_earlier=False,
     ):
         if mode not in MODES:
             raise ValueError(f"a server's mode is one of {MODES}")
@@ -295,6 +327,10 @@ class Decider:
         self.made_with = made_with
         # The shadow measurement of what other sessions hold (earlier.Shadow), or None.
         self.earlier = earlier
+        # Whether the state the decision model reads carries what other sessions hold ("on").
+        if include_earlier and earlier is not None:
+            raise ValueError("earlier sessions are either measured in shadow or sent, not both")
+        self.include_earlier = include_earlier
         self.client = client
         self.rules = load_rules() if rules is None else rules
         self.level, self.max_chars, self.wait = level, max_chars, wait
@@ -312,7 +348,9 @@ class Decider:
             "layout": LAYOUT,
             "at_once": self.slots,
             "summary_identity_checked": self.made_with is not None,
-            "earlier_sessions": self.earlier.about() if self.earlier else "off",
+            "earlier_sessions": "on"
+            if self.include_earlier
+            else (self.earlier.about() if self.earlier else "off"),
         }
 
     def decide(self, asked):
@@ -344,6 +382,7 @@ class Decider:
                     self.rules,
                     made_with=self.made_with,
                     earlier=ticket,
+                    with_earlier=self.include_earlier,
                 )
             except Exception as error:
                 note(asked["agent"], error, "failed")

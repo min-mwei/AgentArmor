@@ -61,55 +61,67 @@ def alias(agent, name):
     return hashlib.sha256(f"{agent}/{name}".encode()).hexdigest()[:4]
 
 
+def known(agent, name, held):
+    """A session as the lookup takes it (summarizer.history.packet): no namespace is known."""
+    fields = {"key": f"{agent}/{name}", "summary": held, "namespace": None}
+    fields |= {"cwd": str(held["session"].get("cwd") or ""), "alias": alias(agent, name)}
+    return fields | {"agent": agent, "session_id": name}
+
+
+def others_of(agent, name, summary, call_id, newest=NEWEST):
+    """(the other sessions as the lookup takes them, oldest first, each cut at the call's time;
+    counts of how far they could be read). Shared by the shadow count and the "on" mode."""
+    call = next(
+        e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
+    )
+    cut = float(call.get("ts") or 0.0)
+    listed = [(a, n) for a, n, _, _ in list_sessions() if (a, n) != (agent, name)]
+    sessions = {"listed": len(listed), "read": 0, "no_summary_or_unreadable": 0}
+    sessions |= {"summary_behind_its_log": 0, "nothing_before_the_call": 0}
+    sessions["beyond_the_cap"] = len(listed[newest:])
+    others = []
+    for a, n in listed[:newest]:
+        try:
+            held = load_summary(a, n)
+            entries = held["entries"] if held is not None else None
+        except Exception:
+            entries = None
+        if entries is None:
+            sessions["no_summary_or_unreadable"] += 1
+            continue
+        before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
+        if not held.get("fresh"):
+            # What its log holds beyond the summary is not known, before the call or
+            # after: it is searched as far as it goes and counted as behind.
+            sessions["summary_behind_its_log"] += 1
+        elif not before:
+            sessions["nothing_before_the_call"] += 1
+        else:
+            sessions["read"] += 1
+        if before:
+            first = min(float(e.get("ts") or 0.0) for e in before)
+            others.append((first, known(a, n, held | {"entries": before})))
+    return [other for _, other in sorted(others, key=lambda pair: pair[0])], sessions
+
+
+def coverage_known(sessions):
+    """Whether every other session listed could be read up to date (MR159-2)."""
+    unread = sessions["no_summary_or_unreadable"] + sessions["summary_behind_its_log"]
+    return unread + sessions["beyond_the_cap"] == 0
+
+
 def observed(agent, name, call_id, summary, max_chars, identity=None, newest=NEWEST):
     """Counts of what the lookup finds for one call, or {"error": kind} when it fails."""
     began = time.monotonic()
     try:
-        call = next(
-            e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
-        )
-        cut = float(call.get("ts") or 0.0)
-
-        def known(a, n, held):
-            fields = {"key": f"{a}/{n}", "summary": held, "namespace": None}
-            fields |= {"cwd": str(held["session"].get("cwd") or ""), "alias": alias(a, n)}
-            return fields | {"agent": a, "session_id": n}
-
-        listed = [(a, n) for a, n, _, _ in list_sessions() if (a, n) != (agent, name)]
-        sessions = {"listed": len(listed), "read": 0, "no_summary_or_unreadable": 0}
-        sessions |= {"summary_behind_its_log": 0, "nothing_before_the_call": 0}
-        sessions["beyond_the_cap"] = len(listed[newest:])
-        others = []
-        for a, n in listed[:newest]:
-            try:
-                held = load_summary(a, n)
-                entries = held["entries"] if held is not None else None
-            except Exception:
-                entries = None
-            if entries is None:
-                sessions["no_summary_or_unreadable"] += 1
-                continue
-            before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
-            if not held.get("fresh"):
-                # What its log holds beyond the summary is not known, before the call or
-                # after: it is searched as far as it goes and counted as behind.
-                sessions["summary_behind_its_log"] += 1
-            elif not before:
-                sessions["nothing_before_the_call"] += 1
-            else:
-                sessions["read"] += 1
-            if before:
-                first = min(float(e.get("ts") or 0.0) for e in before)
-                others.append((first, known(a, n, held | {"entries": before})))
-        others = [other for _, other in sorted(others, key=lambda pair: pair[0])]
+        others, sessions = others_of(agent, name, summary, call_id, newest)
         view = history.packet(
             known(agent, name, summary), call_id, others, str(Path.home()), max_chars, identity
         )
         account = view.get("history") or {}
-        unread = sessions["no_summary_or_unreadable"] + sessions["summary_behind_its_log"]
         told = {"route": view.get("route"), "route_reason": view.get("route_reason")}
         told |= {"complete": account.get("complete", True), "why": account.get("why", [])}
-        told |= {"coverage_known": unread + sessions["beyond_the_cap"] == 0}
+        told |= {"coverage_known": coverage_known(sessions)}
         told |= {"sources": len(account.get("sources", ())), "lines": len(account.get("items", ()))}
         told |= {"bridges": len(account.get("bridges", ()))}
         told |= {"left_out": account.get("left_out", {})}
