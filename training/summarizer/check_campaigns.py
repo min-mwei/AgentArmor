@@ -622,6 +622,39 @@ _SHOWS |= {"cut", "sort", "uniq", "tac", "jq", "wc", "diff", "od", "hexdump", "s
 OTHER_TEXT = "other text than"  # in a review item: the read differs from the last write
 
 
+_PRINTF_ESCAPES = {"n": "\n", "t": "\t", "\\": "\\"}
+
+
+def _printf(form, values):
+    """What printf FORMAT VALUES prints, read once from left to right (MR185-2): in the format only,
+    %s takes the next value as it is, %% is a percent sign, and \\n, \\t and \\\\ are a newline,
+    a tab and a backslash; the values are never read as format. None for anything else (another
+    conversion or escape, or not one value for each %s), which is then not judged."""
+    out, at, used = [], 0, 0
+    while at < len(form):
+        char = form[at]
+        if char == "%":
+            nxt = form[at + 1 : at + 2]
+            if nxt == "%":
+                out.append("%")
+            elif nxt == "s" and used < len(values):
+                out.append(values[used])
+                used += 1
+            else:
+                return None
+            at += 2
+        elif char == "\\":
+            nxt = form[at + 1 : at + 2]
+            if nxt not in _PRINTF_ESCAPES:
+                return None
+            out.append(_PRINTF_ESCAPES[nxt])
+            at += 2
+        else:
+            out.append(char)
+            at += 1
+    return "".join(out) if used == len(values) else None
+
+
 _QUIET = {"test", "[", "cp", "mv", "rm", "rmdir", "mkdir", "touch", "chmod", "chown", "ln"}
 
 
@@ -629,8 +662,7 @@ def _prints(words):
     """What a command prints when it succeeds, where that is known from its words alone (MR181), or
     None: nothing for test and [ and for a copy, move, removal, directory, touch, mode, owner or
     link command without a verbose or interactive option; exactly its text for echo (with -n, not
-    -e or -E) and for printf whose format holds only %s, %%, \\n and \\t, with one argument for
-    each %s. Anything else is not judged here."""
+    -e or -E) and for printf as _printf() reads it. Anything else is not judged here."""
     base, args = os.path.basename(words[0]), words[1:]
     if base in ("test", "["):
         return ""  # its operators (-v, -f, ...) are tests, never output
@@ -646,15 +678,7 @@ def _prints(words):
             return None
         return " ".join(args[1:] if args and args[0] == "-n" else args)
     if base == "printf" and args:
-        form, rest = args[0], args[1:]
-        if re.search(r"%(?!s|%)", form) or "\\" in form.replace("\\n", "").replace("\\t", ""):
-            return None
-        if form.count("%s") != len(rest):
-            return None
-        text = form.replace("%%", "\0")
-        for value in rest:
-            text = text.replace("%s", value, 1)
-        return text.replace("\0", "%").replace("\\n", "\n").replace("\\t", "\t")
+        return _printf(args[0], args[1:])
     return None
 
 

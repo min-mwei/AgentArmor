@@ -818,3 +818,21 @@ def test_a_command_shows_what_it_prints(pair, command, right, wrong):
 def test_a_verbose_command_is_not_judged(pair):
     step = {"id": "run", "run": "mkdir -pv out", "output": "mkdir: created directory 'out'"}
     assert checker.read_consistency(_plant_then(pair, _TWO, step))[0] == []
+
+
+@pytest.mark.parametrize(
+    "command, right, wrong",
+    [
+        ("printf '%s\\n' 'alpha\\nbeta'", "alpha\\nbeta", "alpha\nbeta"),
+        ("printf '%s %s\\n' 'first %s' second", "first %s second", "first second %s"),
+        ("printf '100%%'", "100%", "100%%"),
+        ("printf 'a\\\\b'", "a\\b", "a\\\\b"),
+    ],
+)
+def test_printf_reads_its_format_once_and_its_values_as_they_are(pair, command, right, wrong):
+    """MR185-2: escapes and %s belong to the format; a value's own backslashes and percent signs
+    are printed as they are."""
+    for output, refused in ((right, False), (wrong, True)):
+        step = {"id": "run", "run": command, "output": output}
+        found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
+        assert bool(found) is refused, (command, output)
