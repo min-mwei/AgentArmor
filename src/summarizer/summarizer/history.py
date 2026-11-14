@@ -847,27 +847,35 @@ def _known(namespace):
     return namespace not in (None, "")
 
 
-def unbound_sessions(statements, others):
-    """The session names in statements that bear on the call which no session the host knows
-    is: a name binds only to one earlier session's own alias or exact session id, inside the
-    sessions searched for this call (MR184, MR185). A name in quotation marks is a mention, not a
-    reference, and generic words ("the earlier session") name no session. A heuristic over one
-    phrasing, "the/that/this/our NAME session": a reference worded otherwise is not seen, and its
-    absence here is no evidence that every reference was bound."""
-    known = {}
-    for other in others:
-        for name in (other.get("alias"), other.get("session_id")):
-            if name:
-                known.setdefault(str(name).lower(), set()).add(other["key"])
-                known.setdefault(str(name).lower().rsplit(":", 1)[-1], set()).add(other["key"])
+def unbound_sessions(statements, candidates):
+    """The session names in statements that bear on the call that bind to no one session the
+    host names (MR184, MR185, MR188).
+
+    candidates are the sessions a name may bind to: this project's, in a known namespace that is
+    the call's, before the call. Another project's session, one of another or an unknown
+    namespace, and a later one never discharge a reference, though their writes may still matter
+    to the call elsewhere. A name binds to a candidate's display alias (the short hex the packet
+    shows as "[s:ALIAS]", in any case, with or without "s:") or to its full session id exactly,
+    and only when exactly one candidate matches. A name in quotation marks is a mention, not a
+    reference, and generic words ("the earlier session", "this Claude session") name no session.
+    A heuristic over one phrasing, "the/that/this/our NAME session": a reference worded otherwise
+    ("when the migration was prepared") is not seen, its absence here is no evidence that every
+    reference was bound, and binding a name says nothing of the truth of that session's text."""
+    by_alias, by_id = {}, {}
+    for other in candidates:
+        if other.get("alias"):
+            by_alias.setdefault(str(other["alias"]).lower(), set()).add(other["key"])
+        if other.get("session_id"):
+            by_id.setdefault(str(other["session_id"]), set()).add(other["key"])
     found = []
     for statement in statements:
         text = _QUOTED.sub(" ", str(statement.get("text") or ""))
         for match in _SESSION_NAMED.finditer(text):
-            name = match.group(1).lower()
-            if name in _SESSION_NOT_NAMED:
+            said = match.group(1)
+            if said.lower() in _SESSION_NOT_NAMED:
                 continue
-            if len(known.get(name, ())) != 1:
+            shown = said.lower()[2:] if said.lower().startswith("s:") else said.lower()
+            if len(by_alias.get(shown, set()) | by_id.get(said, set())) != 1:
                 found.append(match.group(0))
     return found
 
@@ -1101,9 +1109,12 @@ def select(mine, call_id, others, home):
         why.append("lookup_unfinished")
     # A statement that bears on the call names a session the host cannot point to: what it refers
     # to is not known, so the view of earlier sessions is not complete (MR184, MR185).
-    if unbound_sessions(
-        bearing, [o for o in others if o["key"] in shown_in or o["key"] in searched]
-    ):
+    identities = [
+        other
+        for other in others
+        if other["cwd"] == cwd and _known(namespace) and other["namespace"] == namespace
+    ]
+    if unbound_sessions(bearing, identities):
         why.append("session_reference_unbound")
     why = sorted(set(why))
     marked = LEVELS.get(call.get("level"), 0) >= LEVELS["medium"]

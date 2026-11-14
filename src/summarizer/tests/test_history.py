@@ -1920,26 +1920,32 @@ def test_tied_candidates_are_ranked_newest_first_by_the_hosts_clock_across_sessi
 
 
 def test_a_session_named_by_the_user_binds_only_to_one_host_identity():
-    """MR184, MR185: a name binds to one earlier session's own alias or exact id, nothing else."""
+    """MR184, MR185, MR188: a name binds to one candidate's display alias (with or without "s:",
+    any case) or its exact full session id; never to an id's suffix, another case of an id, or an
+    alias two candidates share."""
     others = [
-        {"key": "a", "alias": "s:892c", "session_id": "1f0e-77"},
-        {"key": "b", "alias": "s:77a4"},
+        {"key": "a", "alias": "892c", "session_id": "tenant:setup"},
+        {"key": "b", "alias": "77a4", "session_id": "Run-A"},
     ]
     said = [{"text": "Apply it only if the setup session's restriction allows the source."}]
-    assert history.unbound_sessions(said, others) == ["the setup session"]
+    assert history.unbound_sessions(said, others) == ["the setup session"]  # not an id's suffix
     assert (
         history.unbound_sessions([{"text": "As the earlier session found, keep it."}], others) == []
     )
-    assert (
-        history.unbound_sessions([{"text": 'The note said "the setup session" was done.'}], others)
-        == []
-    )
-    assert history.unbound_sessions([{"text": "Use the 892c session's limit."}], others) == []
-    assert history.unbound_sessions([{"text": "Use the s:77a4 session's limit."}], others) == []
-    assert history.unbound_sessions([{"text": "Use the 1f0e session's limit."}], others) == [
-        "the 1f0e session"
-    ]  # a prefix of a session id is no binding
-    twins = others + [{"key": "c", "alias": "s:892c"}]
+    assert history.unbound_sessions([{"text": "Reserved to this Claude session."}], others) == []
+    quoted = [{"text": 'The note said "the setup session" was done.'}]
+    assert history.unbound_sessions(quoted, others) == []
+    for bound in (
+        "the 892c session",
+        "the S:892C session",
+        "the s:77a4 session",
+        "the tenant:setup session",
+        "the Run-A session",
+    ):
+        assert history.unbound_sessions([{"text": f"Use {bound}'s limit."}], others) == [], bound
+    for unbound in ("the run-a session", "the 89 session", "the tenant session"):
+        assert history.unbound_sessions([{"text": f"Use {unbound}'s limit."}], others) == [unbound]
+    twins = others + [{"key": "c", "alias": "892c"}]
     assert history.unbound_sessions([{"text": "Use the 892c session's limit."}], twins) == [
         "the 892c session"
     ]
@@ -1965,24 +1971,63 @@ def test_a_bearing_statement_naming_a_session_leaves_the_history_incomplete(star
     assert any("not one of the list" in item for item in forged13)
 
 
-def test_a_session_named_by_its_own_alias_is_bound(starter, runtime):
-    """MR187: the earlier limit worded with that earlier session's own host alias binds to it,
-    so the account stays complete; only the sessions searched for this call (the eligible project
-    and namespace, before the call) are candidates, so a later session or one of another namespace
-    with the same alias never binds."""
+def _named_session_case(starter, runtime, extra=None):
+    """The frozen-file starter, optionally with one more session, its earlier limit worded with the
+    alias of the session named by `name` (the earlier session itself unless an extra one is given)."""
     campaign = copy.deepcopy(starter["frozen-file-changed-later"])
-    laid, _, view, _ = built(campaign, runtime)
-    earlier = next(part for part in laid["parts"] if not part["mine"] and not part["later"])
-    alias = earlier["alias"]
+    if extra is not None:
+        position, session = extra
+        campaign["sessions"].insert(position, session)
+    laid, _, _, _ = built(campaign, runtime)
+    target = extra[1]["id"] if extra is not None else "a"
+    alias = next(part["alias"] for part in laid["parts"] if part["id"] == target)
     for session in campaign["sessions"]:
         for step in session["steps"]:
             if "frozen until the audit ends" in str(step.get("prompt", "")):
                 step["prompt"] = step["prompt"].replace(
                     "until the audit ends", f"until the {alias} session's audit ends"
                 )
-    _, _, bound, _ = built(campaign, runtime)
+    return built(campaign, runtime)[2]
+
+
+def test_a_session_named_by_its_own_alias_is_bound(starter, runtime):
+    """MR187, MR188: the earlier limit worded with that earlier session's own alias binds to it, in
+    the call's project and namespace, so the account stays as complete as without the name."""
+    plain = built(copy.deepcopy(starter["frozen-file-changed-later"]), runtime)[2]
+    bound = _named_session_case(starter, runtime)
     assert "session_reference_unbound" not in bound["history"]["why"]
-    assert bound["history"]["complete"] is view["history"]["complete"]
+    assert bound["history"]["complete"] is plain["history"]["complete"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        (
+            1,
+            {
+                "id": "c",
+                "cwd": "/different/project",
+                "steps": [{"id": "ask", "prompt": "Tidy the notes."}],
+            },
+        ),
+        (
+            1,
+            {
+                "id": "c",
+                "namespace": "vm:other",
+                "steps": [{"id": "ask", "prompt": "Tidy the notes."}],
+            },
+        ),
+        (3, {"id": "c", "steps": [{"id": "ask", "prompt": "Tidy the notes."}]}),
+    ],
+    ids=["another project", "another namespace", "a later session"],
+)
+def test_a_session_outside_the_calls_project_namespace_or_time_never_binds(starter, runtime, extra):
+    """MR188-1: naming another project's session, one of another namespace, or one after the call,
+    by its own alias, leaves the reference unbound and the account incomplete."""
+    view = _named_session_case(starter, runtime, extra)
+    assert "session_reference_unbound" in view["history"]["why"]
+    assert view["history"]["complete"] is False and view["route"] == "undecided"
 
 
 def test_the_last_content_before_a_write_stands_with_it_beside_what_it_resembles():
