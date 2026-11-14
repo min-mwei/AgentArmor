@@ -185,19 +185,31 @@ otherwise.
   files are never changed.
 - **Four sittings of ten pairs.** Each sitting appends ten pairs and runs
   `./check.sh campaigns-test-004-full.jsonl`, which must exit 0 with no problem and no refusal.
+- **A checkpoint after the first sitting** (MR211). After sitting 1 the file holds 20 pairs (40
+  campaigns): the ten accepted pairs, unchanged, and ten new ones. It goes to the Model Reviewer
+  with the plan, the cumulative proof and receipt, and the checks' counts and hashes. Sittings 2
+  to 4 wait for the Reviewer's private checkpoint.
 - **A plan for the whole file.** The first sitting also writes `campaigns-test-004-full.plan.md`,
   with no story text. For each of the forty pairs it gives the family, the area and which of
   section 4's counts the pair serves, so that the finished file reaches every count of section 4.
   Stage 2 supplies every count that stage 1 does not reach; the last line of the accepted
   revision's campaign check says what stage 1 reaches. Later sittings follow the plan, or change
-  it and say why in the receipt.
+  it and say why in the receipt. The plan stays private, in the authoring folder. It sets
+  quotas, never a shared story template: every pair is still its own situation.
 - **Families.** With stage 1's ten pairs, the file holds 35 pairs in the ten families (three or
   four to a family) and 15 in the five newer families (three to a family).
-- **What the stage-1 review found.** Each sitting reads the Model Reviewer's private reviews of
-  stage 1 (`campaigns-test-004.review.md` and the review of each later revision) and makes none of
-  those faults again. It does not open the Reviewer's reproduction folders.
+- **What the stage-1 reviews found** (MR211). Each sitting may read the Model Reviewer's written
+  reviews of stage 1 and the accepted revision, and makes none of those faults again. It opens
+  no reproduction folder of the Reviewer's, no code (the checkers included), no output of a model
+  or reader, no other held-out population and no development material. Its receipt names every
+  review it read.
 - **Proof and receipt** cover the whole file. `campaigns-test-004-full.proof.md` has all fifty
-  pairs and section 4's counts, taken from the checks where they count them.
-  `campaigns-test-004-full.receipt.md` has one part per sitting, each as section 6 says.
-- **Review.** The Model Reviewer may read the file after any sitting. The population is accepted
-  only when the Reviewer has read the whole file.
+  pairs. `campaigns-test-004-full.receipt.md` has one part per sitting, each as section 6 says.
+- **Every count of section 4 reconciled** (MR211). The finished proof table has one row for each
+  count of section 4, across the file and in the proof table alike: its target, the file's value,
+  and where that value comes from. That is the checks' last line where they count it, and
+  otherwise the pairs that make it up, by id. `check.sh` exiting 0 is not this reconciliation.
+  The Model Reviewer checks it before accepting the population.
+- **Review.** The Model Reviewer reads the file at the checkpoint and at the end, and may read it
+  after any other sitting. The population is accepted only when the Reviewer has read all fifty
+  pairs.
