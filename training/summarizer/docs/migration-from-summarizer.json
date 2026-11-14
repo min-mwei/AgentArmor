@@ -1,0 +1,514 @@
+{
+ "what": "The Summarizer repository's tracked data and documents as moved into AgentArmor on 2026-11-13 (Summarizer dev 54c5b07 -> AgentArmor 0ac258a): each file's old and new path, its SHA-256 there and as moved. 'identical' is byte for byte; 'normalized_paths' means only machine paths (home directories, ~/repos paths, also inside quoted checker output) were rewritten for this public repository, the raw original kept locally under the ignored private/summarizer/originals/; 'identical_private' files moved unchanged to the ignored private/ folder. 'sha256_now' marks a file edited after the move (data requests extended, slice 2 repaired).",
+ "files": [
+  {
+   "summarizer_path": "docs/agentarmor-cli-protection-review.md",
+   "summarizer_sha256": "dc2819eee09481e5b119c94ee2892109afd2f8744070d8d1ce724f73bad1cc9d",
+   "agentarmor_path": "training/summarizer/docs/agentarmor-cli-protection-review.md",
+   "sha256_as_moved": "5122fb134fd92b0f780c4c14ec354eec9824539cd6568aa7cd9ad572577eca1c",
+   "copy": "normalized_paths"
+  },
+  {
+   "summarizer_path": "docs/campaign-measurement-protocol.md",
+   "summarizer_sha256": "c84bb0be15da02585b079b51492c2283b31902d78bf32c677b90092edd8ad440",
+   "agentarmor_path": "training/summarizer/docs/campaign-measurement-protocol.md",
+   "sha256_as_moved": "c84bb0be15da02585b079b51492c2283b31902d78bf32c677b90092edd8ad440",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/data-request-003.md",
+   "summarizer_sha256": "527526e08076a501dc87a32df04221bec6660668ca4dc08f3f2fcc704d640930",
+   "agentarmor_path": "training/summarizer/docs/data-request-003.md",
+   "sha256_as_moved": "817faa149db25a01a7ed819d3107ed4b8d66a0872c7285523ad1f83cbd8fac2f",
+   "copy": "normalized_paths"
+  },
+  {
+   "summarizer_path": "docs/data-request-004.md",
+   "summarizer_sha256": "10fb9e7c16d84112540ce209003a691c9a873858f6aa862167291569b8668041",
+   "agentarmor_path": "training/summarizer/docs/data-request-004.md",
+   "sha256_as_moved": "10fb9e7c16d84112540ce209003a691c9a873858f6aa862167291569b8668041",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/data-request-005.md",
+   "summarizer_sha256": "303c7f8b49963887a3003b43a133daaa15a1bd3d13bd24b8e2b575b0f02b4a9b",
+   "agentarmor_path": "training/summarizer/docs/data-request-005.md",
+   "sha256_as_moved": "303c7f8b49963887a3003b43a133daaa15a1bd3d13bd24b8e2b575b0f02b4a9b",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/data-request-006.md",
+   "summarizer_sha256": "6cac33a377c502bf31e0ccb27072ac76c9f811db092196c7a507a63e703ec597",
+   "agentarmor_path": "training/summarizer/docs/data-request-006.md",
+   "sha256_as_moved": "6cac33a377c502bf31e0ccb27072ac76c9f811db092196c7a507a63e703ec597",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/data-request-007.md",
+   "summarizer_sha256": "f07ad70d7a6d3179e2219eb839f64a1161f1a6b5fe32221cf60e8f3fcc00a3f5",
+   "agentarmor_path": "training/summarizer/docs/data-request-007.md",
+   "sha256_as_moved": "f07ad70d7a6d3179e2219eb839f64a1161f1a6b5fe32221cf60e8f3fcc00a3f5",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/data-request-008.md",
+   "summarizer_sha256": "f6ae9784cfdb4786d7743a5b30ea35e4d1bbb3b58a34430c6abdb77af0a8ac0f",
+   "agentarmor_path": "training/summarizer/docs/data-request-008.md",
+   "sha256_as_moved": "1ebcb403ec8987458cc1992ca7ed71070b28a52d90132521ce18a44623d3e7bb",
+   "copy": "normalized_paths",
+   "sha256_now": "c4e378dfb9115be59814bcb170dc1f32ef0ef4e9766312fc93d3da45873d5c5c",
+   "changed_after_move": true
+  },
+  {
+   "summarizer_path": "docs/data-request-009.md",
+   "summarizer_sha256": "7baee506cbf621382460b975c112e0ab8754094711311338e548c7f3219b4520",
+   "agentarmor_path": "training/summarizer/docs/data-request-009.md",
+   "sha256_as_moved": "7668650ec5bee4971620c61f33294cee4162f0812df9951003cf2dc2875d48e1",
+   "copy": "normalized_paths"
+  },
+  {
+   "summarizer_path": "docs/data-request-010.md",
+   "summarizer_sha256": "8b47da13740924baccb6047c9a343b77cffd5ce195a3802285ac244d4a587d5b",
+   "agentarmor_path": "training/summarizer/docs/data-request-010.md",
+   "sha256_as_moved": "b9c1a91b8a6c58cd4d837ff6f01ee2c0b27f6c2fe9eacb676b9b256f61cc9eb8",
+   "copy": "normalized_paths",
+   "sha256_now": "76ddfa0ada94c4951197c59f14776f92616b07f8723ed150742ab16ca7afde7c",
+   "changed_after_move": true
+  },
+  {
+   "summarizer_path": "docs/design.md",
+   "summarizer_sha256": "db9deda0a93bed456f1f51edd2b63fa0941d82bc61049889ba32c36ffb8404d9",
+   "agentarmor_path": "training/summarizer/docs/design.md",
+   "sha256_as_moved": "db9deda0a93bed456f1f51edd2b63fa0941d82bc61049889ba32c36ffb8404d9",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/eg2-integration-review.md",
+   "summarizer_sha256": "ad0aaa2a7de13ec064a7e4abfef7ec43b45a2e16c01a727870f5557aafcbb3c2",
+   "agentarmor_path": "training/summarizer/docs/eg2-integration-review.md",
+   "sha256_as_moved": "ad0aaa2a7de13ec064a7e4abfef7ec43b45a2e16c01a727870f5557aafcbb3c2",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/family-brief.md",
+   "summarizer_sha256": "9d04c92f2424bd8dcdb4e24c31990e5619908245b120369882a43cab104c7120",
+   "agentarmor_path": "training/summarizer/docs/family-brief.md",
+   "sha256_as_moved": "9d04c92f2424bd8dcdb4e24c31990e5619908245b120369882a43cab104c7120",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/model-plan.md",
+   "summarizer_sha256": "0252e88ebbd804762b494ce337762cb77bcb54a9ebc2705de67e7435543a23a0",
+   "agentarmor_path": "training/summarizer/docs/model-plan.md",
+   "sha256_as_moved": "0252e88ebbd804762b494ce337762cb77bcb54a9ebc2705de67e7435543a23a0",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/multi-session-contract.md",
+   "summarizer_sha256": "ff1886787d3aab7979064b5972fcff01fe78b92af2d1f5ba015245eae1be523e",
+   "agentarmor_path": "training/summarizer/docs/multi-session-contract.md",
+   "sha256_as_moved": "ff1886787d3aab7979064b5972fcff01fe78b92af2d1f5ba015245eae1be523e",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/probe-expansion-review.md",
+   "summarizer_sha256": "290d9546ad69053e9627893e80045a461d430625e6dd069ab85794e85cb042ff",
+   "agentarmor_path": "training/summarizer/docs/probe-expansion-review.md",
+   "sha256_as_moved": "290d9546ad69053e9627893e80045a461d430625e6dd069ab85794e85cb042ff",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/probe-protocol.md",
+   "summarizer_sha256": "2aea82c4e23c652146cfe0690503d315706a0109f5b5a3323e1658ef8b7673d5",
+   "agentarmor_path": "training/summarizer/docs/probe-protocol.md",
+   "sha256_as_moved": "2aea82c4e23c652146cfe0690503d315706a0109f5b5a3323e1658ef8b7673d5",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "docs/two-stage-analysis.md",
+   "summarizer_sha256": "45dfd71d0da98e78d3bdf8e1a30fdd959edb9368f4402e45cba234f16c3ccc4a",
+   "agentarmor_path": "training/summarizer/docs/two-stage-analysis.md",
+   "sha256_as_moved": "ec55aa0b84834aa312b246b55424d86b1d73f4c096a397ebaa411057dcc516cf",
+   "copy": "normalized_paths"
+  },
+  {
+   "summarizer_path": "train/data/eval/allow-dev-002.jsonl",
+   "summarizer_sha256": "8ab3001df263dd092d76b5557f52444c4cf55cb5d9ec53d770643920244cd1c2",
+   "agentarmor_path": "training/summarizer/data/eval/allow-dev-002.jsonl",
+   "sha256_as_moved": "8ab3001df263dd092d76b5557f52444c4cf55cb5d9ec53d770643920244cd1c2",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/allow-test-001.jsonl",
+   "summarizer_sha256": "79e2385ebf141d0287efc2b4d899b950d202b480d89d96f2b1b71517dd5ea7ee",
+   "agentarmor_path": "private/summarizer/eval/allow-test-001.jsonl",
+   "sha256_as_moved": "79e2385ebf141d0287efc2b4d899b950d202b480d89d96f2b1b71517dd5ea7ee",
+   "copy": "identical_private"
+  },
+  {
+   "summarizer_path": "train/data/eval/blocks.jsonl",
+   "summarizer_sha256": "5f78e90d36e4c746bc8c17de0b09d72398a45c4c16db15f825ecd31ba5b49495",
+   "agentarmor_path": "training/summarizer/data/eval/blocks.jsonl",
+   "sha256_as_moved": "5f78e90d36e4c746bc8c17de0b09d72398a45c4c16db15f825ecd31ba5b49495",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/campaigns-dev-003-r1.manifest.jsonl",
+   "summarizer_sha256": "8d706f1df2b306c4cbfdf858d4e144cdb35e95f3ba3d9a09f492d91e40177fad",
+   "agentarmor_path": "training/summarizer/data/eval/campaigns-dev-003-r1.manifest.jsonl",
+   "sha256_as_moved": "8d706f1df2b306c4cbfdf858d4e144cdb35e95f3ba3d9a09f492d91e40177fad",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/campaigns-dev-003.manifest.jsonl",
+   "summarizer_sha256": "8f8c167b2ae51736865eae8bf8bb986a5f4ea671e24feede826b7468d83da441",
+   "agentarmor_path": "training/summarizer/data/eval/campaigns-dev-003.manifest.jsonl",
+   "sha256_as_moved": "8f8c167b2ae51736865eae8bf8bb986a5f4ea671e24feede826b7468d83da441",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/campaigns-test-001.manifest.jsonl",
+   "summarizer_sha256": "99bab7aa84cac6ce9f227a45a576b18a48704e97b9965ea4d87624a21d26e0b0",
+   "agentarmor_path": "training/summarizer/data/eval/campaigns-test-001.manifest.jsonl",
+   "sha256_as_moved": "99bab7aa84cac6ce9f227a45a576b18a48704e97b9965ea4d87624a21d26e0b0",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/dev-002.jsonl",
+   "summarizer_sha256": "16130bdc4be2e1c61d273a082b19ddcbddee1180259339080c827bf0c9c5fa99",
+   "agentarmor_path": "training/summarizer/data/eval/dev-002.jsonl",
+   "sha256_as_moved": "16130bdc4be2e1c61d273a082b19ddcbddee1180259339080c827bf0c9c5fa99",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/dev-003-t1.jsonl",
+   "summarizer_sha256": "634987d5a82c2281fc086bf0c53c04fe5c8063b3bfde86f96649f5274e46beb0",
+   "agentarmor_path": "training/summarizer/data/eval/dev-003-t1.jsonl",
+   "sha256_as_moved": "634987d5a82c2281fc086bf0c53c04fe5c8063b3bfde86f96649f5274e46beb0",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/dev-003-t1.manifest.jsonl",
+   "summarizer_sha256": "285a8f80844b89773f1d358967a5ca153aa28e1bc0562da816e4da98d00caad0",
+   "agentarmor_path": "training/summarizer/data/eval/dev-003-t1.manifest.jsonl",
+   "sha256_as_moved": "285a8f80844b89773f1d358967a5ca153aa28e1bc0562da816e4da98d00caad0",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/dev-003-t2.jsonl",
+   "summarizer_sha256": "2ce8dd58ba91537cf2315ef6bfd6f88f1a1725810159a3c385b9388edee8b723",
+   "agentarmor_path": "training/summarizer/data/eval/dev-003-t2.jsonl",
+   "sha256_as_moved": "2ce8dd58ba91537cf2315ef6bfd6f88f1a1725810159a3c385b9388edee8b723",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/dev-003-t2.manifest.jsonl",
+   "summarizer_sha256": "24e89f545c0fe1e01c2f8a20dd4482054b71a0c12f1bd366a1873add5d58eb68",
+   "agentarmor_path": "training/summarizer/data/eval/dev-003-t2.manifest.jsonl",
+   "sha256_as_moved": "24e89f545c0fe1e01c2f8a20dd4482054b71a0c12f1bd366a1873add5d58eb68",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/overlaps-dev-002.jsonl",
+   "summarizer_sha256": "ffefc7840b980efbaf735ca1bb2c318bf746d8f04dc6d6946f50295318d9fa98",
+   "agentarmor_path": "training/summarizer/data/eval/overlaps-dev-002.jsonl",
+   "sha256_as_moved": "ffefc7840b980efbaf735ca1bb2c318bf746d8f04dc6d6946f50295318d9fa98",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/overlaps-test-001.jsonl",
+   "summarizer_sha256": "5a725fea5201c40ea08c1a9ebeb0a78c431fa43428c0d6177bfeedce3866d5b3",
+   "agentarmor_path": "private/summarizer/eval/overlaps-test-001.jsonl",
+   "sha256_as_moved": "5a725fea5201c40ea08c1a9ebeb0a78c431fa43428c0d6177bfeedce3866d5b3",
+   "copy": "identical_private"
+  },
+  {
+   "summarizer_path": "train/data/eval/pilot-001.jsonl",
+   "summarizer_sha256": "b2110221146d8eb06d5b7ec7787e7c2384a0beec6763ae1d0a39623f6fe3cabf",
+   "agentarmor_path": "training/summarizer/data/eval/pilot-001.jsonl",
+   "sha256_as_moved": "b2110221146d8eb06d5b7ec7787e7c2384a0beec6763ae1d0a39623f6fe3cabf",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/pilot-003.jsonl",
+   "summarizer_sha256": "c7d014b5f4c22d90e65f10facc120c923ab4972d66a66ac836c38cf7cb6a8d6f",
+   "agentarmor_path": "training/summarizer/data/eval/pilot-003.jsonl",
+   "sha256_as_moved": "c7d014b5f4c22d90e65f10facc120c923ab4972d66a66ac836c38cf7cb6a8d6f",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/pilot-003.manifest.jsonl",
+   "summarizer_sha256": "709232a6819ca2a1e7953a686242cced90f03703276acd3725eda65ea4168b4f",
+   "agentarmor_path": "training/summarizer/data/eval/pilot-003.manifest.jsonl",
+   "sha256_as_moved": "709232a6819ca2a1e7953a686242cced90f03703276acd3725eda65ea4168b4f",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/rules-dev-20261110-after.jsonl",
+   "summarizer_sha256": "2851bbf6ea0f4db4a803bf8f859e6553f03091439376a5377f49c8b762ab16eb",
+   "agentarmor_path": "training/summarizer/data/eval/rules-dev-20261110-after.jsonl",
+   "sha256_as_moved": "2851bbf6ea0f4db4a803bf8f859e6553f03091439376a5377f49c8b762ab16eb",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/rules-dev-20261110-before.jsonl",
+   "summarizer_sha256": "39c147ea5a67d650c64d9ccf8949afdc685b73406119f1c3ace608bf7981e5ee",
+   "agentarmor_path": "training/summarizer/data/eval/rules-dev-20261110-before.jsonl",
+   "sha256_as_moved": "39c147ea5a67d650c64d9ccf8949afdc685b73406119f1c3ace608bf7981e5ee",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/rules-dev-20261110-corrected.jsonl",
+   "summarizer_sha256": "67f04c201a3158827c00acc1f088bf1f1d7cd523c855ca73435be2939ea7a3ec",
+   "agentarmor_path": "training/summarizer/data/eval/rules-dev-20261110-corrected.jsonl",
+   "sha256_as_moved": "67f04c201a3158827c00acc1f088bf1f1d7cd523c855ca73435be2939ea7a3ec",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/test-001.manifest.jsonl",
+   "summarizer_sha256": "e3c9357ee899712564b5a3a7280d566d1ba906f5cfc55cb6763558b0499c1825",
+   "agentarmor_path": "training/summarizer/data/eval/test-001.manifest.jsonl",
+   "sha256_as_moved": "e3c9357ee899712564b5a3a7280d566d1ba906f5cfc55cb6763558b0499c1825",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/test-001.results.jsonl",
+   "summarizer_sha256": "8e13dbdf7216800554f2e03306ee6b01d36a2c4e6173513876fc18e0db01ff2c",
+   "agentarmor_path": "private/summarizer/eval/test-001.results.jsonl",
+   "sha256_as_moved": "8e13dbdf7216800554f2e03306ee6b01d36a2c4e6173513876fc18e0db01ff2c",
+   "copy": "identical_private"
+  },
+  {
+   "summarizer_path": "train/data/eval/two-stage-benchset-mps-bfloat16-v2.jsonl",
+   "summarizer_sha256": "93ec64d1ce74e3ff5b8c5172ba02320480978f52d9c22ada13cb460aac6a2ff7",
+   "agentarmor_path": "training/summarizer/data/eval/two-stage-benchset-mps-bfloat16-v2.jsonl",
+   "sha256_as_moved": "93ec64d1ce74e3ff5b8c5172ba02320480978f52d9c22ada13cb460aac6a2ff7",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/two-stage-benchset-mps-bfloat16-v3.jsonl",
+   "summarizer_sha256": "3b080626a7f0e638a2faf3239580fa19ac7f4e204c4abd419a3535b74e5edc9e",
+   "agentarmor_path": "training/summarizer/data/eval/two-stage-benchset-mps-bfloat16-v3.jsonl",
+   "sha256_as_moved": "3b080626a7f0e638a2faf3239580fa19ac7f4e204c4abd419a3535b74e5edc9e",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/two-stage-benchset-mps-bfloat16-v4.jsonl",
+   "summarizer_sha256": "ec92665f026f3c0dc866981a497b99b7a11ff48572f2a6923d07a4f7694ad558",
+   "agentarmor_path": "training/summarizer/data/eval/two-stage-benchset-mps-bfloat16-v4.jsonl",
+   "sha256_as_moved": "ec92665f026f3c0dc866981a497b99b7a11ff48572f2a6923d07a4f7694ad558",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/two-stage-benchset-mps-bfloat16.jsonl",
+   "summarizer_sha256": "85efc69b2242c41c55d85883ae573a837b9aafc02b9c0f4c01bb0ee4e0446c66",
+   "agentarmor_path": "training/summarizer/data/eval/two-stage-benchset-mps-bfloat16.jsonl",
+   "sha256_as_moved": "85efc69b2242c41c55d85883ae573a837b9aafc02b9c0f4c01bb0ee4e0446c66",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/variants/chunks-contrast.json",
+   "summarizer_sha256": "d92ddff2ea052cb01ab4c448d2ea6b276940ebe91631cef90c6ed50edd939ae8",
+   "agentarmor_path": "training/summarizer/data/eval/variants/chunks-contrast.json",
+   "sha256_as_moved": "d92ddff2ea052cb01ab4c448d2ea6b276940ebe91631cef90c6ed50edd939ae8",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/variants/chunks-refit.json",
+   "summarizer_sha256": "e5bb333b0891c46dcb50ec34e0f96314902bf8b4c41b5c985e46b4b29fc7b666",
+   "agentarmor_path": "training/summarizer/data/eval/variants/chunks-refit.json",
+   "sha256_as_moved": "e5bb333b0891c46dcb50ec34e0f96314902bf8b4c41b5c985e46b4b29fc7b666",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/variants/runtime.json",
+   "summarizer_sha256": "1f3be4091573c2c8b4cc3f3637d8db8a82bd41005c6bff9ab2af3013ee451dec",
+   "agentarmor_path": "training/summarizer/data/eval/variants/runtime.json",
+   "sha256_as_moved": "1f3be4091573c2c8b4cc3f3637d8db8a82bd41005c6bff9ab2af3013ee451dec",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/variants/study-dev.jsonl",
+   "summarizer_sha256": "ccd31a37687718ae3c4d341ce6f073728e8e109e3f579c8eee5a38a77e451210",
+   "agentarmor_path": "training/summarizer/data/eval/variants/study-dev.jsonl",
+   "sha256_as_moved": "ccd31a37687718ae3c4d341ce6f073728e8e109e3f579c8eee5a38a77e451210",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/variants/windows-contrast.json",
+   "summarizer_sha256": "d4e0cc10e38bf5c55672fb827b57f540738b0055a21bc1ef853035e9ad826030",
+   "agentarmor_path": "training/summarizer/data/eval/variants/windows-contrast.json",
+   "sha256_as_moved": "d4e0cc10e38bf5c55672fb827b57f540738b0055a21bc1ef853035e9ad826030",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/eval/variants/windows.json",
+   "summarizer_sha256": "6f987606bda0db702a8fbbb2d9f1b85e8b71c7884227d5e0fc4f4393343416c8",
+   "agentarmor_path": "training/summarizer/data/eval/variants/windows.json",
+   "sha256_as_moved": "6f987606bda0db702a8fbbb2d9f1b85e8b71c7884227d5e0fc4f4393343416c8",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/batch-002.jsonl",
+   "summarizer_sha256": "e9725f6a768c8a0f4ff537b95fc2dedb2cddcffe2d9b2481daff1f34d20d1e9c",
+   "agentarmor_path": "training/summarizer/data/synthetic/batch-002.jsonl",
+   "sha256_as_moved": "e9725f6a768c8a0f4ff537b95fc2dedb2cddcffe2d9b2481daff1f34d20d1e9c",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/batch-003a.jsonl",
+   "summarizer_sha256": "dd33725267712e17249754751be8f4a035b061b349952f67f0b75e60fc4e2b7d",
+   "agentarmor_path": "training/summarizer/data/synthetic/batch-003a.jsonl",
+   "sha256_as_moved": "dd33725267712e17249754751be8f4a035b061b349952f67f0b75e60fc4e2b7d",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-001-r1.jsonl",
+   "summarizer_sha256": "a9fdcfc2920544999e889874c79b5901e251955892080c988766171c77582c9a",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl",
+   "sha256_as_moved": "a9fdcfc2920544999e889874c79b5901e251955892080c988766171c77582c9a",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-001.jsonl",
+   "summarizer_sha256": "50f4a17749005b3ae909f0ddc83910c465f9e41091bcf4a1c0435b692a172572",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-001.jsonl",
+   "sha256_as_moved": "50f4a17749005b3ae909f0ddc83910c465f9e41091bcf4a1c0435b692a172572",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-002-full.jsonl",
+   "summarizer_sha256": "2109cdd9dc0467f2fea8e62f344944c6828f67f47ae1bc81d10d93850f5c3a95",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl",
+   "sha256_as_moved": "2109cdd9dc0467f2fea8e62f344944c6828f67f47ae1bc81d10d93850f5c3a95",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-002-rep.jsonl",
+   "summarizer_sha256": "dda217c36e6fb510ef45dfa6230cc780d25fbc0d4fecfd4306eabe3209c5b5e2",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-002-rep.jsonl",
+   "sha256_as_moved": "dda217c36e6fb510ef45dfa6230cc780d25fbc0d4fecfd4306eabe3209c5b5e2",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-002.jsonl",
+   "summarizer_sha256": "e4a85c1ed49e787a55be6bde7215263f71a76f82358fbfae021aa7b58cf284ec",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-002.jsonl",
+   "sha256_as_moved": "e4a85c1ed49e787a55be6bde7215263f71a76f82358fbfae021aa7b58cf284ec",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-003-r1.jsonl",
+   "summarizer_sha256": "78c0f7e09d1bde88de9552b7844ff239e36046f54782597568024fb491980d53",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-003-r1.jsonl",
+   "sha256_as_moved": "78c0f7e09d1bde88de9552b7844ff239e36046f54782597568024fb491980d53",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-003-r1.proof.md",
+   "summarizer_sha256": "aee5b8361a35f5263c2960f128bc622cce31068ee98a1dfbe4dec98d5e538d05",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-003-r1.proof.md",
+   "sha256_as_moved": "aee5b8361a35f5263c2960f128bc622cce31068ee98a1dfbe4dec98d5e538d05",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-003-r1.receipt.md",
+   "summarizer_sha256": "e422b675193fa915091b653d31705308dcb8baa1614bbc22ebb21ad8433b6d6a",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-003-r1.receipt.md",
+   "sha256_as_moved": "2c0a9d8230cd3000d9a3b6a9863b230e74d26393146bfb18cae4e58901182eec",
+   "copy": "normalized_paths"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-003.jsonl",
+   "summarizer_sha256": "58809644e80334d2448408c1d953a13102c908a11c4feb3300ee933e6e3c3799",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-003.jsonl",
+   "sha256_as_moved": "58809644e80334d2448408c1d953a13102c908a11c4feb3300ee933e6e3c3799",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-003.proof.md",
+   "summarizer_sha256": "aee5b8361a35f5263c2960f128bc622cce31068ee98a1dfbe4dec98d5e538d05",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-003.proof.md",
+   "sha256_as_moved": "aee5b8361a35f5263c2960f128bc622cce31068ee98a1dfbe4dec98d5e538d05",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/campaigns-dev-003.receipt.md",
+   "summarizer_sha256": "c631afe589563adedb2cd2be5d84fef1d5439baee804bcf8f20ca685f6be35ad",
+   "agentarmor_path": "training/summarizer/data/synthetic/campaigns-dev-003.receipt.md",
+   "sha256_as_moved": "c631afe589563adedb2cd2be5d84fef1d5439baee804bcf8f20ca685f6be35ad",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-001.jsonl",
+   "summarizer_sha256": "d9f25545d36a8ff303544e7da73076149a1e4482c2e10411190f24d3d1ba69cc",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-001.jsonl",
+   "sha256_as_moved": "d9f25545d36a8ff303544e7da73076149a1e4482c2e10411190f24d3d1ba69cc",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-001.manifest.jsonl",
+   "summarizer_sha256": "5ffe683569d96f09a8c3268db6d873401416f439031a1d443f14447a51edd0ea",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-001.manifest.jsonl",
+   "sha256_as_moved": "5ffe683569d96f09a8c3268db6d873401416f439031a1d443f14447a51edd0ea",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-001.proof.md",
+   "summarizer_sha256": "76f1ec0ff9bd8ea7b7f95d4c8173f63eb783dfc9e6f72bfec8ffab1a693a7bea",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-001.proof.md",
+   "sha256_as_moved": "76f1ec0ff9bd8ea7b7f95d4c8173f63eb783dfc9e6f72bfec8ffab1a693a7bea",
+   "copy": "identical"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-001.receipt.md",
+   "summarizer_sha256": "dd018ee05854666b38a09c810008353c90b44ebd85de8600aee460e358ca3ed2",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-001.receipt.md",
+   "sha256_as_moved": "3def33b73d7c2aef5128018a9985acd5a89fcf88ce58c6eb8090b67f0199ab29",
+   "copy": "normalized_paths"
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-002.jsonl",
+   "summarizer_sha256": "0501b718294c273a71ab4875087ccb8c1ea849ca2af3c3a46b1eb65b2fc097b6",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-002.jsonl",
+   "sha256_as_moved": "0501b718294c273a71ab4875087ccb8c1ea849ca2af3c3a46b1eb65b2fc097b6",
+   "copy": "identical",
+   "sha256_now": "4facb6e247969d0f4bdb6b1748d0bb3bae6c558f86971aeec2c1f9464e25f1a1",
+   "changed_after_move": true
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-002.manifest.jsonl",
+   "summarizer_sha256": "ca6e0095a7124430e11fefb14a16cc6983ede1827700f7da08a83c94b8dffa31",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-002.manifest.jsonl",
+   "sha256_as_moved": "ca6e0095a7124430e11fefb14a16cc6983ede1827700f7da08a83c94b8dffa31",
+   "copy": "identical",
+   "sha256_now": "843361c1e4b2162a5eae9b10b58e545f01760c222805e7354edce3796990a76e",
+   "changed_after_move": true
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-002.proof.md",
+   "summarizer_sha256": "027d8ec53828dc355af514ce77f351d333ef08a7a1a9660af112d01d25171c25",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-002.proof.md",
+   "sha256_as_moved": "027d8ec53828dc355af514ce77f351d333ef08a7a1a9660af112d01d25171c25",
+   "copy": "identical",
+   "sha256_now": "a63c4b3febf054427efc73e15dbbe72b04dde2866018c03a4fb4d5ebc83b4d0a",
+   "changed_after_move": true
+  },
+  {
+   "summarizer_path": "train/data/synthetic/session-roots-train-002.receipt.md",
+   "summarizer_sha256": "05221d7191a8361126cfadeeba0fe51b6d57b9e7da1e3b297a16d051cbc17f62",
+   "agentarmor_path": "training/summarizer/data/synthetic/session-roots-train-002.receipt.md",
+   "sha256_as_moved": "753df2f4c3f80537431e7922930c8460871520effe5d1c3c0d61d13130d6ba1f",
+   "copy": "normalized_paths",
+   "sha256_now": "e8e8fa80a9067f938b8b9eca73b443f0cb543d806f629350ecbcddbd55119272",
+   "changed_after_move": true
+  },
+  {
+   "summarizer_path": "train/data/synthetic/sessions-heldout-001.jsonl",
+   "summarizer_sha256": "a052a6ed847d579d103fb11b8f9b30b83d552d5efc09f854f4abc2e0b847a1eb",
+   "agentarmor_path": "private/summarizer/synthetic/sessions-heldout-001.jsonl",
+   "sha256_as_moved": "a052a6ed847d579d103fb11b8f9b30b83d552d5efc09f854f4abc2e0b847a1eb",
+   "copy": "identical_private"
+  }
+ ]
+}

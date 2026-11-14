@@ -3,7 +3,9 @@
 The data requests, protocols, contracts, plans and reviews of Summarizer's training and
 measurement, moved here from the Summarizer repository on 2026-11-13, when that repository was
 being retired at the user's request. Their text is as written there, except that machine
-paths were rewritten for this public repository.
+paths were rewritten for this public repository (in nine Markdown files, receipts among them:
+`migration-from-summarizer.json` here gives every moved file's old and new SHA-256, and the
+raw originals of those nine are kept locally under the ignored `private/summarizer/originals/`).
 
 Paths they name map as follows:
 
