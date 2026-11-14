@@ -28,6 +28,7 @@ BUILTIN = _SHELL | _READS | _WRITES | _SUBAGENT
 BUILTIN |= {"WebFetch", "WebSearch", "AskUserQuestion", "ExitPlanMode", "TodoWrite", "Skill"}
 BUILTIN |= {"ToolSearch", "KillShell", "BashOutput", "SlashCommand", "update_plan", "write_stdin"}
 _PATCH_FILE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* (Move) to: (.+)$", re.M)
+_PATCH_FRAME = ("*** Begin Patch", "*** End Patch", "*** End of File")  # headers naming no file
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 SCALARS, KEYS = "{values}", "{keys}"  # stand-ins for a key: scalar members, member names
 _MCP_WRITE = re.compile(
@@ -80,6 +81,10 @@ class Unit:
     # is clipped for display; and whether the hook clipped its input, so they may not be whole.
     effects: dict = field(default_factory=dict)
     input_clipped: bool = False
+    patch_unread: bool = (
+        False  # actions: a patch header was not read, so its writes are not all known
+    )
+    named: list = field(default_factory=list)  # actions: the files its whole words name
 
 
 def clip(text, limit):
@@ -184,10 +189,20 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
             flags.setdefault("outside_write" if write else "outside_read", shown)
         return lexical
 
+    writes, writes_whole = [], True  # every file a file tool writes, and whether all were read
     if tool == "apply_patch":
         files = _patch_files(command)
-        for _, path in files:
-            classify(path, "command", write=True)
+        # Every file the patch adds, updates, deletes or moves to, not only the first (MR200-1).
+        writes = [classify(path, "command", write=True) for _, path in files]
+        # A header this reading does not know, or a patch with no file it can read, leaves what
+        # it writes not all known.
+        unknown = [
+            line
+            for line in command.splitlines()
+            if line.startswith("*** ") and line.strip() not in _PATCH_FRAME
+            if not _PATCH_FILE.match(line)
+        ]
+        writes_whole = not unknown and (bool(files) or not command.strip())
         added = " ".join(line[1:].strip() for line in command.splitlines() if line[:1] == "+")
         listing = ", ".join(f"{verb} {path}" for verb, path in files) or "(no files parsed)"
         text, target, body = (
@@ -205,6 +220,7 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
     elif tool in _WRITES:
         field_name = "notebook_path" if "notebook_path" in args else "file_path"
         target = classify(_string(args.get(field_name)), field_name, write=True)
+        writes = [target] if target else []
         edits = args.get("edits") if isinstance(args.get("edits"), list) else [args]
         body = "\n".join(
             _string(edit.get(key))
@@ -269,6 +285,8 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
         "text": clip(text.strip(), ACTION_CHARS),
         "chars": len(text.strip()),  # of the whole call text, which the kept text may cut short
         "whole": text.strip(),  # the whole call text, for what is read from it before clipping
+        "writes": writes,  # every file a file tool writes: each file of a patch, in its order
+        "writes_whole": writes_whole,  # False when a patch holds a header that was not read
         "target": target,
         "flags": flags,
         "hosts": call_hosts,

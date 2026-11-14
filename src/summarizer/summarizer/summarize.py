@@ -53,7 +53,7 @@ from .facts import (
     text_spans,
     wording_rules,
 )
-from .history import EFFECT_KINDS, MAX_EFFECT_PATHS, MAX_PATH_CHARS, call_effects
+from .history import EFFECT_KINDS, MAX_EFFECT_PATHS, MAX_PATH_CHARS, call_effects, named_by_call
 from .labels import (
     ACTION,
     COMPLETED,
@@ -126,9 +126,10 @@ def effects_record(unit):
     """The effects recorded from a call's whole words, as a summary record carries them (MR199-1):
     {"effects": {kind: paths}}, up to MAX_EFFECT_PATHS paths in the order of EFFECT_KINDS, and
     when they are not whole, "effects_complete": false with why: how many paths are not listed
-    (past the cap, or longer than any file system takes), and whether the hook clipped the
-    call's input, so that even its whole words are not all there. A reader then knows that
-    whether the call touched a file is not known."""
+    (past the cap, or longer than any file system takes), whether the hook clipped the call's
+    input, so that even its whole words are not all there, and whether a header of its patch
+    was not read (MR200-1). A reader then knows that whether the call touched a file is not
+    known."""
     told, room = {}, MAX_EFFECT_PATHS
     for kind in EFFECT_KINDS:
         paths = [path for path in unit.effects.get(kind) or () if len(path) <= MAX_PATH_CHARS]
@@ -137,12 +138,14 @@ def effects_record(unit):
             room -= len(told[kind])
     record = {"effects": told}
     unlisted = sum(map(len, unit.effects.values())) - sum(map(len, told.values()))
-    if unlisted or unit.input_clipped:
+    if unlisted or unit.input_clipped or unit.patch_unread:
         record["effects_complete"] = False
         if unlisted:
             record["effects_not_listed"] = unlisted
         if unit.input_clipped:
             record["input_clipped"] = True
+        if unit.patch_unread:  # a header of its patch was not read: not every write is known
+            record["patch_unread"] = True
     return record
 
 
@@ -555,7 +558,12 @@ class Session:
         # What the call's whole words show it doing to files, read now, before anything is clipped
         # for display, so that an object's account never reads a clipped call as whole (MR199-1);
         # and whether the hook clipped its input, which leaves even these not whole.
-        unit.effects = call_effects(tool, call["target"], call["whole"], cwd, self.home)
+        unit.effects = call_effects(
+            tool, call["target"], call["whole"], cwd, self.home, writes=call["writes"]
+        )
+        unit.patch_unread = not call["writes_whole"]
+        whole = {"tool": tool, "target": call["target"], "text": call["whole"]}
+        unit.named = sorted(named_by_call(whole, cwd, self.home))
         unit.input_clipped = any(
             str(note.get("path", "")).partition(".")[0].partition("[")[0] == "tool_input"
             for note in meta.get("clipped", ())
@@ -1079,6 +1087,12 @@ class Session:
             entry |= {"tool": unit.tool, "status": unit.status}
             entry["target"] = clip(unit.origin, TARGET_CHARS)
             entry |= effects_record(unit)
+            if unit.status == "proposed" and (
+                len(unit.origin) > TARGET_CHARS or unit.chars > len(unit.text)
+            ):
+                # A pending call is one a decision may be about: the lookup reads its whole target
+                # and the files its whole words name, never the words clipped here (MR199-1).
+                entry["whole"] = {"target": unit.origin, "named": unit.named}
             entry["lifecycle"] = [
                 {"state": state, "seq": seq, "ts": ts} for state, seq, ts in unit.lifecycle
             ]

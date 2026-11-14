@@ -1,15 +1,28 @@
 """Replays a control set that check_controls.py accepts, and says of each view what its packet does
-beside what the control expects (data request 012, MR199-3).
+beside what the control expects (data request 012, MR199-3, MR200-2).
 
 A view is a control root as the replay delivers it to one deciding agent (check_controls.views).
 Each is replayed through the real hook and daemon, its history packet built blind, and scored by
-the campaign contract. A view expected to give a complete packet passes when the packet is
-complete and the contract's scorer passes it. A view expected to give an incomplete packet is an
-expected negative: it holds when the packet says it is incomplete for every reason the control
-names (control.incomplete_because), routes the call undecided, is not ready, and says nothing the
-replay does not bear out. Anything else is a regression, counted apart from an expected negative
-that held. The expected decision is the authors' label for a future reader: nothing here asks a
-reader or a model, so nothing here measures one.
+the campaign contract. There are three outcomes, kept apart:
+
+- "complete diagnostic passed": a view expected to give a complete packet, which the contract's
+  scorer passes (complete, ready, its evidence shown, its route the campaign's).
+- "expected negative held": a view expected to give an incomplete packet for the reasons its
+  control names (incomplete_because). It holds only when its incompleteness is exactly what is
+  permitted and every other piece of evidence survives: it is not ready; every named reason is
+  present, and no reason is present beyond those named and what they entail (a precise reason of
+  the lookup entails "lookup_unfinished"); every fact the replay leaves available is shown, with
+  its producer where it has one; every bridge of the campaign is shown, unless a capture gap is
+  permitted; no named file the replay shows touched lacks its account; nothing is false,
+  misplaced or leaked; and the packet's route is undecided for a history reason, and otherwise
+  the campaign's (an unresolved call of the call's own session alone leaves it asked, not
+  ready: that authorizes nothing).
+- "regression": anything else.
+
+Each row keeps the scorer's full diagnostics beside its outcome, and three routes apart: the
+authored campaign's route, the packet's route, and the expectation's packet field. The expected
+decision is the authors' label for a future reader: nothing here asks a reader or a model, and no
+host action is measured.
 
     python review_controls.py data/controls/session-controls-001-r1.jsonl --out review.jsonl \\
         [--markdown review.md] [--embedder hash|embeddinggemma] [--budget 11000]
@@ -27,45 +40,72 @@ from check_controls import HISTORY_REASONS, UNSUPPORTED
 from common import read_jsonl
 
 SCORER = 16
+# What a reason for an incomplete packet brings with it: a precise reason of the lookup leaves the
+# lookup unfinished, and says so as "lookup_unfinished" too. Nothing else is permitted with it.
+ENTAILS = {reason: {"lookup_unfinished"} for reason in UNSUPPORTED}
+PASSED, HELD, REGRESSION = "complete diagnostic passed", "expected negative held", "regression"
 
 
 def runtime_for(embedder):
-    """The summarizer runtime a review replays with: the CPU stand-in, or the pinned encoder."""
-    from summarizer.embedder import HashEmbedder
-    from summarizer.summarize import Runtime, load
+    """The summarizer runtime a review replays with, made as campaign_arms.py makes it: the CPU
+    stand-in, or the pinned encoder with the built-in probes."""
+    from summarizer.embedder import create
+    from summarizer.summarize import Runtime
 
-    if embedder == "hash":
-        return Runtime(HashEmbedder())
-    return load()
+    return Runtime(create(embedder))
 
 
-def review_view(root, agent, layout, expected, because, runtime, budget):
-    """One view's row: what its packet does beside what its control expects, and the verdict."""
+def replay_view(root, layout, runtime, budget):
+    """(laid, summaries, view, what the daemon went through) for one view."""
     laid = campaigns.layout(root, layout)
     summaries, went = campaigns.replay(laid, runtime)
-    view = builder.build(builder.blind(laid), summaries, budget)
-    score = campaigns.score(laid, summaries, view, budget, SCORER)
+    return laid, summaries, builder.build(builder.blind(laid), summaries, budget), went
+
+
+def reasons_of(view):
+    """Every reason the packet gives for being incomplete: why its history is unfinished, what
+    the lookup could not tell, and an unresolved call of the call's own session."""
     history = view.get("history") or {}
-    complete = history.get("complete", True)
-    why = sorted(history.get("why") or [])
+    present = set(history.get("why") or ()) | set(history.get("unsupported") or ())
+    return present | ({"unresolved_condition"} if view.get("unresolved_conditions") else set())
+
+
+def held_problems(score, view, because):
+    """Why an expected negative does not hold: an empty list when it does (see the docstring)."""
+    because, present = set(because), reasons_of(view)
+    allowed = because | {more for reason in because for more in ENTAILS.get(reason, ())}
+    problems = []
+    if score["ready"]:
+        problems.append("ready, though expected incomplete")
+    problems += [f"named reason absent: {reason}" for reason in sorted(because - present)]
+    problems += [f"reason not permitted: {reason}" for reason in sorted(present - allowed)]
+    lost = [
+        name for name, shown in score["support"].items() if score["available"][name] and not shown
+    ]
+    problems += [f"available fact not shown: {name}" for name in sorted(lost)]
+    if score["chains"][0] != score["chains"][1] and "capture_gap" not in because:
+        problems.append("a bridge of the campaign not shown")
+    for key in ("objects_missing", "forged", "misplaced", "leaked"):
+        if score.get(key):
+            problems.append(f"{key}: {score[key]}")
+    routed = "undecided" if because & {*HISTORY_REASONS, *UNSUPPORTED} else score["route_wanted"]
+    if view.get("route") != routed:
+        problems.append(f"route {view.get('route')}, where {routed} is expected")
+    return problems
+
+
+def verdict_of(root, agent, layout, expected, because, laid, summaries, view, budget):
+    """One view's row: what its packet does beside what its control expects, and the outcome."""
+    score = campaigns.score(laid, summaries, view, budget, SCORER)
     because = because or []
-    present = set(why) | set(history.get("unsupported") or ())
-    present |= {"unresolved_condition"} if view.get("unresolved_conditions") else set()
     if expected["packet"] == "complete":
-        verdict = "pass" if complete and score["passes"] else "regression"
+        problems = [] if score["passes"] else ["the complete-packet scorer does not pass it"]
+        verdict = PASSED if not problems else REGRESSION
     else:
-        # An unfinished history routes the call undecided; an unresolved call alone keeps the
-        # campaign's route.
-        unfinished = set(because) & {*HISTORY_REASONS, *UNSUPPORTED}
-        routed = "undecided" if unfinished else score["route_wanted"]
-        held = (
-            not score["ready"]
-            and set(because) <= present
-            and view.get("route") == routed
-            and score["forged"] == 0
-        )
-        verdict = "expected negative held" if held else "regression"
-    accounts = history.get("objects") or []
+        problems = held_problems(score, view, because)
+        verdict = HELD if not problems else REGRESSION
+    present = reasons_of(view)
+    accounts = (view.get("history") or {}).get("objects") or []
     return {
         "root": root["id"],
         "row": root["control"]["row"],
@@ -74,19 +114,15 @@ def review_view(root, agent, layout, expected, because, runtime, budget):
         "layout": layout,
         "expected": expected,
         "incomplete_because": because,
-        "packet": "complete" if complete and not present else "incomplete",
-        "why": sorted(present),
-        "route": view.get("route"),
-        "route_wanted": score["route_wanted"],
-        "ready": score["ready"],
-        "false_ready": score["false_ready"],
-        "forged": score["forged"],
-        "objects_missing": score.get("objects_missing", 0),
-        "passes": score["passes"],
+        "packet": "incomplete" if present else "complete",
+        "reasons": sorted(present),
+        "campaign_route": score["route_wanted"],
+        "packet_route": view.get("route"),
         "verdict": verdict,
+        "problems": problems,
+        "score": {key: value for key, value in score.items() if key != "scorer"},
         "objects": [builder_line(account, laid) for account in accounts],
         "packet_chars": len(view["text"]),
-        "rebuilt": went.get("rebuilt", 0) if isinstance(went, dict) else 0,
     }
 
 
@@ -107,9 +143,19 @@ def review(rows, runtime, budget):
     for report in reports:
         root = roots[report["id"]]
         for agent, seen in sorted(report["views"].items()):
-            because = seen["incomplete_because"]
+            laid, summaries, view, _ = replay_view(root, seen["layout"], runtime, budget)
             found.append(
-                review_view(root, agent, seen["layout"], seen["expected"], because, runtime, budget)
+                verdict_of(
+                    root,
+                    agent,
+                    seen["layout"],
+                    seen["expected"],
+                    seen["incomplete_because"],
+                    laid,
+                    summaries,
+                    view,
+                    budget,
+                )
             )
     verdicts = Counter(row["verdict"] for row in found)
     summary = {
@@ -117,11 +163,11 @@ def review(rows, runtime, budget):
         "views": len(found),
         "both_clients": coverage["both_clients"],
         "one_client": coverage["one_client"],
-        "pass": verdicts["pass"],
-        "expected_negative_held": verdicts["expected negative held"],
-        "regression": verdicts["regression"],
-        "false_ready": sum(row["false_ready"] for row in found),
-        "forged": sum(row["forged"] for row in found),
+        "complete_diagnostic_passed": verdicts[PASSED],
+        "expected_negative_held": verdicts[HELD],
+        "regression": verdicts[REGRESSION],
+        "false_ready": sum(row["score"]["false_ready"] for row in found),
+        "forged": sum(row["score"]["forged"] for row in found),
         "budget": budget,
         "scorer": SCORER,
     }
@@ -131,17 +177,21 @@ def review(rows, runtime, budget):
 def markdown(found, summary, title):
     lines = [f"# {title}", "", "```json", json.dumps(summary, indent=1), "```", ""]
     lines += [
-        "| Row | Root (kind) | Agent | Expected decision | Expected packet | Packet (why) "
-        "| Route (campaign) | Verdict |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Row | Root (kind) | Agent | Expected decision | Expected packet (why) "
+        "| Packet (reasons) | Campaign route | Packet route | Outcome |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in found:
-        why = f" ({', '.join(row['why'])})" if row["why"] else ""
-        verdict = row["verdict"] if row["verdict"] != "regression" else "**regression**"
+        why = f" ({', '.join(row['incomplete_because'])})" if row["incomplete_because"] else ""
+        reasons = f" ({', '.join(row['reasons'])})" if row["reasons"] else ""
+        verdict = row["verdict"]
+        if verdict == REGRESSION:
+            verdict = f"**regression**: {'; '.join(row['problems'])}"
         lines.append(
             f"| {row['row']} | {row['root']} ({row['kind']}) | {row['agent']} "
-            f"| {row['expected']['decision']} | {row['expected']['packet']} "
-            f"| {row['packet']}{why} | {row['route']} ({row['route_wanted']}) | {verdict} |"
+            f"| {row['expected']['decision']} | {row['expected']['packet']}{why} "
+            f"| {row['packet']}{reasons} | {row['campaign_route']} | {row['packet_route']} "
+            f"| {verdict} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -155,8 +205,9 @@ def main(argv=None):
     parser.add_argument("--budget", type=int, default=11000)
     args = parser.parse_args(argv)
     rows = list(read_jsonl(args.controls))
-    found, summary = review(rows, runtime_for(args.embedder), args.budget)
-    summary["embedder"] = args.embedder
+    runtime = runtime_for(args.embedder)
+    found, summary = review(rows, runtime, args.budget)
+    summary |= {"embedder": args.embedder, "made_with": runtime.identity()}
     with open(args.out, "w", encoding="utf-8") as out:
         for row in found:
             out.write(json.dumps(row, sort_keys=True) + "\n")

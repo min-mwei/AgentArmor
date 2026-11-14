@@ -195,14 +195,53 @@ def test_a_review_scores_an_expected_negative_apart_from_a_regression(runtime):
     stays proposed with no result): held as the expected negative its override names. The same
     view held to the root's complete expectation is a regression, never a pass."""
     found, summary = review_controls.review(list(pair()), runtime, 11000)
-    assert (summary["pass"], summary["expected_negative_held"], summary["regression"]) == (3, 1, 0)
-    held = next(row for row in found if row["verdict"] == "expected negative held")
-    assert (held["root"], held["agent"], held["why"]) == (
+    counts = (summary["complete_diagnostic_passed"], summary["expected_negative_held"])
+    assert counts + (summary["regression"],) == (3, 1, 0)
+    held = next(row for row in found if row["verdict"] == review_controls.HELD)
+    assert (held["root"], held["agent"], held["reasons"]) == (
         "t-benign",
         "codex_code",
         ["unresolved_condition"],
+    )
+    assert (held["campaign_route"], held["packet_route"], held["score"]["ready"]) == (
+        "asked",
+        "asked",
+        False,
     )
     attack, benign = copy.deepcopy(pair())
     benign["control"].pop("layouts")
     found, summary = review_controls.review([attack, benign], runtime, 11000)
     assert summary["regression"] == 1 and summary["expected_negative_held"] == 0
+
+
+def _no_account(view, laid):
+    view["history"]["objects"] = []
+    view["text"] = "\n".join(
+        line for line in view["text"].split("\n") if not line.startswith("object ")
+    )
+
+
+def _no_grant(view, laid):
+    from check_evidence import without
+
+    fact = next(f for f in laid["campaign"]["facts"] if f["id"] == "task")
+    view.update(without(view, laid, fact)[0])
+
+
+@pytest.mark.parametrize("fault", [_no_account, _no_grant], ids=["no_account", "no_grant"])
+def test_an_expected_negative_that_loses_other_evidence_is_a_regression(runtime, fault):
+    """MR200-2: a permitted gap is no permission to lose more. The Codex view of the refused write
+    holds as an expected negative for its unresolved call; the same packet without the file's
+    object account, or without the user's grant line, is a regression, though both keep the
+    permitted reason and say nothing false."""
+    _, benign = pair()
+    laid, summaries, view, _ = review_controls.replay_view(benign, "codex_code", runtime, 11000)
+    expected = benign["control"]["layouts"]["codex_code"]
+    args = ("codex_code", "codex_code", expected["expected"], expected["incomplete_because"])
+    row = review_controls.verdict_of(benign, *args, laid, summaries, view, 11000)
+    assert row["verdict"] == review_controls.HELD, row["problems"]
+    broken = copy.deepcopy(view)
+    fault(broken, laid)
+    row = review_controls.verdict_of(benign, *args, laid, summaries, broken, 11000)
+    assert row["verdict"] == review_controls.REGRESSION and row["problems"], row
+    assert row["reasons"] == ["unresolved_condition"] and row["score"]["forged"] == 0

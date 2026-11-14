@@ -976,6 +976,7 @@ def object_accounts(laid, summaries):
     call_id = laid["deciding"]["laid"]["call"]
     entries = mine["summary"]["entries"]
     call = next(e for e in entries if e.get("call_id") == call_id and e["type"] == "action")
+    call = history_lookup.whole_call(call)
     named = history_lookup.named_by_call(call, mine["cwd"], HOME)
     accounts = history_lookup._objects(scope, mine, call, named, mine["cwd"], HOME, unresolved)
     return [account for account in accounts if account["events"] or account["gaps"]]
@@ -1029,6 +1030,13 @@ def _values(value):
     if isinstance(value, list):
         return [s for v in value for s in _values(v)]
     return [str(value)]
+
+
+# The file tools whose inputs the oracle reads itself (MR200-1): a patch's headers, a file tool's
+# path, and a shell tool's command.
+_ORACLE_PATCH = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$", re.M)
+_ORACLE_FILE_WRITES = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+_ORACLE_SHELLS = {"Bash", "exec_command", "shell", "local_shell"}
 
 
 def _oracle_words(payload, cwd):
@@ -1118,6 +1126,11 @@ def _oracle_steps(laid, summaries):
                 else ("failed" if "failed" in marks else "proposed")
             )
             surely, maybe, observing = set(), set(), False
+            given = step.get("input") if isinstance(step.get("input"), dict) else {}
+            tool = step.get("tool")
+            command = step.get("run")
+            if tool in _ORACLE_SHELLS and isinstance(given.get("command"), str):
+                command = given["command"]  # a shell tool named outright is a command
             if "write" in step:
                 kind = "write"
                 surely = maybe = {os.path.normpath(os.path.join(cwd, step["write"]))}
@@ -1125,9 +1138,25 @@ def _oracle_steps(laid, summaries):
                 kind = "read"
                 if outcome == "returned":
                     surely = maybe = {os.path.normpath(os.path.join(cwd, step["read"]))}
-            elif isinstance(step.get("run"), str):
+            elif tool == "apply_patch":
+                # Every file the patch adds, updates, deletes or moves to, by the oracle's own
+                # reading of the patch's headers (MR200-1).
+                kind = "write"
+                files = _ORACLE_PATCH.findall(str(given.get("command") or given.get("patch") or ""))
+                surely = maybe = {os.path.normpath(os.path.join(cwd, f.strip())) for f in files}
+            elif tool in _ORACLE_FILE_WRITES and (
+                given.get("file_path") or given.get("notebook_path")
+            ):
+                kind = "write"
+                path = given.get("file_path") or given.get("notebook_path")
+                surely = maybe = {os.path.normpath(os.path.join(cwd, str(path)))}
+            elif tool == "Read" and given.get("file_path"):
+                kind = "read"
+                if outcome == "returned":
+                    surely = maybe = {os.path.normpath(os.path.join(cwd, str(given["file_path"])))}
+            elif isinstance(command, str):
                 kind = "other"
-                for segment in re.split(r"\|\||&&|\||;", step["run"]):
+                for segment in re.split(r"\|\||&&|\||;", command):
                     words = segment.split()
                     if not words:
                         continue

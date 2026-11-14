@@ -122,7 +122,7 @@ def _proven_apart(listed, here, call_uses, cut, home_dir, work=None):
         return {}, "call_uses_not_fully_known"
     exact = sorted(
         {*call_uses["run"], *call_uses["read"], *call_uses["named"]}
-        | ({call_uses["write"]} if call_uses["write"] else set())
+        | set(call_uses.get("writes") or ([call_uses["write"]] if call_uses["write"] else []))
     )
     bases = sorted({os.path.basename(p) for p in exact if len(os.path.basename(p)) >= 3})
     try:

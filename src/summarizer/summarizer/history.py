@@ -743,11 +743,22 @@ def uses(entry, cwd, home):
     Only a file tool and the grammar at the top of this module say run, read or write.
     Every other path in the call is named and no more.
     """
+    entry = whole_call(entry)  # a pending call's whole target, where a summary clipped it
     tool, target = entry.get("tool"), str(entry.get("target") or "")
-    found = {"run": [], "read": [], "write": None, "named": set()}
+    found = {"run": [], "read": [], "write": None, "writes": [], "named": set()}
     found |= {"patterns": [], "unsupported": [], "by_name": []}
+    if entry.get("input_clipped"):  # the hook clipped the call's input: its words are not all here
+        found["unsupported"].append("call_clipped")
     if tool in WRITES:
-        found["write"] = expand(target, cwd, home)
+        # Every file it writes (each file of a patch, MR200-1): as the call was read when it was
+        # recorded (its "writes", or the changes its summary record carries), else its target.
+        listed = entry.get("writes")
+        if not isinstance(listed, list):
+            listed = (entry.get("effects") or {}).get("changes")
+        if not isinstance(listed, list) or not listed:
+            listed = [target] if target else []
+        found["writes"] = list(dict.fromkeys(expand(path, cwd, home) for path in listed))
+        found["write"] = found["writes"][0] if found["writes"] else None
     elif tool in READS:
         found["read"].append(expand(target, cwd, home))
     elif tool in SHELLS:
@@ -756,7 +767,7 @@ def uses(entry, cwd, home):
         piece = _piece(piece)
         if "/" in piece or "." in piece.strip("."):
             found["named"].add(expand(piece, cwd, home))
-    found["named"] |= {*found["run"], *found["read"]} | ({found["write"]} - {None})
+    found["named"] |= {*found["run"], *found["read"], *found["writes"]}
     return found
 
 
@@ -947,6 +958,7 @@ def select(mine, call_id, others, home):
     """
     entries = mine["summary"]["entries"]
     call = next(e for e in entries if e.get("call_id") == call_id and e["type"] == "action")
+    call = whole_call(call)  # its whole words, where a summary clipped them for display (MR199-1)
     cwd, namespace = mine["cwd"], mine["namespace"]
     mine_uses = uses(call, cwd, home)
     command = str(call.get("target") or "")
@@ -986,8 +998,13 @@ def select(mine, call_id, others, home):
         for content in _lower(other["summary"]["entries"]):
             results.setdefault(content.get("call_id"), []).append(content)
         for entry, theirs in acted:
-            path, bodies, cut = theirs["write"], [], False
-            if path and _use(path, mine_uses, command, call, cwd, home) in ("run", *LOADS):
+            ran = [
+                p
+                for p in theirs["writes"]
+                if _use(p, mine_uses, command, call, cwd, home) in ("run", *LOADS)
+            ]
+            path, bodies, cut = (ran[0] if ran else None), [], False
+            if ran:
                 bodies, cut = [entry], "text_chars" in entry
             uses_of = {p: _use(p, mine_uses, command, call, cwd, home) for p in theirs["read"]}
             seen = [p for p, use in uses_of.items() if use in ("run", "load")]
@@ -1050,7 +1067,7 @@ def select(mine, call_id, others, home):
     observed = set()
     for _, acted in sources:
         for entry, theirs in acted:
-            observed |= {theirs["write"]} if theirs["write"] else set()
+            observed |= set(theirs["writes"])
             observed |= set(theirs["read"]) if entry.get("status") == "returned" else set()
     for step in ("second", "third"):
         found_now, cut = set(), False
@@ -1267,10 +1284,25 @@ NAMING_ONLY = frozenset({"echo", "printf", "test", "["})  # calls that only prin
 _ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
 
+def whole_call(entry):
+    """A call as its whole words show it. For a call still pending whose words it clipped for
+    display, a summary keeps its whole target and the files its whole words name, read when it was
+    recorded (summarize.py, MR199-1): a decision is about such a call, and is never made on the
+    words clipped for display."""
+    whole = entry.get("whole")
+    if not isinstance(whole, dict):
+        return entry
+    return entry | {"target": whole.get("target", entry.get("target")), "named": whole.get("named")}
+
+
 def named_by_call(call, cwd, home):
     """The files a call's own words name, before any step: what uses() reads off its words, and for
     a tool that is no shell or file tool, the paths in its input ({"path": "out/bundle"}), which it
-    names as much as a command does. One reading for the lookup and for the reference arm."""
+    names as much as a command does. One reading for the lookup and for the reference arm. A
+    pending call whose words a summary clipped carries what its whole words name (whole_call)."""
+    named = whole_call(call).get("named")
+    if isinstance(named, list):
+        return set(named)
     words = {k: _ADDRESS.sub(" ", v) if isinstance(v, str) else v for k, v in call.items()}
     named = set(uses(words, cwd, home)["named"])  # an address's host is no file (auditor@x.example)
     if call.get("tool") not in SHELLS | WRITES | READS:
@@ -1289,7 +1321,7 @@ def _effects_of(entry, cwd, home):
     may change whatever it names; so may a tool that is neither a shell nor a file tool."""
     used, tool = uses(entry, cwd, home), entry.get("tool")
     if tool in WRITES:
-        return set(), {used["write"]} - {None}, set(), set()
+        return set(), set(used["writes"]), set(), set()
     if tool in READS:
         return set(used["read"]), set(), set(), set()
     if tool not in SHELLS:
@@ -1331,13 +1363,16 @@ MAX_PATH_CHARS = (
 _READ_ORDER = ("observes", "changes", "unknown", "looks")  # the order _effects_of returns them in
 
 
-def call_effects(tool, target, text, cwd, home):
+def call_effects(tool, target, text, cwd, home, writes=None):
     """{kind: sorted paths} for one call, only the kinds it has: what _effects_of() reads off the
-    call's whole words (its whole command, path or input, and its whole text). The runtime records
-    this for every call when the call is recorded, before anything is clipped for display, so that
-    a long option value or input field before a path cannot hide the path from an object's account
-    (MR199-1)."""
+    call's whole words (its whole command, path or input, and its whole text, and for a file tool
+    every file it writes: each file of a patch). The runtime records this for every call when the
+    call is recorded, before anything is clipped for display, so that a long option value or input
+    field before a path cannot hide the path from an object's account (MR199-1), nor can a file
+    after the first in a patch (MR200-1)."""
     entry = {"tool": tool, "target": target, "text": text}
+    if writes is not None:
+        entry["writes"] = list(writes)
     found = dict(zip(_READ_ORDER, _effects_of(entry, cwd, home), strict=True))
     return {kind: sorted(found[kind]) for kind in EFFECT_KINDS if found[kind]}
 
@@ -1356,6 +1391,7 @@ def recorded_effects(entry, cwd, home):
     cut = len(target) >= TARGET_CHARS and target.endswith("\u2026")
     if entry.get("tool") not in SHELLS | WRITES | READS:  # its text is read as well
         cut = cut or "text" not in entry or "text_chars" in entry
+    cut = cut or entry.get("tool") == "apply_patch"  # such a record names only a patch's first file
     return _effects_of(entry, cwd, home), not cut
 
 
@@ -1531,8 +1567,8 @@ def _bodies(sources, paths):
         for content in _lower(other["summary"]["entries"]):
             results.setdefault(content.get("call_id"), []).append(content)
         for entry, theirs in acted:
-            if theirs["write"] in paths:
-                found.append((entry, "text_chars" in entry, theirs["write"]))
+            for path in (p for p in theirs["writes"] if p in paths):
+                found.append((entry, "text_chars" in entry, path))
             if entry.get("status") != "returned":
                 continue
             for path in (p for p in theirs["read"] if p in paths):
@@ -1716,11 +1752,48 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
         use = _use(path, mine_uses, command, call, cwd, home)
         return use == "load" or (use == "may_load" and not _not_consumed(command, path))
 
+    def bridge_of(entry, path, use):
+        # A write bears on the call's route when something marks it: a level of its own,
+        # a level on the lower-trust content it is nearest to, or its being a control. A
+        # file the user simply asked for and the agent wrote is evidence to show, and no
+        # reason to ask: every write is nearest to some content, and that alone marks none.
+        marked = _marked(entry, entries, there, home) or use in LOADS
+        bridge = {"key": other["key"], "seq": entry["seq"], "resource": path, "use": use}
+        bridges.append(bridge | {"bears": marked})
+        group = f"{other['key']}:{path}"  # every write of one file in one source, together
+        groups.setdefault(group, {"id": group, "kind": "writer", "key": True, "bears": False})
+        groups[group]["bears"] = groups[group]["bears"] or marked
+        asked = (entry.get("request") or {}).get("seq")
+        prompts = [e for e in entries if e["type"] == "prompt" and e["seq"] < entry["seq"]]
+        for prompt in [e for e in prompts if e["seq"] == asked] or prompts[-1:]:
+            take(prompt, "request", group)
+        shown_before(entry, group, "before_write", of=entry["seq"])
+        take(entry, "writer", group, use=use)
+        # What came back for that write, whatever its status: a result can report another
+        # content than was proposed, another target, or a partial outcome, and "returned"
+        # says none of that. It is part of the group and is never left out by itself.
+        for content in entries:
+            same_call = content.get("call_id") == entry.get("call_id")
+            if content["type"] == "content" and same_call and content["seq"] > entry["seq"]:
+                take(content, "shown", group)
+        written.append((entry["seq"], path, group))
+
     for entry, theirs in acted:
         reads.append((entry["seq"], entry.get("call_id"), theirs["read"]))
-        path = theirs["write"]
-        use = _use(path, mine_uses, command, call, cwd, home) if path else None
-        if use is None and path and _fits(path, mine_uses["patterns"]):
+        # Every file the call wrote, each file of a patch (MR200-1): a bridge for each one this
+        # call uses. Otherwise the one write that tells most: one a wildcard of the call fits,
+        # else one this call names, else the first.
+        writes = theirs["writes"]
+        used = [(p, _use(p, mine_uses, command, call, cwd, home)) for p in writes]
+        used = [(p, use) for p, use in used if use is not None]
+        if used:
+            for path, use in used:
+                bridge_of(entry, path, use)
+            continue
+        fitting = [p for p in writes if _fits(p, mine_uses["patterns"])]
+        named = [p for p in writes if p in mine_uses["named"]]
+        path, use = (fitting or named or writes or [None])[0], None
+        if path and _fits(path, mine_uses["patterns"]):
             # A wildcard of the call, or a place a module it names could be, that this
             # write's path fits: it may be what the call uses, and that cannot be said or
             # denied from the words. No bridge is claimed. The write is kept with what
@@ -1792,30 +1865,6 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
                 take(entry, "recent", group)
                 came_back(entry, group)
             continue
-        # A write bears on the call's route when something marks it: a level of its own,
-        # a level on the lower-trust content it is nearest to, or its being a control. A
-        # file the user simply asked for and the agent wrote is evidence to show, and no
-        # reason to ask: every write is nearest to some content, and that alone marks none.
-        marked = _marked(entry, entries, there, home) or use in LOADS
-        bridge = {"key": other["key"], "seq": entry["seq"], "resource": path, "use": use}
-        bridges.append(bridge | {"bears": marked})
-        group = f"{other['key']}:{path}"  # every write of one file in one source, together
-        groups.setdefault(group, {"id": group, "kind": "writer", "key": True, "bears": False})
-        groups[group]["bears"] = groups[group]["bears"] or marked
-        asked = (entry.get("request") or {}).get("seq")
-        prompts = [e for e in entries if e["type"] == "prompt" and e["seq"] < entry["seq"]]
-        for prompt in [e for e in prompts if e["seq"] == asked] or prompts[-1:]:
-            take(prompt, "request", group)
-        shown_before(entry, group, "before_write", of=entry["seq"])
-        take(entry, "writer", group, use=use)
-        # What came back for that write, whatever its status: a result can report another
-        # content than was proposed, another target, or a partial outcome, and "returned"
-        # says none of that. It is part of the group and is never left out by itself.
-        for content in entries:
-            same_call = content.get("call_id") == entry.get("call_id")
-            if content["type"] == "content" and same_call and content["seq"] > entry["seq"]:
-                take(content, "shown", group)
-        written.append((entry["seq"], path, group))
     # What that source was shown after a write, of the very file: lower-trust text that
     # names it, or a captured read of it. Taken last, so that content shown before a later
     # write of the file keeps that tie; this one says only that it was shown.
@@ -1869,9 +1918,9 @@ def _marked(entry, entries, cwd, home):
     near = next((e for e in entries if e["type"] == "content" and e["seq"] == linked), None)
     if near is not None and LEVELS.get(near.get("level"), 0) > 0:
         return True
-    path, places = uses(entry, cwd, home)["write"], _places(entry)
+    writes, places = uses(entry, cwd, home)["writes"], _places(entry)
     for content in (e for e in _lower(entries) if e["seq"] < entry["seq"]):
-        if (path and path in _said(content, cwd, home)) or places & _places(content):
+        if set(writes) & _said(content, cwd, home) or places & _places(content):
             return True
     return False
 

