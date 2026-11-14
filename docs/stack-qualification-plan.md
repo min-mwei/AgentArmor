@@ -55,9 +55,9 @@ failure with the same call and controlled evidence first.
 |---|---|---|
 | A. Finish source admission | From accepted full-r2, Data Engineer completes the already planned remaining sittings in full-r3; Reviewer reads the complete population. | Accepted 50-pair/100-root population with reconciled quotas and immutable artifacts. No new intermediate checkpoints unless a material defect appears. |
 | B. Complete the frozen v4 qualification | Trainer uses the accepted runtime, encoder, guide, exact questions and preparation; Reviewer adjudicates the resulting holds. | Existing bars: decision and host-fact agreement each >=95%, valid-answer coverage >=95%, retained promised pairs >=90%. Report attempted population and preparation holds separately. |
-| C. Establish the development baseline | Trainer produces the fixed-Kai reference/history comparison and a named error ledger on accepted, already exposed DEV. | Every missed attack or benign denial assigned to source, capture/routing, retrieval/packing, decision, or serving/transport, with evidence. |
-| D. Fit and select EG2 | Trainer prepares one bounded encoder experiment from accepted TRAIN, evaluates with Kai held fixed, and calibrates that exact bundle. | A candidate improves retained evidence or escalation cost while preserving recall and downstream decisions. Otherwise retain base and report the failed hypothesis. |
-| E. Train and select Kai | Kai Trainer finalizes the existing fresh-base session recipe on the selected input contract, then trains, repeats required seeds/orders and checks retention. | Session improvement plus the existing ToolCall/Path/XPIA retention rule; no best-seed-only claim. |
+| C. Establish the development baseline | Trainer produces the fixed-Kai reference/history comparison and existing diagnostic outputs on accepted, already exposed DEV. | Missed attacks and benign denials have a supported primary cause; additional source, capture/routing, retrieval/packing, decision or transport faults remain visible. |
+| D. Fit and select EG2 | Trainer prepares one bounded Mark experiment from accepted TRAIN, checks Link retention, evaluates with Kai held fixed, and calibrates that exact bundle. | A candidate improves recognition or escalation cost while preserving recall and downstream decisions. Otherwise retain base and report the failed hypothesis. |
+| E. Train and select Kai | Kai Trainer finalizes the existing fresh-base session recipe on frozen E0 packets, then trains, repeats required seeds/orders and checks retention. | Session improvement plus the existing ToolCall/Path/XPIA retention rule; no best-seed-only claim. E1 is not a prerequisite. |
 | F. Qualify serving and integrate | Kai Trainer supplies the export and numerical evidence; AgentArmor Trainer runs the real hook/server/Kai path in shadow. | Whole-input coverage, cutoff/identity binding, actual vLLM parity and measured shadow outcomes, latency and memory. |
 | G. Make the release decision | Reviewer reviews the complete scorecard; owners complete the existing calibration/audit and publication process. | Scope matches demonstrated results. An experimental shadow release and qualified enforcement are separate milestones. |
 
@@ -72,6 +72,14 @@ the DEV scorecard, export requirements and the shadow test runner. These do not 
 reading private test content. One model job runs at a time through the existing guard;
 CPU preparation need not wait for the GPU queue. The Reviewer reviews returned artifacts
 instead of repeatedly asking for a new plan.
+
+**These are workstreams, not a serial queue.** A leads to B. Independently, C leads to a
+targeted model or context repair; E needs its own admitted TRAIN requests, not a completed
+E1 experiment. D proceeds separately. F's CPU/process checks can run now; real-model
+integration needs the selected exports. G joins the required qualification evidence.
+Test-004 authoring or qualification does not block an independently registered DEV read.
+The [Trainer's run sheet](stack-run-sheet.md) is the executable handoff; extend that artifact
+rather than creating another planning layer.
 
 Existing model-job holds remain a launch prerequisite, not a reason to stop preparation.
 The session package requires a release record naming its exact recipe, phase and user
@@ -98,11 +106,23 @@ controls from the existing development tools where they answer a specific failur
 turn them into another large model grid. Compare ranking methods on one eligible candidate
 pool, then measure the final packed evidence, including displaced evidence.
 
-First measure K0 with E0/reference. Select E1 with K0 fixed. Then select K1 on the fixed
-chosen packet contract. The full matrix diagnoses interactions; it must not obscure that
+First measure K0 with E0/reference. Keep the current K1 recipe on E0 while developing E1
+separately with K0 fixed. Measure K1/E1 only after a component earns that comparison.
+Use the session proposal's matched **4,096-state-token research cap** for K0 and K1,
+subject to exact read-recipe admission; the published serving export remains 2,048.
+Report the 2,048-token admission census separately. If a 2K baseline is read, label any
+later 4K comparison as a combined capacity/training change. The full matrix must not obscure that
 the session recipe also changes dose/horizon and context cap. K0 is an incumbent comparison,
 not automatically a compute-matched causal control. If claiming that data alone caused a
 gain, register the needed matched control; otherwise state the combined intervention.
+
+For the first read, keep both layouts and the complete four-arm roster, but ask only the
+reference and history arms; report the other arms as unasked. Reuse `campaign_arms.py score`
+and `history_diagnosis.py` before building a joined ledger. Preserve all admission holds and
+both twins; exact-request deduplication must map answers back to every original view.
+Report history and reference separately, with uncertainty clustered by pair (both twins,
+layouts and arms together). An aggregate gain across reference and history cannot substitute
+for improvement on the actual history path.
 
 **Interpretation:** reference wrong means inspect labels and Kai; reference right/history
 wrong with missing premises means inspect retrieval/packing; evidence retained but decision
@@ -127,9 +147,12 @@ for the first experiment. More labels, learned prototypes, new dimensions and ne
 are not required to test encoder adaptation.
 
 The current `training/summarizer/finetune.py:260–274` fits probe/text CoSENT and optional
-action/request contrast. That optional objective is not yet a complete campaign-evidence
-retrieval objective. The Trainer should deliver the minimal registered extension needed
-for accepted relevance supervision, rather than treating `--intent` as already solving it.
+action/request contrast. Start with the supported probe objective, with Link as a retention
+check. The current history selector does not consume encoder relevance rankings. A missing
+fact is therefore not automatically an EG2 defect. Relevance supervision and a measured
+consumer are follow-up work only if the DEV diagnosis supports them; they do not block the
+first Mark fit. The masking requirement below applies before using the optional contrastive
+objective, not to a probe-only run.
 
 - TRAIN comes only from accepted synthetic training sources. Evaluation campaigns,
   test 004, old blind outputs, benchmark text and seeds supply no training targets.
@@ -142,8 +165,9 @@ for accepted relevance supervision, rather than treating `--intent` as already s
   positives from contrastive negatives, including related twins. Keep roots/source blocks
   together across splits; entity substitutions do not create independent examples.
 - Pin text-only weights, tokenizer, prompts, pooling/normalization, dimension, chunk/window
-  aggregation and dtype. The family score optimized must match the served score; add a
-  small CPU equivalence check if the existing per-description loss does not implement it.
+  aggregation and dtype. Evaluate and calibrate the actual served centroid score. A
+  per-description training surrogate need not be numerically equal to that score; disclose
+  the mismatch and test its transfer rather than requiring an impossible equality check.
   Keep token embeddings frozen initially. No simultaneous probe-bank or attention rewrite.
 - Register the loss mixture, batch composition, learning rate, fixed update budget, seeds
   and selection rule before fitting. Start from existing supported settings; one candidate
@@ -174,6 +198,11 @@ run from the registered Qwen3.5-4B-Base, keeping LoRA, the pointer head, canonic
 reserved-token escaping, isolated question branches and checkpoint temperature.
 
 Admit exact rendered TRAIN requests, not source labels attached to incomplete packets.
+Prior source review does not disqualify TRAIN. Earlier blind exposure does prevent claiming
+fresh qualification under test 004's population rule. Register TRAIN admission separately,
+reusing the pinned reader, prompt, isolation, retry limits and numerical bars, with exposure
+declared and no fresh-test claim. Do not rewrite the frozen test protocol, import its records
+into training, or replace existing TRAIN solely to satisfy a test freshness rule.
 Record selection coverage and root/family exposure; two available arms must not silently
 double one root's weight. Keep missing host facts, missing captured context and missing
 authorization distinct. This cycle's default `none_required` profile does not train or
@@ -260,7 +289,7 @@ ToolCall, ToolCall Path, XPIA short/long, MultiTurn; show multi-session as an ex
 
 Do not multiply recall rates measured on different populations. Save a joined per-call
 funnel from capture through marking, retained evidence, Kai answer and observed outcome.
-Repeated layouts/replays/entity fills remain dependent views; use the existing root/block
+Repeated twins/layouts/replays/entity fills remain dependent views; use pair/source-block
 resampling. A 50-pair balanced test cannot certify a production 1% false-intervention rate.
 The independent workflow CAL/audit sizes and joint bounds remain those in
 [Kai evaluation section 8](https://github.com/min-mwei/Kai/blob/3406d0c53cc071a21b73bffbfea6a5807f417bc2/docs/evaluation.md#8-calibration-locked-test-and-production-qualification).
