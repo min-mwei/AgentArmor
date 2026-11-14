@@ -170,23 +170,25 @@ def returned(step):
     return "write" in step or step.get("output") is not None
 
 
+VALUE_COMPARED = "value compared"
+SHAPE_CHECKED = "shape checked"
+NO_EARLIER_WRITE = "not judged: no earlier write of what it reads"
+NOT_ESTABLISHED = "not judged: the version it reads is not established"
+FORM_NOT_COMPARED = "not judged: a form the check does not compare"
+TOOL_NOT_COMPARED = "not judged: a tool whose output the check does not compare"
+OUTPUT_KINDS = ("command", "read", "other")
+
+
 def outputs_judged(campaign):
-    """(judged, not judged): how many returned commands before the call have an output this check
-    compares or shapes (a read form, a known print, a pipeline's tail) and how many it does not.
-    A command it does not judge passes unseen, and is counted so (MR188-2)."""
-    judged = unjudged = 0
-    for _, step, _ in timeline(campaign):
-        if not isinstance(step.get("run"), str) or not returned(step):
-            continue
-        commands = _commands(step["run"])
-        alone = commands is not None and len(commands) == 1 and not commands[0][1]
-        if (alone and (_read_form(commands[0][0]) or _prints(commands[0][0]) is not None)) or (
-            commands is not None and _tail_shape(step["run"], commands)
-        ):
-            judged += 1
-        else:
-            unjudged += 1
-    return judged, unjudged
+    """[(where, kind, check)] for every returned output before the call, in order, as the read
+    checks applied them (MR190-2): kind is "command", "read" (the read tool) or "other" (any other
+    tool), and check is what was done with that output, recorded in the same branch that refuses
+    it: "value compared" (against the text a known command prints, or the last write of what a
+    read shows), "shape checked" (a digest line or a number, _tail_shape) or "not judged: " and
+    why. An output not judged passes unseen, and is listed so."""
+    checks = []
+    _read_checks(campaign, checks)
+    return checks
 
 
 def unanswered(campaign):
@@ -745,28 +747,54 @@ _DIGEST_LINE = re.compile(r"[0-9a-fA-F]{32,128}\s+\*?-")
 _COUNT_LINE = re.compile(r"\d+")
 
 
+_SHASUM_ALGORITHMS = {"1", "224", "256", "384", "512", "512224", "512256"}
+_DIGEST_FLAGS = {"-b", "--binary", "-t", "--text"}  # input modes: the output is still a digest line
+
+
+def _simple(command, commands):
+    """Whether a command line is one command or a pipeline and nothing else (MR190-1): no
+    redirection, and its commands joined by "|" alone, never by &&, ||, ; or &. A line that
+    shell_words() reads whole has no unquoted pipe, so it is simple only as one command with no
+    operator word at all (a quoted "|" or "&&" is a word _commands() would cut at); any other line
+    is read as _commands() cuts it, at its spaces, and is simple only as a pipeline whose every
+    operator is "|". A line holding a substitution is not simple (_commands() gives None)."""
+    if not commands or any(redirected for _, redirected, _ in commands):
+        return False
+    found = shell_words(command)
+    if found is not None:
+        return len(commands) == 1 and not any(word in _CONTROL for word, _ in found)
+    return len(commands) > 1 and all(word == "|" for word in command.split() if word in _CONTROL)
+
+
 def _tail_shape(command, commands):
-    """The shape a bare pipeline's output must have when its last command reads standard input and
-    its output is known in kind though not in value (MR188-2): a checksum tool prints a digest line
-    ("<hex>  -"), and wc with one of -c, -l or -w prints a number. None for anything else (a line
-    with && or ;, a redirection, a file operand, or another last command), which is not judged."""
-    if (
-        not commands
-        or "&&" in command
-        or ";" in command
-        or any(redirected for _, redirected, _ in commands)
-    ):
+    """The shape a simple command line's output must have (_simple) when its last command reads
+    its standard input and prints something known in kind though not in value (MR188-2, MR190-1):
+    a checksum tool making a digest prints one digest line ("<hex>  -", "<hex> *-" in binary mode),
+    and wc with exactly one of -c, -l or -w prints a number. Only options proven to keep that
+    output are read, each with its argument in place: -b, --binary, -t and --text, and for shasum
+    an algorithm it has (1, 224, 256, 384, 512, 512224, 512256) as -a N, -aN, --algorithm N or
+    --algorithm=N. Any other option (--tag, --check, --status, --version, --help, ...), any operand
+    (a file, or "-"), and any line that is not simple leave the output unjudged (None)."""
+    if not _simple(command, commands):
         return None
     words = commands[-1][0]
-    base, operands = os.path.basename(words[0]), [w for w in words[1:] if not w.startswith("-")]
+    base, args = os.path.basename(words[0]), words[1:]
     if base in _DIGESTS:
-        if base == "shasum":
-            values = {
-                w for at, w in enumerate(words[1:], 1) if words[at - 1] in ("-a", "--algorithm")
-            }
-            operands = [w for w in operands if w not in values]
-        return ("a digest line", _DIGEST_LINE) if not operands else None
-    if base == "wc" and len(words) == 2 and words[1] in ("-c", "-l", "-w"):
+        at = 0
+        while at < len(args):
+            word = args[at]
+            if base == "shasum" and word in ("-a", "--algorithm") and at + 1 < len(args):
+                if args[at + 1] not in _SHASUM_ALGORITHMS:
+                    return None
+                at += 2
+                continue
+            joined = re.fullmatch(r"(?:-a|--algorithm=)(\d+)", word) if base == "shasum" else None
+            if word in _DIGEST_FLAGS or (joined and joined.group(1) in _SHASUM_ALGORITHMS):
+                at += 1
+                continue
+            return None
+        return ("a digest line", _DIGEST_LINE)
+    if base == "wc" and args in (["-c"], ["-l"], ["-w"]):
         return ("a number", _COUNT_LINE)
     return None
 
@@ -788,9 +816,10 @@ def _compared(lines):
     return lines
 
 
-def _read_checks(campaign):
+def _read_checks(campaign, checks=None):
     """(problems, reads after an effect not shown, reads in a form not compared); see
-    read_consistency."""
+    read_consistency. With a list as checks, each returned output before the call adds (where,
+    its kind, the check applied to it), set in the branch that applies it (outputs_judged)."""
     order = timeline(campaign)
     last, found, after, unchecked = {}, [], [], []  # path -> (writer, its text or None, changed by)
     for at, (session, step, cwd) in enumerate(order, 1):
@@ -801,26 +830,28 @@ def _read_checks(campaign):
             last[os.path.normpath(step["write"])] = (where, str(step.get("content", "")), None)
             continue
         shown, target, form, commands = step.get("output"), None, None, None
+        run = step["run"] if isinstance(step.get("run"), str) else None
+        kind = "read" if "read" in step else "command" if run is not None else "other"
+        verdict = TOOL_NOT_COMPARED if kind == "other" else FORM_NOT_COMPARED
         if "read" in step:
             target, form, how = os.path.normpath(step["read"]), "the read", lambda raw: raw
-        elif isinstance(step.get("run"), str):
-            commands = _commands(step["run"])
-            alone = commands is not None and len(commands) == 1 and not commands[0][1]
+        elif run is not None:
+            commands = _commands(run)
+            alone = _simple(run, commands) and len(commands) == 1
             read = _read_form(commands[0][0]) if alone else None
             shows = commands is None or any(
                 os.path.basename(words[0]) in _SHOWS for words, _, _ in commands
             )
-            shape = _tail_shape(step["run"], commands) if read is None else None
-            if (
-                shape is not None
-                and shown is not None
-                and not shape[1].fullmatch(str(shown).strip())
-            ):
-                found.append(
-                    f"{where} runs `{step['run']}`, which prints {shape[0]}, and shows other output"
-                )
+            shape = _tail_shape(run, commands) if read is None else None
+            if shape is not None and shown is not None:
+                verdict = SHAPE_CHECKED
+                if not shape[1].fullmatch(str(shown).strip()):
+                    found.append(
+                        f"{where} runs `{run}`, which prints {shape[0]}, and shows other output"
+                    )
             prints = _prints(commands[0][0]) if alone else None
             if prints is not None and shown is not None:
+                verdict = VALUE_COMPARED
                 if _compared(_raw(shown)) != _compared(_raw(prints)):
                     said = "nothing" if prints == "" else "exactly its own text"
                     found.append(
@@ -837,6 +868,8 @@ def _read_checks(campaign):
                         f"{where} shows {os.path.relpath(path, cwd)} in a form the check does not "
                         f"compare; look at its output against what {last[path][0]} left"
                     )
+        if target is not None:
+            verdict = NO_EARLIER_WRITE
         if target is not None and target in last and shown is not None:
             writer, text, changer = last[target]
             name = os.path.relpath(target, cwd)
@@ -846,7 +879,9 @@ def _read_checks(campaign):
                 ] == how.make(text)
             else:
                 same = text is not None and _compared(_raw(shown)) == _compared(how(_raw(text)))
+            verdict = VALUE_COMPARED
             if changer is not None or text is None:
+                verdict = NOT_ESTABLISHED
                 by = changer or writer
                 item = (
                     f"{where} reads {name} after {by}, which may have changed it in a way not shown"
@@ -860,7 +895,9 @@ def _read_checks(campaign):
                     f"{where} reads {name} and shows other text than {form} shows of what {writer} "
                     "wrote, with nothing between them that could change it"
                 )
-        if "run" not in step or not isinstance(step.get("run"), str):
+        if checks is not None:
+            checks.append((where, kind, verdict))
+        if run is None:
             continue
         made, _ = file_uses(step, cwd)
         made |= {_resolved(path, cwd) for _, _, writes in commands or () for path in writes}
@@ -1189,10 +1226,13 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
     counts["review"]["reads_of_an_earlier_version_shown_only_by_the_read"] = sum(
         len(chronology(c)[1]) for c in valid
     )
-    shown = [outputs_judged(c) for c in valid]
-    counts["review"]["command_outputs_judged"] = sum(j for j, _ in shown)
-    counts["review"]["command_outputs_not_judged"] = sum(u for _, u in shown)
-    reads = [_read_checks(c) for c in valid]
+    checks = []
+    reads = [_read_checks(c, checks) for c in valid]
+    tally = Counter((kind, check) for _, kind, check in checks)
+    counts["review"]["outputs_before_the_call"] = {
+        kind: {check: n for (of, check), n in sorted(tally.items()) if of == kind}
+        for kind in OUTPUT_KINDS
+    }
     counts["review"]["reads_after_an_effect_not_shown"] = sum(len(r[1]) for r in reads)
     counts["review"]["of_them_showing_other_text_than_the_last_write"] = sum(
         f"; it shows {OTHER_TEXT}" in item for r in reads for item in r[1]

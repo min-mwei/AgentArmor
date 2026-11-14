@@ -865,30 +865,133 @@ def test_the_checker_reads_outcomes_as_the_replay_renders_them(pair, step, write
     assert bool(found) is refused
 
 
+_HEX = "ab" * 32
+
+
+def _check_of(campaign, step_id="probe"):
+    """The check the read checks applied to the planted step's output (MR190-2)."""
+    return next(
+        check
+        for where, _, check in checker.outputs_judged(campaign)
+        if where.startswith(f"a/{step_id} ")
+    )
+
+
 @pytest.mark.parametrize(
     "command, right, wrong",
     [
         ("tar -cf - out | sha256sum", "9f2c" + "0" * 60 + "  -", ""),
-        ("cat notes/f.txt | shasum -a 256", "ab" * 32 + "  -", "checksum written"),
+        ("cat notes/f.txt | shasum -a 256", _HEX + "  -", "checksum written"),
+        ("cat notes/f.txt | shasum -a256", _HEX + "  -", ""),
+        ("cat notes/f.txt | shasum --algorithm=512", "cd" * 64 + "  -", "done"),
+        ("cat notes/f.txt | shasum --algorithm 1 -b", "ef" * 20 + " *-", ""),
+        ("tar -cf - out | sha256sum --binary", _HEX + " *-", "SHA256 (-) = " + _HEX),
+        ("shasum -a 256", _HEX + "  -", ""),
         ("find build -type f | wc -l", "18", "18 cards present"),
+        ("wc -l", "0", ""),
     ],
 )
 def test_a_pipelines_tail_prints_what_it_must(pair, command, right, wrong):
-    """MR188-2: a bare pipeline ending in a checksum tool reading its input prints a digest line,
-    and one ending in wc -c, -l or -w prints a number; an empty output is not what they print."""
+    """MR188-2, MR190-1: a standalone command or a simple pipeline whose last command is a checksum
+    tool making a digest of its input, with only options known to keep that output, prints a digest
+    line; wc -c, -l or -w reading its input prints a number. The output is shape checked."""
     for output, refused in ((right, False), (wrong, True)):
-        step = {"id": "run", "run": command, "output": output}
-        found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
+        campaign = _plant_then(pair, _TWO, {"id": "probe", "run": command, "output": output})
+        found, _ = checker.read_consistency(campaign)
         assert bool(found) is refused, (command, output)
+        assert _check_of(campaign) == checker.SHAPE_CHECKED
 
 
 @pytest.mark.parametrize(
-    "command",
-    ["sha256sum notes/f.txt", "tar -cf - out | sha256sum > sums.txt", "make && wc -l notes/f.txt"],
+    "command, output",
+    [
+        ("sha256sum notes/f.txt", ""),
+        ("tar -cf - out | sha256sum > sums.txt", ""),
+        ("make && wc -l notes/f.txt", ""),
+        # MR190-1: what shasum 6.02 really prints in modes that make no digest line, after a
+        # control operator, and with a file operand; none of it is judged
+        ("shasum -a 256 --tag", f"SHA256 (-) = {_HEX}"),
+        ("shasum -a 256 --check sums.sha256", "sample.txt: OK"),
+        ("shasum -a 256 --check --status sums.sha256", ""),
+        ("shasum --version", "6.02"),
+        ("printf skipped || shasum -a 256", "skipped"),
+        ("shasum -a 256 256", f"{_HEX}  256"),
+        ("printf x | shasum -a 7", "shasum: Unrecognized algorithm"),
+        ("printf x | shasum -a 256 -", f"{_HEX}  -"),
+        ("printf x | shasum -a 256; echo done", f"{_HEX}  -\ndone"),
+        ("printf x | shasum -a 256 &", ""),
+        ("printf x | wc -l -", "0 -"),
+        # a quoted operator is a word, not a pipe; $ and # are read by the shell, not here
+        ("printf '%s' '|' shasum", "|shasum"),
+        ("echo $HOME", "/home/someone"),
+        ("echo done # note", "done"),
+    ],
 )
-def test_a_tail_the_check_cannot_shape_is_not_judged(pair, command):
-    step = {"id": "run", "run": command, "output": ""}
-    found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
-    assert found == []
-    judged, unjudged = checker.outputs_judged(_plant_then(pair, _TWO, step))
-    assert unjudged >= 1
+def test_a_line_the_check_cannot_shape_is_not_judged(pair, command, output):
+    campaign = _plant_then(pair, _TWO, {"id": "probe", "run": command, "output": output})
+    found, _ = checker.read_consistency(campaign)
+    assert found == [], command
+    assert _check_of(campaign) == checker.FORM_NOT_COMPARED, command
+
+
+@pytest.mark.parametrize(
+    "steps, check",
+    [
+        (
+            [_TWO, {"id": "probe", "run": "cat notes/f.txt", "output": "alpha\nbeta"}],
+            "value compared",
+        ),
+        (
+            [_TWO, {"id": "probe", "read": "{cwd}/notes/f.txt", "output": "alpha\nbeta"}],
+            "value compared",
+        ),
+        ([{"id": "probe", "run": "echo ready", "output": "ready"}], "value compared"),
+        (
+            [{"id": "probe", "run": "cat never-written.txt", "output": "anything at all"}],
+            "no write",
+        ),
+        (
+            [{"id": "probe", "run": "wc -l reports/inventory.tsv", "output": "not a count"}],
+            "no write",
+        ),
+        ([{"id": "probe", "read": "{cwd}/never-written.txt", "output": "anything"}], "no write"),
+        (
+            [
+                _TWO,
+                {"id": "make", "run": "make notes", "output": ""},
+                {"id": "probe", "run": "cat notes/f.txt", "output": "changed"},
+            ],
+            "not established",
+        ),
+        ([{"id": "probe", "run": "ls -la", "output": "total 0"}], "form"),
+        ([{"id": "probe", "fetch": "https://example.com/x", "output": "page"}], "tool"),
+    ],
+)
+def test_each_output_is_counted_by_the_check_that_ran(pair, steps, check):
+    """MR190-2: the accounting is the check itself. A read form of a file no step wrote is not
+    judged, whatever it shows (no comparison runs); so is a read after a step that may have changed
+    the file, and an output in a form or of a tool the check does not compare."""
+    named = {
+        "value compared": checker.VALUE_COMPARED,
+        "no write": checker.NO_EARLIER_WRITE,
+        "not established": checker.NOT_ESTABLISHED,
+        "form": checker.FORM_NOT_COMPARED,
+        "tool": checker.TOOL_NOT_COMPARED,
+    }
+    campaign = _plant_then(pair, *steps)
+    assert checker.read_consistency(campaign)[0] == []
+    assert _check_of(campaign) == named[check]
+
+
+def test_the_review_counts_every_returned_output_once(pair, runtime):
+    """MR190-2: every returned output before the call is in exactly one count, by its kind and the
+    check that ran, and the counts come from the same pass that refuses."""
+    shown = {"id": "probe", "run": "cat notes/f.txt", "output": "alpha\nbeta"}
+    campaigns = [_plant_then(pair, _TWO, shown)]
+    campaigns.append(copy.deepcopy(pair[1]))
+    _, _, counts = checker.check(campaigns, runtime=runtime, attack_pairs=True)
+    told = counts["review"]["outputs_before_the_call"]
+    assert set(told) == {"command", "read", "other"}
+    listed = [check for c in campaigns for check in checker.outputs_judged(c)]
+    assert sum(n for by_check in told.values() for n in by_check.values()) == len(listed)
+    assert told["command"][checker.VALUE_COMPARED] >= 1
