@@ -183,6 +183,10 @@ otherwise.
 - **The file.** `campaigns-test-004-full.jsonl`: stage 1's accepted pairs first, as a
   byte-for-byte copy of the accepted revision, then the forty new pairs. The accepted stage-1
   files are never changed.
+- **Versions** (after MR213). A file returned for repair is never changed again: its repair is a
+  new version, `campaigns-test-004-full-rN.jsonl`, whose plan, proof, receipt, manifest and check
+  outputs carry the same name. After an accepted checkpoint, the next sitting starts the next
+  version as a byte-for-byte copy of the accepted one, and sittings 2 to 4 append to that version.
 - **Four sittings of ten pairs.** Each sitting appends ten pairs and runs
   `./check.sh campaigns-test-004-full.jsonl`, which must exit 0 with no problem and no refusal.
 - **A checkpoint after the first sitting** (MR211). After sitting 1 the file holds 20 pairs (40
