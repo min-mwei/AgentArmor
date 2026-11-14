@@ -1983,3 +1983,13 @@ def test_a_session_named_by_its_own_alias_is_bound(starter, runtime):
     _, _, bound, _ = built(campaign, runtime)
     assert "session_reference_unbound" not in bound["history"]["why"]
     assert bound["history"]["complete"] is view["history"]["complete"]
+
+
+def test_the_last_content_before_a_write_stands_with_it_beside_what_it_resembles():
+    """MR187: a note read just before a write may be what moved it although it names nothing of
+    the write; it is shown with the write, beside the content the write resembles, each once."""
+    before = [{"seq": 4, "sha256": "a"}, {"seq": 10, "sha256": "b"}, {"seq": 12, "sha256": "c"}]
+    assert [e["seq"] for e in history._around(before, 4)] == [4, 12]
+    assert [e["seq"] for e in history._around(before, 12)] == [12]
+    assert [e["seq"] for e in history._around(before, None)] == [12]
+    assert history._around([], 4) == []
