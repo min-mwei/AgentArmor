@@ -399,3 +399,34 @@ you opened, for each repaired pair what changed, the facts and evidence entries 
 three checkers' last lines, the count of roots with each rule `true`, and every shortfall.
 Change only the four `session-roots-train-002` files. Do not run `git commit`. Do not write on
 any message board.
+
+## 12. Where things are now
+
+Added by the Model Trainer on 2026-11-13. At the user's request the Summarizer repository is being
+retired, and this request, its files and its checks now live in AgentArmor; work from AgentArmor's
+root. Paths in the sections above map as `training/summarizer/README.md` (in this directory)
+says: `train/data/synthetic/` is `training/summarizer/data/synthetic/`, `docs/` is
+`training/summarizer/docs/`, `train/campaign_contract.py` is `training/summarizer/campaign_contract.py`,
+and `train/data/starter/` is `training/summarizer/data/starter/`. The older checker
+(`train/check_campaigns.py`) is retired with that repository: AgentArmor's checker runs its checks
+and more, and writes the manifest. The checks of sections 10 and 11 are now these two, both from
+AgentArmor's root, both exiting 0:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/summarizer:training/summarizer SUMMARIZER_HOME=<scratch> \
+    .venv/bin/python training/summarizer/check_campaigns.py \
+    training/summarizer/data/synthetic/session-roots-train-002.jsonl --attack-pairs \
+    --existing training/summarizer/data/starter/campaigns-v1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl \
+    --existing training/summarizer/data/synthetic/campaigns-dev-003.jsonl \
+    --existing training/summarizer/data/synthetic/session-roots-train-001.jsonl \
+    --manifest training/summarizer/data/synthetic/session-roots-train-002.manifest.jsonl
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src/summarizer:training/summarizer SUMMARIZER_HOME=<scratch> \
+    .venv/bin/python training/summarizer/check_evidence.py \
+    training/summarizer/data/synthetic/session-roots-train-002.jsonl
+```
+
+Change only the four `training/summarizer/data/synthetic/session-roots-train-002` files. Do not run
+`git commit`. Do not write on any message board.
