@@ -170,6 +170,25 @@ def returned(step):
     return "write" in step or step.get("output") is not None
 
 
+def outputs_judged(campaign):
+    """(judged, not judged): how many returned commands before the call have an output this check
+    compares or shapes (a read form, a known print, a pipeline's tail) and how many it does not.
+    A command it does not judge passes unseen, and is counted so (MR188-2)."""
+    judged = unjudged = 0
+    for _, step, _ in timeline(campaign):
+        if not isinstance(step.get("run"), str) or not returned(step):
+            continue
+        commands = _commands(step["run"])
+        alone = commands is not None and len(commands) == 1 and not commands[0][1]
+        if (alone and (_read_form(commands[0][0]) or _prints(commands[0][0]) is not None)) or (
+            commands is not None and _tail_shape(step["run"], commands)
+        ):
+            judged += 1
+        else:
+            unjudged += 1
+    return judged, unjudged
+
+
 def unanswered(campaign):
     """The tool steps before the call that were proposed and never answered: no output where the
     replay needs one, and not marked pending, refused or failed (MR186-1). Each renders as a
@@ -712,6 +731,46 @@ def _prints(words):
     return None
 
 
+_DIGESTS = {
+    "sha256sum",
+    "sha1sum",
+    "sha512sum",
+    "sha224sum",
+    "sha384sum",
+    "md5sum",
+    "b2sum",
+    "shasum",
+}
+_DIGEST_LINE = re.compile(r"[0-9a-fA-F]{32,128}\s+\*?-")
+_COUNT_LINE = re.compile(r"\d+")
+
+
+def _tail_shape(command, commands):
+    """The shape a bare pipeline's output must have when its last command reads standard input and
+    its output is known in kind though not in value (MR188-2): a checksum tool prints a digest line
+    ("<hex>  -"), and wc with one of -c, -l or -w prints a number. None for anything else (a line
+    with && or ;, a redirection, a file operand, or another last command), which is not judged."""
+    if (
+        not commands
+        or "&&" in command
+        or ";" in command
+        or any(redirected for _, redirected, _ in commands)
+    ):
+        return None
+    words = commands[-1][0]
+    base, operands = os.path.basename(words[0]), [w for w in words[1:] if not w.startswith("-")]
+    if base in _DIGESTS:
+        if base == "shasum":
+            values = {
+                w for at, w in enumerate(words[1:], 1) if words[at - 1] in ("-a", "--algorithm")
+            }
+            operands = [w for w in operands if w not in values]
+        return ("a digest line", _DIGEST_LINE) if not operands else None
+    if base == "wc" and len(words) == 2 and words[1] in ("-c", "-l", "-w"):
+        return ("a number", _COUNT_LINE)
+    return None
+
+
 def _raw(text):
     """A text's lines: a final newline does not begin another line."""
     lines = str(text).split("\n")
@@ -751,6 +810,15 @@ def _read_checks(campaign):
             shows = commands is None or any(
                 os.path.basename(words[0]) in _SHOWS for words, _, _ in commands
             )
+            shape = _tail_shape(step["run"], commands) if read is None else None
+            if (
+                shape is not None
+                and shown is not None
+                and not shape[1].fullmatch(str(shown).strip())
+            ):
+                found.append(
+                    f"{where} runs `{step['run']}`, which prints {shape[0]}, and shows other output"
+                )
             prints = _prints(commands[0][0]) if alone else None
             if prints is not None and shown is not None:
                 if _compared(_raw(shown)) != _compared(_raw(prints)):
@@ -1121,6 +1189,9 @@ def check(campaigns, existing=(), runtime=None, attack_pairs=False):
     counts["review"]["reads_of_an_earlier_version_shown_only_by_the_read"] = sum(
         len(chronology(c)[1]) for c in valid
     )
+    shown = [outputs_judged(c) for c in valid]
+    counts["review"]["command_outputs_judged"] = sum(j for j, _ in shown)
+    counts["review"]["command_outputs_not_judged"] = sum(u for _, u in shown)
     reads = [_read_checks(c) for c in valid]
     counts["review"]["reads_after_an_effect_not_shown"] = sum(len(r[1]) for r in reads)
     counts["review"]["of_them_showing_other_text_than_the_last_write"] = sum(

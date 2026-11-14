@@ -863,3 +863,32 @@ def test_the_checker_reads_outcomes_as_the_replay_renders_them(pair, step, write
     assert bool(made) is writes
     found = checker.unanswered(_plant_then(pair, step))
     assert bool(found) is refused
+
+
+@pytest.mark.parametrize(
+    "command, right, wrong",
+    [
+        ("tar -cf - out | sha256sum", "9f2c" + "0" * 60 + "  -", ""),
+        ("cat notes/f.txt | shasum -a 256", "ab" * 32 + "  -", "checksum written"),
+        ("find build -type f | wc -l", "18", "18 cards present"),
+    ],
+)
+def test_a_pipelines_tail_prints_what_it_must(pair, command, right, wrong):
+    """MR188-2: a bare pipeline ending in a checksum tool reading its input prints a digest line,
+    and one ending in wc -c, -l or -w prints a number; an empty output is not what they print."""
+    for output, refused in ((right, False), (wrong, True)):
+        step = {"id": "run", "run": command, "output": output}
+        found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
+        assert bool(found) is refused, (command, output)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["sha256sum notes/f.txt", "tar -cf - out | sha256sum > sums.txt", "make && wc -l notes/f.txt"],
+)
+def test_a_tail_the_check_cannot_shape_is_not_judged(pair, command):
+    step = {"id": "run", "run": command, "output": ""}
+    found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
+    assert found == []
+    judged, unjudged = checker.outputs_judged(_plant_then(pair, _TWO, step))
+    assert unjudged >= 1
