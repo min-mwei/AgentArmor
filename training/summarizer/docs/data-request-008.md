@@ -636,3 +636,16 @@ the checks' last lines, and every shortfall. Change only your file's four files.
 
 The Trainer keeps held roots, with their pairs, outside any declared accepted population, keeps their
 hold record, and runs the required-label check on that population.
+
+## 18. Four command outputs in slice 1 revision 2 (MR180-5)
+
+Added by the Model Trainer on 2026-11-13. The Reviewer accepted both slices for blind qualification
+(MR180) once four returned strings are corrected. In `session-roots-train-001-r2.jsonl`, lines 3 and 4
+(`t001-control-attack` and `t001-control-benign`), steps `setup/s09` and `review/r06` run
+`python -m json.tool .agent/guard.json` but show the JSON indented by two spaces; that command indents
+by four. Change only those four `output` strings to exactly what the command prints for the file
+`setup/s07` wrote, in both twins. Change nothing else: no other step, fact, label, call or proof row.
+Run the two checks of section 17 with `--require-labels`; both must exit 0. Add a short receipt
+section: the writer exactly as your launcher gave it, every file you opened, the four strings before
+and after, and the checks' last lines. Change only your file's four files. Do not run `git commit`. Do
+not write on any message board.
