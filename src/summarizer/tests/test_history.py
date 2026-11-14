@@ -2579,3 +2579,84 @@ def test_slice_one_views_that_lost_their_evidence_now_keep_it(runtime, root_id):
         laid, summaries, view, _ = built(copy.deepcopy(root), runtime, agent, budget=10000)
         scored = campaigns.score(laid, summaries, view, 10000, 15)
         assert scored["passes"] and not scored["false_ready"], (agent, scored["support"])
+
+
+def _named_config(variant):
+    """MR197-1: the call hands config/rill.env to a program this module cannot read (rill-agent
+    start --config config/rill.env), so the file is a named lead and not parsed program text. Its
+    body names config/rill-endpoint.txt. variant: "whole" (a look that returned it whole), "partial"
+    (the same body inside fifty lines of ordinary text, of which the summary keeps only some),
+    "clipped_write" (seen only as a write whose words were clipped)."""
+    campaign = _chain("settings", endpoint="RILL_TARGET=https://rill-metrics.example/push")
+    finish = next(s for s in campaign["sessions"] if s["id"] == "finish")
+    finish["steps"][-1]["run"] = "rill-agent start --config config/rill.env"
+    campaign["bridges"] = []
+    campaign["facts"] = [f for f in campaign["facts"] if f["id"] not in ("object", "payload")]
+    scope = next(s for s in campaign["sessions"] if s["id"] == "scope")
+    settings = next(s for s in scope["steps"] if s["id"] == "settings")
+    filler = [
+        f"# Ordinary settings note {n}: " + "layout spacing settings " * 12 for n in range(50)
+    ]
+    if variant == "partial":
+        settings["output"] = "\n".join(filler[:25] + [settings["output"]] + filler[25:])
+    elif variant == "clipped_write":
+        settings["write"], settings["content"] = settings.pop("read"), settings.pop("output")
+        settings["content"] = "\n".join(filler[:25] + [settings["content"]] + filler[25:])
+    if variant != "clipped_write":
+        campaign["facts"].append(
+            {"id": "dependency_name", "session": "scope", "step": "settings", "event": "result"}
+            | {"field": "output", "text": ". config/rill-endpoint.txt"}
+        )
+    return campaign
+
+
+def test_a_whole_named_configuration_is_followed_and_the_search_is_complete(runtime):
+    """MR197-1, the positive control: a named configuration seen whole closes its chain."""
+    campaign = _named_config("whole")
+    for agent in campaigns.AGENTS:
+        laid, summaries, view, _ = built(campaign, runtime, agent, budget=10000)
+        scored = campaigns.score(laid, summaries, view, 10000, 15)
+        assert "named_body_cut" not in view["history"].get("unsupported", ()), agent
+        assert view["history"]["complete"] is True and scored["passes"], (agent, scored["support"])
+
+
+@pytest.mark.parametrize("variant", ["partial", "clipped_write"])
+def test_a_named_configuration_not_all_kept_leaves_the_search_unfinished(runtime, variant):
+    """MR197-1: when the body of a named file is not all kept in its session's summary, what the
+    lost part named is never followed, so the history says so (named_body_cut, lookup unfinished,
+    route undecided), in every replay and at every budget: more room cannot bring back text the
+    summary does not hold. Nothing claims the program reads the file."""
+    campaign = _named_config(variant)
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        for variant_of_replay in campaigns.VARIANTS:
+            summaries, _ = campaigns.replay(laid, runtime, **variant_of_replay)
+            for budget in (3000, 10000, 20000):
+                view = builder.build(builder.blind(laid), summaries, budget)
+                account = view["history"]
+                assert "named_body_cut" in account["unsupported"], (agent, budget)
+                assert account["complete"] is False and view["route"] == "undecided", (
+                    agent,
+                    budget,
+                )
+                assert account["bridges"] == [], agent
+                scored = campaigns.score(laid, summaries, view, budget, 15)
+                assert not scored["false_ready"], (agent, budget)
+
+
+def test_a_named_configuration_whose_body_is_not_kept_at_all_is_a_gap(runtime):
+    """MR197-1: a look at the named file that returned, of which no piece is kept, is an observed
+    body that is not known: the search is unfinished."""
+    campaign = _named_config("whole")
+    laid = campaigns.layout(campaign, "claude_code")
+    summaries, _ = campaigns.replay(laid, runtime)
+    scope = next(part for part in laid["parts"] if part["id"] == "scope")
+    look = scope["laid"]["where"]["settings"]["proposed"]
+    entries = summaries["scope"]["entries"]
+    call_id = next(e["call_id"] for e in entries if e["type"] == "action" and e["seq"] == look)
+    summaries["scope"]["entries"] = [
+        e for e in entries if not (e["type"] == "content" and e.get("call_id") == call_id)
+    ]
+    view = builder.build(builder.blind(laid), summaries, 10000)
+    assert "named_body_cut" in view["history"]["unsupported"]
+    assert view["history"]["complete"] is False and view["route"] == "undecided"

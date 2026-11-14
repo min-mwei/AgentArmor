@@ -999,8 +999,15 @@ def select(mine, call_id, others, home):
     # this module does not read the grammar of: "harbor-agent start --config config/runner.toml")
     # is followed the same way, as a lead: what was observed of it names files and places, and
     # they are counted with the call's own words, for the steps below. Named is no claim that
-    # the program reads it, so a cut body of such a file is not a cut of program text.
-    for body, _, path in _bodies(sources, by_words):
+    # the program reads it. But a body of such a file that is not all here (its words clipped,
+    # a look whose result is not all kept, or none of it) may name what this lookup then never
+    # follows: the search is unfinished, and said to be (named_body_cut, MR197-1).
+    leads = {
+        p for p in by_words if _use(p, mine_uses, command, call, cwd, home) not in ("run", *LOADS)
+    }
+    for body, cut, path in _bodies(sources, leads):  # program text was read in the step above
+        if cut and "named_body_cut" not in unsupported:
+            unsupported.append("named_body_cut")
         if body is not None:
             found = _said(body, cwd, home) - mine_uses["named"] - {path}
             stepped |= found
