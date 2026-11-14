@@ -114,7 +114,7 @@ import os
 import re
 
 from . import effects
-from .events import ENTRY_IOCS
+from .events import ENTRY_IOCS, TARGET_CHARS
 from .facts import PERSISTENT, expand, path_classes, shell_segments
 
 WRITES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"})
@@ -293,7 +293,30 @@ _COMMAND_KINDS = (
 # A name that identifies one thing: letters and digits together ("RV-44", "Q7"). A condition
 # the user states often names one, and what was observed of it elsewhere is its evidence.
 _TOKEN = re.compile(r"(?<![\w.-])(?=[\w-]*[A-Za-z])(?=[\w-]*\d)\w[\w-]*(?![\w-])")
-_PATHISH = re.compile(r"[\w.~{}/-]*[/.][\w.~{}/-]*")
+_PATH_RUN = re.compile(r"[\w.~{}/-]+")
+
+
+class _Pathish:
+    r"""The path-like pieces of a text: each longest run of path characters (word characters and
+    . ~ { } / -) that holds a slash or a dot. They are the pieces the pattern
+    [\w.~{}/-]*[/.][\w.~{}/-]* finds, found in one pass: that pattern backtracks over a long run
+    with no slash or dot in it, in a time that grows with the square of its length, and calls are
+    now read whole (MR199-1)."""
+
+    @staticmethod
+    def findall(text):
+        return [run for run in _PATH_RUN.findall(text) if "/" in run or "." in run]
+
+    @staticmethod
+    def sub(replacement, text):
+        def put(match):
+            run = match.group()
+            return replacement if "/" in run or "." in run else run
+
+        return _PATH_RUN.sub(put, text)
+
+
+_PATHISH = _Pathish()
 _TRAILING_DOTS = re.compile(r"(?<=[^./])\.+$")
 
 
@@ -1198,6 +1221,10 @@ def select(mine, call_id, others, home):
         if "object_calls_not_kept" not in unsupported:
             unsupported.append("object_calls_not_kept")
         why.append("lookup_unfinished")
+    if any(account["effects_unknown"] for account in objects):  # calls not read whole (MR199-1)
+        if "object_call_effects_not_known" not in unsupported:
+            unsupported.append("object_call_effects_not_known")
+        why.append("lookup_unfinished")
     why = sorted(set(why))
     marked = LEVELS.get(call.get("level"), 0) >= LEVELS["medium"]
     linked = any(b["bears"] for b in bridges) or any(item.get("bears") for item in items)
@@ -1293,6 +1320,59 @@ def _effects_of(entry, cwd, home):
     return observes, changes, unknown, looks
 
 
+# The kinds of effect a summary records for each call it keeps or catalogues, in the order a capped
+# record keeps them: what the call may change, what it names with an effect not known, what it
+# observes, what it only looks at. Past MAX_EFFECT_PATHS a record says its effects are not whole.
+EFFECT_KINDS = ("changes", "unknown", "observes", "looks")
+MAX_EFFECT_PATHS = 256
+MAX_PATH_CHARS = (
+    4096  # no file system takes a longer path: a longer word is not listed, but counted
+)
+_READ_ORDER = ("observes", "changes", "unknown", "looks")  # the order _effects_of returns them in
+
+
+def call_effects(tool, target, text, cwd, home):
+    """{kind: sorted paths} for one call, only the kinds it has: what _effects_of() reads off the
+    call's whole words (its whole command, path or input, and its whole text). The runtime records
+    this for every call when the call is recorded, before anything is clipped for display, so that
+    a long option value or input field before a path cannot hide the path from an object's account
+    (MR199-1)."""
+    entry = {"tool": tool, "target": target, "text": text}
+    found = dict(zip(_READ_ORDER, _effects_of(entry, cwd, home), strict=True))
+    return {kind: sorted(found[kind]) for kind in EFFECT_KINDS if found[kind]}
+
+
+def recorded_effects(entry, cwd, home):
+    """((observes, changes, unknown, looks), whole) for one call a summary keeps or catalogues: the
+    effects the summary recorded from the call's whole words (call_effects), and whether they are
+    all there: its record lists every path, and the hook clipped nothing of its input (MR199-1). A
+    record written before summaries carried effects has only the words kept for display; they are
+    read as they were, and are whole only where nothing of them was clipped."""
+    told = entry.get("effects")
+    if isinstance(told, dict):
+        found = tuple(set(told.get(kind) or ()) for kind in _READ_ORDER)
+        return found, entry.get("effects_complete") is not False
+    target = str(entry.get("target") or "")
+    cut = len(target) >= TARGET_CHARS and target.endswith("\u2026")
+    if entry.get("tool") not in SHELLS | WRITES | READS:  # its text is read as well
+        cut = cut or "text" not in entry or "text_chars" in entry
+    return _effects_of(entry, cwd, home), not cut
+
+
+def _result_of(entry, results):
+    """The event that brought back what became of a call, its result or its failure, as its hooks
+    reported it: from the lifecycle of a call the summary keeps, from the record of one it
+    catalogues, and for a record from before either said it, from the first kept piece of its
+    result. None when nothing came back."""
+    for state in entry.get("lifecycle") or ():
+        if state.get("state") in ("returned", "failed"):
+            return state.get("seq")
+    if "result" in entry or "lifecycle" in entry:
+        return entry.get("result")
+    back = [seq for seq in results.get(entry.get("call_id"), ()) if seq > entry["seq"]]
+    return back[0] if back else None
+
+
 def _touches(paths, target):
     """Whether one of paths is target or a directory holding it."""
     return any(path == target or target.startswith(path.rstrip("/") + "/") for path in paths)
@@ -1304,15 +1384,18 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
     that looked at it, one of unknown effect that names it, and one that wrote or may have changed
     it or a directory holding it, with what became of each call), the newest OBJECT_EVENTS of them
     with how many more there are, and the gaps that leave the account unfinished: a session whose
-    log was not all read, and one whose summary does not keep every call it recorded and scanned
+    log was not all read, one whose summary does not keep every call it recorded and scanned
     (summary.session.omitted.actions; whether a call it dropped touched the file is not known, and
-    the history says the search did not finish, MR198-1). A session whose namespace is not known
-    is searched as the call's own and said so (MR111). Nothing here says whether the file changed.
+    the history says the search did not finish, MR198-1), and one with a call whose recorded
+    effects are not whole (recorded_effects, MR199-1). Each call is read by the effects recorded
+    from its whole words, never by the words clipped for display. A session whose namespace is not
+    known is searched as the call's own and said so (MR111). Nothing here says whether the file
+    changed.
     It says what was recorded, and that changes outside the recorded sessions, and by calls that
     name nothing of the file, are not observed."""
     told = []
     for target in sorted(o for o in objects if o.startswith("/") and not o.startswith("//")):
-        events, searched, gaps, not_kept = [], [], [], 0
+        events, searched, gaps, not_kept, effects_unknown = [], [], [], 0, 0
         for session in scope:
             summary, there = session["summary"], session["cwd"]
             alias = (
@@ -1346,12 +1429,13 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
             for content in _lower(entries):
                 results.setdefault(content.get("call_id"), []).append(content["seq"])
             calls = [*entries, *({"type": "action"} | one for one in catalogue or ())]
+            partial = 0  # calls whose recorded effects are not whole (MR199-1)
             for entry in calls:
                 if entry["type"] != "action" or (session is mine and entry["seq"] >= call["seq"]):
                     continue
-                observes, changes, unknown, looks = _effects_of(entry, there, home)
+                (observes, changes, unknown, looks), whole = recorded_effects(entry, there, home)
+                partial += not whole
                 status = entry.get("status")
-                back = [seq for seq in results.get(entry.get("call_id"), ()) if seq > entry["seq"]]
                 if _touches(changes, target):
                     # What became of the call, as its hooks reported it: a returned call brought a
                     # result back, which is no proof of an effect (AGENTS.md).
@@ -1378,13 +1462,16 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
                     continue
                 words = " ".join(str(entry.get("target") or entry.get("tool") or "").split())
                 event = {"alias": alias, "seq": entry["seq"], "kind": kind, "status": status}
-                event |= {"result": back[0] if back else None, "words": words[:60]}
+                event |= {"result": _result_of(entry, results), "words": words[:60]}
                 events.append((float(entry.get("ts") or 0), event))
+            if partial:  # whether those calls touched the file is not known
+                gaps.append(f"{alias}: what {partial} recorded calls touched is not all known")
+                effects_unknown += partial
         events.sort(key=lambda one: one[0])
         listed = [event for _, event in events][-OBJECT_EVENTS:]
         account = {"object": target, "searched": searched, "events": listed}
         account |= {"not_listed": max(0, len(events) - OBJECT_EVENTS), "gaps": gaps}
-        account["not_kept"] = not_kept
+        account["not_kept"], account["effects_unknown"] = not_kept, effects_unknown
         told.append(account | {"complete": not gaps})
     return told
 

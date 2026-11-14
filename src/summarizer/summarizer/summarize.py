@@ -28,6 +28,7 @@ from .events import (
     CHUNK_CHARS,
     ENTRY_IOCS,
     MAX_CHUNKS,
+    TARGET_CHARS,
     Unit,
     agent_home,
     aside,
@@ -52,6 +53,7 @@ from .facts import (
     text_spans,
     wording_rules,
 )
+from .history import EFFECT_KINDS, MAX_EFFECT_PATHS, MAX_PATH_CHARS, call_effects
 from .labels import (
     ACTION,
     COMPLETED,
@@ -118,6 +120,35 @@ class Config:
     # the call's clipped words), the newest this many, so that a lookup can account for every
     # recorded call it did not keep (MR198-1); how many more there are is said.
     max_dropped_calls: int = 1024
+
+
+def effects_record(unit):
+    """The effects recorded from a call's whole words, as a summary record carries them (MR199-1):
+    {"effects": {kind: paths}}, up to MAX_EFFECT_PATHS paths in the order of EFFECT_KINDS, and
+    when they are not whole, "effects_complete": false with why: how many paths are not listed
+    (past the cap, or longer than any file system takes), and whether the hook clipped the
+    call's input, so that even its whole words are not all there. A reader then knows that
+    whether the call touched a file is not known."""
+    told, room = {}, MAX_EFFECT_PATHS
+    for kind in EFFECT_KINDS:
+        paths = [path for path in unit.effects.get(kind) or () if len(path) <= MAX_PATH_CHARS]
+        if paths and room > 0:
+            told[kind] = list(paths[:room])
+            room -= len(told[kind])
+    record = {"effects": told}
+    unlisted = sum(map(len, unit.effects.values())) - sum(map(len, told.values()))
+    if unlisted or unit.input_clipped:
+        record["effects_complete"] = False
+        if unlisted:
+            record["effects_not_listed"] = unlisted
+        if unit.input_clipped:
+            record["input_clipped"] = True
+    return record
+
+
+def result_seq(unit):
+    """The event that brought back what became of a call, its result or its failure, or None."""
+    return next((seq for state, seq, _ in unit.lifecycle if state in ("returned", "failed")), None)
 
 
 def _digest(value):
@@ -521,6 +552,15 @@ class Session:
             self.counts["proposals_not_observed"] += 1
         unit.hosts, unit.where, unit.chars = set(call["hosts"]), "tool_input", call["chars"]
         unit.call_sha256 = str(meta.get("call_sha256") or "")
+        # What the call's whole words show it doing to files, read now, before anything is clipped
+        # for display, so that an object's account never reads a clipped call as whole (MR199-1);
+        # and whether the hook clipped its input, which leaves even these not whole.
+        unit.effects = call_effects(tool, call["target"], call["whole"], cwd, self.home)
+        unit.input_clipped = any(
+            str(note.get("path", "")).partition(".")[0].partition("[")[0] == "tool_input"
+            for note in meta.get("clipped", ())
+            if isinstance(note, dict)
+        )
         if event.get("agent_id"):
             unit.agent_id = str(event["agent_id"])
             unit.actor = str(event.get("agent_type") or "")
@@ -1036,7 +1076,9 @@ class Session:
         entry |= {"labels": labels, "confidence": confidence, "level": level}
         entry["indicators"] = indicators
         if unit.kind == "action":
-            entry |= {"tool": unit.tool, "status": unit.status, "target": clip(unit.origin, 240)}
+            entry |= {"tool": unit.tool, "status": unit.status}
+            entry["target"] = clip(unit.origin, TARGET_CHARS)
+            entry |= effects_record(unit)
             entry["lifecycle"] = [
                 {"state": state, "seq": seq, "ts": ts} for state, seq, ts in unit.lifecycle
             ]
@@ -1328,10 +1370,13 @@ class Session:
         shown = set(chosen)
         sources = sorted(self.sources.values(), key=lambda entry: entry["last"])
         missed = Counter(units[i].tool for i in actions if i not in shown)
+        # Each call the summary does not keep is catalogued with what became of it, the event that
+        # brought that back, and the effects recorded from its whole words (MR199-1).
         dropped = [
             {"seq": units[i].seq, "ts": units[i].ts, "tool": units[i].tool}
-            | {"status": units[i].status, "target": clip(units[i].origin, 240)}
-            | {"call_id": units[i].call_id}
+            | {"status": units[i].status, "target": clip(units[i].origin, TARGET_CHARS)}
+            | {"call_id": units[i].call_id, "result": result_seq(units[i])}
+            | effects_record(units[i])
             for i in actions
             if i not in shown
         ]

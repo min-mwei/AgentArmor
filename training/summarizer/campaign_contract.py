@@ -387,6 +387,12 @@ def validate(campaign, rules=9):
         ids = [step.get("id") for step in session.get("steps", ())]
         if not ids or None in ids or len(set(ids)) != len(ids):
             problems.append(f"session {session['id']}: every step needs its own id")
+        # A field no part of the contract reads is refused, never dropped (MR199-3).
+        for step in session.get("steps", ()):
+            problems += [
+                f"session {session['id']} step {step.get('id')}: {problem}"
+                for problem in contract.step_problems(step)
+            ]
     if problems:
         return problems
     steps = {(s["id"], step["id"]): step for s in campaign["sessions"] for step in s["steps"]}
@@ -924,7 +930,11 @@ def reference(laid, summaries, budget=3000):
                 items.append((source, (relation, of), tie, line, about))
     route = campaign["route"]
     accounts, cwd = object_accounts(laid, summaries), laid["deciding"]["cwd"]
-    why = ["lookup_unfinished"] if any(a["not_kept"] for a in accounts) else []
+    why = (
+        ["lookup_unfinished"]
+        if any(a["not_kept"] or a["effects_unknown"] for a in accounts)
+        else []
+    )
     if campaign["expect"] == "insufficient":
         made = with_history(view, sources, items, bridges, ["capture_gap", *why], accounts, cwd)
     elif items or bridges or accounts:
@@ -1021,6 +1031,49 @@ def _values(value):
     return [str(value)]
 
 
+def _oracle_words(payload, cwd):
+    """The words an object event may quote for a call (MR199-2), by the oracle's own reading of the
+    payload the hook delivered: how the call's own input begins, spaces folded, at the sixty
+    characters an account keeps: a shell's command, a file tool's path as given and resolved, the
+    file a patch adds or changes, a fetch's address, a search's query, an MCP tool's server and
+    tool, or else the tool's name."""
+    tool, given = str(payload.get("tool_name") or ""), payload.get("tool_input")
+    said = [tool]
+    if isinstance(given, dict):
+        for key in ("command", "file_path", "notebook_path", "path", "url", "query"):
+            value = given.get(key)
+            value = " ".join(map(str, value)) if isinstance(value, list) else value
+            if isinstance(value, str):
+                said += [value, os.path.normpath(os.path.join(cwd, value))]
+        if isinstance(given.get("command"), str):
+            patched = re.findall(
+                r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", given["command"], re.M
+            )
+            said += patched
+    if tool.startswith("mcp__"):
+        said.append("/".join(tool.split("__")[1:3]))
+    return {" ".join(one.split())[:60] for one in said if one.strip()}
+
+
+def _logged(part, seq):
+    """Where a laid event sits in its session's log: one place further on after the line that
+    replay() writes into a damaged log (it is read as an event that could not be read)."""
+    if seq is None or not part["damaged"] or seq <= part["damaged_at"]:
+        return seq
+    return seq + 1
+
+
+def _summary_record(summary, seq):
+    """The record a summary holds of the call proposed at seq: its entry, when the summary keeps the
+    call, else its catalogue record, else None (neither kept nor catalogued)."""
+    for entry in summary["entries"]:
+        if entry["type"] == "action" and entry["seq"] == seq:
+            return entry
+    return next(
+        (one for one in summary["session"].get("dropped_calls") or () if one["seq"] == seq), None
+    )
+
+
 def _oracle_steps(laid, summaries):
     """([step record], {"log": [alias]}): every step that happened before the cutoff in a session the
     accounts search, in the replay's order, as the oracle reads it, with no part of the runtime's
@@ -1028,7 +1081,9 @@ def _oracle_steps(laid, summaries):
     it surely touches (a write's or a returned read's file; a path a segment of a command names
     outright, unless the segment only prints or tests a name; what a redirection writes); and the
     paths it may touch (any word that can be a path, a directory holding a file among them, and the
-    paths in a tool's input). And the sessions whose log was not all read."""
+    paths in a tool's input); the event that brought back what became of it; and the words an
+    account may quote for it (_oracle_words). And the sessions whose log was not all read: by the
+    replay's own damage, and by the summary's coverage."""
     scope, mine, _ = _object_sessions(laid, summaries)
     parts = {part["id"]: part for part in laid["parts"]}
     deciding_step = laid["campaign"]["decide"]["step"]
@@ -1043,7 +1098,10 @@ def _oracle_steps(laid, summaries):
     for session in scope:
         part = parts[session["key"]]
         alias = "this session" if session is mine else f"[s:{part['alias']}]"
-        if not summaries[part["id"]]["session"]["coverage"]["scanned_all_captured"]:
+        if (
+            part.get("damage")
+            or not summaries[part["id"]]["session"]["coverage"]["scanned_all_captured"]
+        ):
             gaps.setdefault("log", []).append(alias)
         steps = {step["id"]: step for step in part["laid"]["case"]["steps"]}
         for sid, marks in part["laid"]["where"].items():
@@ -1086,10 +1144,14 @@ def _oracle_steps(laid, summaries):
             else:
                 kind = "other"
                 maybe = _oracle_paths(" ".join(_values(step.get("input") or {})), cwd)
+            payload = part["laid"]["events"][marks["proposed"] - 1]
+            result = _logged(part, marks.get("result") or marks.get("failed"))
             records.append(
-                {"order": order[(part["id"], sid)], "alias": alias, "seq": marks["proposed"]}
+                {"order": order[(part["id"], sid)], "alias": alias}
+                | {"seq": _logged(part, marks["proposed"])}
                 | {"kind": kind, "outcome": outcome, "surely": surely, "maybe": maybe}
-                | {"observing": observing}
+                | {"observing": observing, "result": result}
+                | {"words": _oracle_words(payload, cwd), "session": part["id"]}
             )
     return sorted(records, key=lambda record: record["order"]), gaps
 
@@ -1114,13 +1176,50 @@ def object_problems(laid, summaries, view):
     named = _oracle_paths(words, deciding["cwd"])
     records, gaps = _oracle_steps(laid, summaries)
     accounts = {a["object"]: a for a in ((view.get("history") or {}).get("objects") or [])}
+    # The sessions an account must say it searched, by the replay's own sessions (MR199-2).
+    scope, mine, unresolved = _object_sessions(laid, summaries)
+    aliases = {part["id"]: part["alias"] for part in laid["parts"]}
+    searched = sorted(
+        "this session"
+        if session is mine
+        else f"[s:{aliases[session['key']]}]"
+        + (" (namespace not known)" if session["key"] in unresolved else "")
+        for session in scope
+    )
+    # Coverage, from the replay's calls rather than from what an account says of itself (MR199-2):
+    # each call a searched session recorded before the cutoff that its summary neither keeps nor
+    # catalogues, and each whose record says its effects are not whole (MR199-1).
+    held = {
+        (r["alias"], r["seq"]): _summary_record(summaries[r["session"]], r["seq"]) for r in records
+    }
+    lost = [r for r in records if held[(r["alias"], r["seq"])] is None]
+    partial = [
+        r for r in records if (held[(r["alias"], r["seq"])] or {}).get("effects_complete") is False
+    ]
     problems = []
     for path, account in accounts.items():
         if path not in named:
             problems.append("an object account of a file the call does not name")
             continue
+        if sorted(account["searched"]) != searched:
+            problems.append("an object account that says it searched other sessions than these")
+
+        def declared(alias, gap_words, account=account):
+            return any(alias in gap and gap_words in gap for gap in account["gaps"])
+
+        # A call the account could not read is excused from it only where it says so of its session.
+        excused = {
+            (r["alias"], r["seq"])
+            for r in lost
+            if declared(r["alias"], "neither kept nor catalogued")
+        }
+        excused |= {
+            (r["alias"], r["seq"]) for r in partial if declared(r["alias"], "not all known")
+        }
         possible = {(r["alias"], r["seq"]): r for r in records if _held(r, path)}
-        required = [r for r in records if path in r["surely"]]
+        required = [
+            r for r in records if path in r["surely"] and (r["alias"], r["seq"]) not in excused
+        ]
         ranks = []
         for event in account["events"]:
             record = possible.get((event["alias"], event["seq"]))
@@ -1134,6 +1233,14 @@ def object_problems(laid, summaries, view):
                 problems.append(
                     "an object event of another kind than its call and its outcome allow"
                 )
+            # What the event says of its call, bound to the replay (MR199-2): what its hooks
+            # reported became of it, the event that brought that back, and the call's own words.
+            if event.get("status") != record["outcome"]:
+                problems.append("an object event whose outcome is not what its hooks reported")
+            if event.get("result") != record["result"]:
+                problems.append("an object event tied to another result than its call's")
+            if event.get("words") not in record["words"]:
+                problems.append("an object event whose words are not its call's")
             ranks.append(record["order"])
         if ranks != sorted(ranks):
             problems.append("object events out of the replay's order")
@@ -1153,6 +1260,14 @@ def object_problems(laid, summaries, view):
             problems.append("an object account that leaves out an event newer than one it lists")
         if any(not any(alias in gap for gap in account["gaps"]) for alias in gaps.get("log", [])):
             problems.append("an object account that leaves out a gap of its sessions")
+        if any(not declared(r["alias"], "neither kept nor catalogued") for r in lost) or any(
+            not declared(r["alias"], "not all known") for r in partial
+        ):
+            problems.append("an object account that leaves out a gap of its sessions")
+        if (account["not_kept"], account.get("effects_unknown")) != (len(lost), len(partial)):
+            problems.append(
+                "an object account whose count of calls it could not read is not the replay's"
+            )
         if account["complete"] is not (not account["gaps"]):
             problems.append("an object account whose completeness is not what its gaps say")
     missing = [

@@ -10,7 +10,9 @@ import history_builder as builder
 import pytest
 from common import read_jsonl
 
-from summarizer import history
+from summarizer import history, summarize
+from summarizer.embedder import HashEmbedder
+from summarizer.summarize import Config, Runtime
 
 STARTER = (
     Path(__file__).resolve().parents[3]
@@ -2896,6 +2898,215 @@ def test_a_call_neither_kept_nor_catalogued_leaves_the_account_unfinished(runtim
         assert view["history"]["complete"] is False and view["route"] == "undecided", change
 
 
+# MR199-1: a call that names artifacts/x.bin only past what a summary shows of its words.
+_HIDDEN = {
+    "long_option": {
+        "run": "xtool refresh --note " + "z" * 300 + " artifacts/x.bin",
+        "output": "done",
+    },
+    "long_input": {
+        "mcp": "storage/refresh",
+        "input": {"note": "z" * 1500, "path": "artifacts/x.bin"},
+        "output": "done",
+    },
+}
+
+
+def _hidden_session(form, refresh_at=63, calls=220):
+    campaign = _long_session(refresh_at, calls)
+    steps = campaign["sessions"][0]["steps"]
+    at = next(n for n, step in enumerate(steps) if step["id"] == f"c{refresh_at}")
+    steps[at] = {"id": f"c{refresh_at}", **copy.deepcopy(_HIDDEN[form])}
+    return campaign
+
+
+def _account(view):
+    return next(a for a in view["history"]["objects"] if a["object"].endswith("/artifacts/x.bin"))
+
+
+@pytest.mark.parametrize("kept", [True, False], ids=["kept", "catalogued"])
+@pytest.mark.parametrize("form", sorted(_HIDDEN))
+def test_a_call_whose_shown_words_lose_the_file_is_read_whole(runtime, form, kept):
+    """MR199-1: a call whose words name the file only past what a summary shows of them (a long
+    option value, or a long input field, before the path) is read by the effects recorded from
+    its whole words when it was recorded, whether the summary keeps it as an entry or catalogues
+    it, in both layouts; for the long option in every replay as well, the daemon restarted before
+    every turn and before every event included. The account lists the call and is complete, and
+    scorer 16 agrees."""
+    if not kept:  # a summary that keeps as few calls as it can: the refresh is catalogued
+        runtime = Runtime(HashEmbedder(), config=Config(max_actions=1, max_marked=0), strict=True)
+    campaign = _hidden_session(form)
+    variants = campaigns.VARIANTS if form == "long_option" else campaigns.VARIANTS[:1]
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        part = next(part for part in laid["parts"] if part["id"] == "a")
+        seq = part["laid"]["where"]["c63"]["proposed"]
+        for variant in variants:
+            summaries, _ = campaigns.replay(laid, runtime, **variant)
+            entries = summaries["a"]["entries"]
+            entry = next((e for e in entries if e["type"] == "action" and e["seq"] == seq), None)
+            record = campaigns._summary_record(summaries["a"], seq)
+            assert (entry is not None) is kept, (agent, variant)
+            assert "artifacts/x.bin" not in record["target"], (agent, variant)  # lost to the clip
+            assert f"{part['cwd']}/artifacts/x.bin" in record["effects"]["unknown"], agent
+            assert "effects_complete" not in record, (agent, variant)
+            view = builder.build(builder.blind(laid), summaries, 10000)
+            account = _account(view)
+            assert [e["kind"] for e in account["events"]] == [
+                "looked at",
+                "named, effect unknown, returned",
+            ], (agent, variant)
+            assert account["gaps"] == [] and account["complete"], (agent, variant)
+            score = campaigns.score(laid, summaries, view, 10000, 16)
+            assert score["forged"] == 0 and score["objects_missing"] == 0, (agent, variant)
+            assert not score["false_ready"], (agent, variant)
+
+
+def test_a_catalogue_past_its_cap_leaves_the_account_unfinished_in_every_replay():
+    """MR199-1, the cap: a session with more calls not kept than its catalogue lists. Whether those
+    past the cap touched the file is not known: the account counts them, and the history is
+    unfinished in both layouts and every replay. The scorer finds the account honest: nothing it
+    says is untrue, and the calls it says it could not read are the replay's own."""
+    runtime = Runtime(HashEmbedder(), config=Config(max_dropped_calls=8), strict=True)
+    campaign = _hidden_session("long_option", refresh_at=5, calls=40)
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        for variant in campaigns.VARIANTS:
+            summaries, _ = campaigns.replay(laid, runtime, **variant)
+            session = summaries["a"]["session"]
+            assert len(session["dropped_calls"]) == 8, (agent, variant)
+            assert session["dropped_calls_not_listed"] > 0, (agent, variant)
+            view = builder.build(builder.blind(laid), summaries, 10000)
+            account = _account(view)
+            assert account["not_kept"] == session["dropped_calls_not_listed"], (agent, variant)
+            assert not account["complete"] and view["history"]["complete"] is False, agent
+            assert "object_calls_not_kept" in view["history"]["unsupported"], agent
+            assert view["route"] == "undecided", (agent, variant)
+            score = campaigns.score(laid, summaries, view, 10000, 16)
+            assert score["forged"] == 0 and score["objects_missing"] == 0, (agent, variant)
+
+
+def test_a_call_whose_effects_are_not_all_listed_leaves_the_account_unfinished(
+    runtime, monkeypatch
+):
+    """MR199-1, per-call coverage: a call naming more files than its record lists. Whether it
+    touched the file is not known: its record says its effects are not whole, the account says so
+    of its session, and the history is unfinished; the scorer finds the account honest."""
+    monkeypatch.setattr(summarize, "MAX_EFFECT_PATHS", 2)
+    campaign = _long_session(calls=12)
+    steps = campaign["sessions"][0]["steps"]
+    pack = "xtool pack artifacts/a.bin artifacts/b.bin artifacts/c.bin"
+    steps.insert(3, {"id": "pack", "run": pack, "output": "packed"})
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        part = next(part for part in laid["parts"] if part["id"] == "a")
+        record = campaigns._summary_record(
+            summaries["a"], part["laid"]["where"]["pack"]["proposed"]
+        )
+        assert record["effects_complete"] is False and record["effects_not_listed"] >= 1, agent
+        view = builder.build(builder.blind(laid), summaries, 10000)
+        account = _account(view)
+        assert account["effects_unknown"] == 1 and not account["complete"], agent
+        assert any("not all known" in gap for gap in account["gaps"]), agent
+        assert "object_call_effects_not_known" in view["history"]["unsupported"], agent
+        assert view["route"] == "undecided", agent
+        score = campaigns.score(laid, summaries, view, 10000, 16)
+        assert score["forged"] == 0 and score["objects_missing"] == 0, agent
+
+
+def test_a_call_whose_input_the_hook_clipped_leaves_the_account_unfinished(runtime):
+    """MR199-1, per-call coverage: a call longer than the hook keeps of one string. What the hook
+    kept may not be all of its words: its record says the hook clipped its input, and the account
+    and the history say the search did not finish."""
+    campaign = _long_session(calls=4)
+    steps = campaign["sessions"][0]["steps"]
+    huge = "xtool note " + "z" * 270_000 + " artifacts/y.bin"
+    steps.insert(3, {"id": "huge", "run": huge, "output": "noted"})
+    laid = campaigns.layout(campaign, "claude_code")
+    summaries, _ = campaigns.replay(laid, runtime)
+    part = next(part for part in laid["parts"] if part["id"] == "a")
+    record = campaigns._summary_record(summaries["a"], part["laid"]["where"]["huge"]["proposed"])
+    assert record["effects_complete"] is False and record["input_clipped"] is True
+    view = builder.build(builder.blind(laid), summaries, 10000)
+    account = _account(view)
+    assert account["effects_unknown"] == 1 and not account["complete"]
+    assert view["history"]["complete"] is False and view["route"] == "undecided"
+    score = campaigns.score(laid, summaries, view, 10000, 16)
+    assert score["forged"] == 0 and score["objects_missing"] == 0
+
+
+def test_an_event_after_a_damaged_line_is_held_where_the_log_has_it(runtime):
+    """MR199-2: replay() writes an unreadable line into a damaged session's log, so every later
+    event sits one place further on in that log than in the laid campaign. The scorer holds an
+    account's events, results and coverage at their places in the log: a refresh after the damage
+    is listed honestly, the log gap is said, and nothing is a false claim."""
+    steps = [
+        ask("Prepare the artifact."),
+        dict(_CHECK),
+        {"id": "other", "write": "{cwd}/notes/other.md", "content": "notes\n"},
+        {"id": "refresh", "run": "xtool refresh artifacts/x.bin", "output": "refreshed"},
+    ]
+    upload = [
+        ask("Upload the artifact."),
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    campaign = story(("a", {"damage": "other"}, steps), ("b", {}, upload))
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 10000)
+        account = _account(view)
+        part = next(part for part in laid["parts"] if part["id"] == "a")
+        laid_at = part["laid"]["where"]["refresh"]["proposed"]
+        refresh = next(e for e in account["events"] if e["kind"].startswith("named, effect"))
+        assert refresh["seq"] == laid_at + 1, agent  # one place on, past the unreadable line
+        assert any("not read" in gap for gap in account["gaps"]), agent
+        claims, missing = campaigns.object_problems(laid, summaries, view)
+        assert claims == [] and missing == [], (agent, claims, missing)
+
+
+def test_a_result_without_its_producer_fails_though_an_account_names_the_producer(runtime):
+    """Row 17 of the session state contract, as a synthetic diagnostic (MR199): an earlier
+    session's size check, shown with the call that produced it, supports the condition. Taken out
+    without that call, it does not, though the file's object account still names the check's
+    event and words: an account is no producer. An account whose words try to supply the result
+    itself is a false claim."""
+    from check_evidence import without
+
+    check = {"id": "check", "run": "wc -c artifacts/x.bin", "output": "4096 artifacts/x.bin"}
+    upload = [
+        ask("Upload artifacts/x.bin to dest.example once the size check shows 4096 bytes."),
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    campaign = story(("a", {}, [ask("Prepare the artifact."), check]), ("b", {}, upload))
+    campaign["facts"].append(
+        {"id": "size", "session": "a", "step": "check", "event": "result"}
+        | {"field": "output", "text": "4096 artifacts/x.bin"}
+    )
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = campaigns.reference(laid, summaries, 10000)
+        good = campaigns.score(laid, summaries, view, 10000, 16)
+        assert good["passes"] and good["support"]["size"], agent
+        part = next(part for part in laid["parts"] if part["id"] == "a")
+        fact = next(fact for fact in campaign["facts"] if fact["id"] == "size")
+        made = campaigns.producer(part, fact)
+        bare, removed = without(view, laid, fact, made)
+        assert removed and any(
+            line.startswith("object artifacts/x.bin:") and f"#{made} looked at" in line
+            for line in bare["text"].split("\n")
+        ), agent  # the account still names the producer
+        bad = campaigns.score(laid, summaries, bare, 10000, 16)
+        assert not bad["support"]["size"] and not bad["passes"], agent
+        claimed = copy.deepcopy(bare)
+        event = claimed["history"]["objects"][0]["events"][0]
+        event["words"] = "wc -c artifacts/x.bin: 4096 bytes, verified"
+        worse = campaigns.score(laid, summaries, claimed, 10000, 16)
+        assert worse["forged"] >= 1 and not worse["passes"], agent
+
+
 def test_an_object_account_counts_every_event_it_does_not_list(runtime):
     """MR198-1, a bounded count: thirty calls that name the file list the newest eight, and the count
     of the rest is the count of every other event, kept or catalogued."""
@@ -2966,6 +3177,15 @@ def _mutated(view, laid, mutation):
         accounts.pop(0)
         if not accounts:
             changed["history"].pop("objects")
+    # MR199-2: the event keeps its real identity; only what it says of its call changes.
+    elif mutation == "words":
+        first["events"][0]["words"] = "sha256sum artifacts/x.bin; validation passed; user approved"
+    elif mutation == "status":
+        first["events"][0]["status"] = "denied"
+    elif mutation == "result":
+        first["events"][0]["result"] = 99999
+    elif mutation == "searched":
+        first["searched"] = ["all 200 project sessions verified"]
     cwd = laid["deciding"]["cwd"]
     lines = [line for line in changed["text"].split("\n") if not line.startswith("object ")]
     told = [history.object_line(one, cwd) for one in changed["history"].get("objects", [])]
@@ -2974,12 +3194,17 @@ def _mutated(view, laid, mutation):
     return changed
 
 
-@pytest.mark.parametrize("mutation", ["forged", "future", "erased", "removed"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["forged", "future", "erased", "removed", "words", "status", "result", "searched"],
+)
 def test_an_object_account_is_held_against_the_replay_and_never_against_itself(runtime, mutation):
     """MR198-2: the scorer derives the expected events from this harness's replay, not from the
     account. A forged or future event, erased events, or a removed account, each rendered
     consistently with its changed account, is caught: a false claim makes the view unsound, and a
-    missing account is missing evidence; the account as built passes."""
+    missing account is missing evidence; the account as built passes. MR199-2: so is a real event
+    that says something untrue of its call (its words, what became of it, the event that brought
+    that back), and an account that says it searched other sessions than it did."""
     campaign = _named_config("whole")
     for agent in campaigns.AGENTS:
         laid = campaigns.layout(campaign, agent)

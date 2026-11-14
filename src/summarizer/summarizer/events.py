@@ -14,6 +14,7 @@ from .facts import PERSISTENT, expand, host_flags, hosts, path_classes, shell_fa
 from .store import EVENTS, read_events, session_dir
 
 ACTION_CHARS = 1200  # an action's own text, as embedded and shown; the whole call is still scanned
+TARGET_CHARS = 240  # an action's target (its command, path or server/tool) as a summary shows it
 ENTRY_IOCS = 8  # observables listed on one entry of a summary; its text may name more
 CHUNK_CHARS = 320  # lower-trust content is embedded and quoted whole in pieces of this size
 MAX_CHUNKS = 1024  # per event: every character the hook keeps; anything beyond is reported
@@ -74,6 +75,11 @@ class Unit:
     )  # content seen again: (seq, source, origin, call)
     chars: int = 0  # actions: length of the whole call text, when the kept text is shorter
     call_sha256: str = ""  # actions: the hook's hash of the call's input, to match it elsewhere
+    # actions: the files the call's whole words show it observing, changing, naming with an effect
+    # not known, or looking at (history.call_effects), read when it is recorded, before anything
+    # is clipped for display; and whether the hook clipped its input, so they may not be whole.
+    effects: dict = field(default_factory=dict)
+    input_clipped: bool = False
 
 
 def clip(text, limit):
@@ -262,6 +268,7 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
         "extra": extra,  # input the tool-specific reading above did not cover
         "text": clip(text.strip(), ACTION_CHARS),
         "chars": len(text.strip()),  # of the whole call text, which the kept text may cut short
+        "whole": text.strip(),  # the whole call text, for what is read from it before clipping
         "target": target,
         "flags": flags,
         "hosts": call_hosts,

@@ -88,6 +88,44 @@ REQUIRED = ("id", "pair_id", "family", "group", "decisive", "expect", "steps", "
 _LINE = re.compile(r"#(\d+) (?:(request|action|content)\b)?")
 
 
+# The fields of a step that this contract reads (_step_events, context_eval._call). A field it does
+# not read would be dropped without a word ("outcome": "denied" makes no refusal), so a step that
+# holds one is refused (MR199-3). A step is exactly one kind; what became of a call is said at most
+# once, only of a call, and a call it leaves without a result has no output.
+STEP_KINDS = ("prompt", "event", "run", "read", "write", "fetch", "mcp", "tool")
+LIFECYCLE = ("denied", "error", "pending")
+STEP_FIELDS = frozenset((*STEP_KINDS, *LIFECYCLE, "id", "fields", "content", "input", "output"))
+STEP_FIELDS |= {"actor"}
+_ONLY_WITH = {"content": ("write",), "input": ("tool", "mcp"), "fields": ("event",)}
+
+
+def step_problems(step):
+    """What makes one step unusable, as strings (MR199-3): a field this contract does not read, a
+    step that is not exactly one kind, a field that belongs to another kind of step, and what
+    became of a call said twice, said of a step that is no call, or said beside an output that
+    would then never be delivered."""
+    if not isinstance(step, dict):
+        return ["a step is an object"]
+    problems = [f"unsupported field {key!r}" for key in sorted(set(step) - STEP_FIELDS)]
+    kinds = [kind for kind in STEP_KINDS if kind in step]
+    if len(kinds) != 1:
+        return problems + [f"a step is exactly one of {', '.join(STEP_KINDS)}"]
+    kind, call = kinds[0], kinds[0] not in ("prompt", "event")
+    for key, owners in _ONLY_WITH.items():
+        if key in step and kind not in owners:
+            problems.append(f"{key} belongs to a {' or '.join(owners)} step, not a {kind} step")
+    if "actor" in step and not call:
+        problems.append(f"actor belongs to a call, not a {kind} step")
+    said = [key for key in LIFECYCLE if key in step]
+    if said and not call:
+        problems.append(f"{said[0]} says what became of a call, and a {kind} step is none")
+    elif len(said) > 1:
+        problems.append(f"what became of a call is said once, not as {' and '.join(said)}")
+    elif said and "output" in step:
+        problems.append(f"a call that is {said[0]} delivers no output")
+    return problems
+
+
 def _step_events(step, agent):
     """The events one step produces for an agent, in order, as (event name, hook event fields)."""
     if "prompt" in step:
