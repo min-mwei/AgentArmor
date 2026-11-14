@@ -8,8 +8,8 @@ for one agent, the first replay), the candidates are the entries of the earlier 
 that no group found by summarizer.history.select() holds. They are ranked against the
 proposed call, as the server has it before it runs, in two orders: full-text (SQLite FTS5,
 bm25, on the call's words) and the encoder's similarity (the call as a query, each entry
-as a document). At each k the table counts how many named facts the first k candidates of
-each order reach, the same for an interleaving of the two that takes k in all, and what a
+as a document). At each k (an equal maximum number of candidates: full-text can return fewer) the table
+counts how many named facts the first k candidates of each order reach, the same for an interleaving of the two that takes k in all, and what a
 random draw of k from the same pool reaches on average (k/N for each fact in a pool of N).
 
 Every run is measured; no label decides whether it is (MR156). A candidate is one entry
@@ -26,6 +26,7 @@ of its named facts under each order, for inspection: identities and numbers, nev
 
 import argparse
 import json
+import statistics
 import sqlite3
 from collections import Counter
 
@@ -184,7 +185,7 @@ def main(argv=None):
     missed = sorted(missed_rows)
     by_fact = Counter((pair, fact) for pair, fact, *_ in missed)
     result = dict(told) | {
-        "pool_median": sizes[len(sizes) // 2] if sizes else 0,
+        "pool_median": statistics.median(sizes) if sizes else 0,
         "pool_max": sizes[-1] if sizes else 0,
         "unit": "an entry of a summary, by session, event, kind and its own digest",
         "by_k": table,
