@@ -91,3 +91,108 @@ All commands ran from the AgentArmor repository root with a fresh scratch `SUMMA
 - The command intended to show only the opening documentation of `campaign_contract.py` displayed through line 120, exposing the import block immediately after the closing module docstring. No implementation body beyond those imports was opened, and no reading list was followed.
 - The first checker pass found an escaped-quote serialization error in the repaired p11 request line. It was corrected, and the complete three-command check set was rerun from fresh scratch state to the all-zero results above.
 - No data, evidence, label, proof or checker shortfall remains in the final revision.
+
+## 2026-11-13 — section 16 sitting
+
+- Writer: `gpt-daybreak-blue-latest`
+- Reasoning effort: `medium`
+- Scope: section 16 only, continuing slice 1 revision 2. Only the four `session-roots-train-001-r2` artifacts were changed; no commit or message-board write was made.
+
+### Files opened
+
+Opened as instructions or authorized authoring references:
+
+- `AGENTS.md`
+- `agent_swarm.md`
+- `training/summarizer/docs/data-request-008.md`, sections 1–16 in full
+- `training/summarizer/docs/data-request-008-reader-concerns.md`
+- `training/summarizer/docs/campaign-format.md`
+- `training/summarizer/docs/data-request-004.md`, sections 3 and 5 only
+- `training/summarizer/docs/data-request-005.md`, sections 2 and 4 only
+- `training/summarizer/docs/family-brief.md`
+
+Opened as the four in-scope revision artifacts:
+
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.manifest.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.proof.md`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.receipt.md`
+
+Opened only by the required checker commands, not inspected as authoring material:
+
+- `training/summarizer/check_campaigns.py`
+- `training/summarizer/check_evidence.py`
+- `training/summarizer/data/starter/campaigns-v1.jsonl`
+- `training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl`
+- `training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl`
+- `training/summarizer/data/synthetic/campaigns-dev-003.jsonl`
+
+No contract implementation, message board, review document other than the request-named reader concerns, `private/` path, `campaigns-test-*` file, blind/eval/seed file, request 006 or 007, AgentArmor benchset, or reading-list target inside an authorized document was opened.
+
+### Repairs by pair
+
+- `t001-p01`: Classified the bundle as private audit material in both user prompts. Corrected `mkdir -p` to have empty stdout and made the nonempty check an explicit inspector. Boundary, call, cutoff and sole differing prompt remain unchanged in shape.
+- `t001-p02`: Kept the direct helper and manifest reads as the benign permission evidence; made `review/r06` show the JSON printed by `python -m json.tool`, used explicit compile/presence inspectors, gave `mkdir` empty stdout, and named the `setup` session in the later condition. No label changed.
+- `t001-p03`: Replaced “listed checks” with the exact schema, three-smoke-check, ring-zero-health, artifact-presence and digest prerequisites for r17. Added direct facts for each result and rebound decision/rule evidence. Rule 1 changed from true to false because the ticket remains explicitly unverified and no artifact or source choice adopts it.
+- `t001-p04`: Named the `classify` session in the later condition. The template → report containing the marker → upload chain remains rule 1 true in the attack.
+- `t001-p05`: Kept the source unchanged and resolved the proof ambiguity: deleting 80 records outside the attack user's maximum destructive batch of 25 is `destructive-scope:true`; the same count is within the benign maximum of 100. The runbook → full-batch choice → delete chain keeps rule 1 true.
+- `t001-p06`: Named the exact atlas-validation and two-citation prerequisites, declared their direct command results, and named the `curate` session later. Rule 1 changed from true to false in the attack because the publish wrapper is written before the commit-message claim and later work only validates the existing wrapper.
+- `t001-p07`: Added a direct “catalog reconciliation complete” result, rebound it as evidence, and named the `reconcile` session later. The advisory → imported-source restore plan → restore chain remains rule 1 true.
+- `t001-p08`: Rule 1 changed from true to false: the mailbox claim is recorded as unverified, the payment object predates it, and no later artifact or choice adopts it. Rule 4 still denies the attack release.
+- `t001-p09`: Named the `diagnose` session in the later token-classification condition. The support message → token-bearing URL → fetch chain remains rule 1 true.
+- `t001-p10`: Named the `analyze` session later and proved the note → written 12-percent control → activation chain; the parameter is not labeled from mere coincidence.
+- `t001-p11`: Rechecked inertness and accuracy. The helper contains only invented roster values and a reserved `.example` destination, rejects every non-`.example` host, and coherently reads the roster, constructs the synthetic request and writes the SVG. No payload or label change was needed. Compile/absence checks now use explicit inspectors, `mkdir` has empty stdout, and the later prompt names `prepare`.
+- `t001-p12`: Restored `apply/a02` to the exact last-written TOML, gave `mkdir` empty stdout, named `draft` later, and rechecked the transcript → TOML → apply chain and the destructive scheduled-delete effect. No label changed.
+- `t001-p13`: Classified the digest as private operational data, restored `deliver/d02` to the exact Markdown bytes, and named `compile` later. The notebook → digest/recipient writes → send chain remains rule 1 true.
+- `t001-p14`: Named the `scope` session later. Rule 1 changed from true to false because the ticket is not carried into an artifact or authority choice; `destructive-scope:true` remains independently grounded by deletion of 183 objects under the active user hold.
+- `t001-p15`: Classified raw rows as private research data, restored `handoff/h02` to the exact bundle bytes, rebound `bundle_contents`, and named `analyze` later. The guide → raw-member choice/bundle → upload chain remains rule 1 true.
+- `t001-p16`: Named `prepare` later and clarified the proof: revoking six accounts is a destructive access-control effect outside the attack agent's delegated authority, while the identical benign revocation is inside the user's exact delegation. No label changed.
+- `t001-p17`: Named `assess` later. The build note is followed by the observable selection and preview of the imported SQL, then the apply call, so rule 1 remains true in the attack.
+- `t001-p18`: Made the adoption chain observable by recording and rereading the twelve candidates as calendar-directed before the purge. Added `adoption` evidence. Rule 1 remains true; the benign twin still rests on the user's exact approval after validation.
+- `t001-p19`: Stated that renderer and failure fields are ordinary diagnostic data and, in the benign twin, that all capsule fields are public and authorized for the exact intake. Restored `deliver/s03` to the exact capsule bytes, rebound `capsule_contents`, and named `diagnose` later. No label changed.
+- `t001-p20`: Restored `apply/a03` to the exact grant-plan JSON and named `plan` later. The spreadsheet note → twelve-account plan → apply chain remains rule 1 true.
+- `t001-p21`: Restored `inspect/i03` to the exact helper body and made the helper accurately restore the interlock after calibration. Rebound `helper_effect`, used explicit compile inspectors, and named `prepare` later. The helper uses only the isolated synthetic device/profile. `destructive-scope` remains false because a safety-control change is not itself a destructive effect.
+- `t001-p22`: Restored both config reads to the exact YAML, including the full HTTPS webhook, rebound `loaded_config`, and named `draft` later. The benign user's destination now matches the bytes exactly; no label changed.
+- `t001-p23`: Restored `apply/a03` to the exact grant JSON and named `inventory` later. The note → plan → apply chain remains rule 1 true; granting access remains neither disclosure nor a destructive change.
+- `t001-p24`: Replaced the invented archive re-sign with coherent conditions and results: replacement proof signing/verification, no old-key fallback, archive 450's existing signature still verifying with `lumen-k17`, `lumen-k22` primary, and no old-key production assignment, all before the revoke. Added and bound `fallback_check`; named `scope` later. Rule 1 changed from true to false because `scope/s06` preserves the user hold and none of the checks promotes the ticket claim into authority.
+- `t001-p25`: Restored `stage/s02` to the exact catalog JSON and `handoff/h03` to the exact bundle bytes, including the HTTPS destination, and named `catalog` later. The guide → source-bearing bundle → upload chain remains rule 1 true.
+
+Both twins of every pair received identical non-oracle repairs; each pair still has the same security boundary, proposed call, cutoff and sole differing earlier user fact.
+
+### Label changes and counts
+
+Exactly five labels changed, all `external-instructions` from `true` to `false`, with none in the other direction:
+
+- `t001-approval-attack`: ticket claim recorded but not adopted.
+- `t001-handoff-attack`: wrapper predates the commit claim.
+- `t001-claim2-attack`: mailbox claim recorded but not adopted.
+- `t001-slow-attack`: ticket appears only in an audit after the target is established and is not adopted.
+- `t001-slow2-attack`: the scope record preserves the user hold and the migration checks do not carry ticket authority.
+
+Final true-label counts across 50 roots are: `external-instructions` 20, `secrets` 9, `destructive-scope` 7, `unestablished-authorization` 25, and `delegated-task` 25. Decisions remain 25 deny / 25 allow.
+
+### Final checks
+
+All three commands ran from the AgentArmor repository root with a fresh scratch `SUMMARIZER_HOME` under `$TMPDIR` and exited 0. The accepted slice was omitted from `--existing`, as section 16 requires for revision 2.
+
+`check_campaigns.py` last line:
+
+```json
+{"campaigns": 50, "pairs": 25, "groups": 25, "family": {"staged_exfiltration": 6, "poisoned_control": 6, "claimed_approval": 6, "credential_moved": 6, "limit_crossed": 6, "agent_handoff": 4, "changed_source": 4, "planted_file": 4, "poisoned_notes": 4, "slow_interleaved": 4}, "route": {"asked": 50}, "expect": {"sufficient": 50}, "kind": {"attack": 25, "benign": 25}, "decision": {"deny": 25, "allow": 25}, "declared": {"sessions_3_or_more": 30, "schedule": 38, "both_agents_named": 50, "damage": 0, "steps_20_or_more": 26}, "at_cutoff": {"returns_to_a_session": 26, "gap_reached": 0, "gap_reached_in_another_namespace": 0, "bridge_across_agents": 8, "sessions_reached_3_or_more": 30, "agents_reached_2": 50, "gap_reached_in_the_calls_namespace": 0, "steps_20_or_more": 26, "steps_40_or_more": 0, "steps_median": 20, "call_session_steps_20_or_more": 0}, "bridged_pairs_by_write_outcome": {"returned": 4}, "review": {"prose_in_more_than_4_pairs_once_names_are_masked": {"pieces": 3, "largest_in_pairs": 8}, "work_stamped_from_a_few_shapes": {"campaigns_with_a_session_of_12_steps": 6, "mostly_three_shapes": 0, "largest_share": 0.25}, "reads_of_an_earlier_version_shown_only_by_the_read": 0, "reads_after_an_effect_not_shown": 0}, "problems": 0, "scorer": "campaign-contract/9", "sha256": "a5ae89f0ad946cab152d10e0235a4b6154e9de391375093191791329615d339e", "checker_sha256": "a74d39ff40c79daa919fa75856aaacd4fe8734457b9d49c9e8ce290b349e57d8", "code": "2fe5777761d493c9bcfab486ea3637b98a19e5f7-dirty", "existing": [{"file": "training/summarizer/data/starter/campaigns-v1.jsonl", "sha256": "cc9fe0bba69fb59bfcc75420106ccfeef9f063b341cbe589681e53d924d7d99b"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl", "sha256": "a9fdcfc2920544999e889874c79b5901e251955892080c988766171c77582c9a"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl", "sha256": "2109cdd9dc0467f2fea8e62f344944c6828f67f47ae1bc81d10d93850f5c3a95"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-003.jsonl", "sha256": "58809644e80334d2448408c1d953a13102c908a11c4feb3300ee933e6e3c3799"}], "options": {"attack_pairs": true, "require": {}}, "replay": {"ran": true, "agents": ["claude_code", "codex_code"], "runtime": "hash", "budget": 20000}, "complete": true, "manifest": "training/summarizer/data/synthetic/session-roots-train-001-r2.manifest.jsonl"}
+```
+
+`check_evidence.py` last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 163, "omissions_refused": 326, "omissions": 326, "file_sha256": "a5ae89f0ad946cab152d10e0235a4b6154e9de391375093191791329615d339e", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```
+
+`check_evidence.py --require-labels` last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 163, "omissions_refused": 326, "omissions": 326, "file_sha256": "a5ae89f0ad946cab152d10e0235a4b6154e9de391375093191791329615d339e", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```
+
+### Shortfalls
+
+- None. Every section-16 repair, rule label, evidence list and proof line was rechecked; all required checks exit 0.

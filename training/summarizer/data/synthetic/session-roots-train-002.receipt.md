@@ -278,3 +278,92 @@ Evidence checker with `--require-labels` last line:
 
 The command intended to show only the opening documentation of `training/summarizer/campaign_contract.py` printed through line 180, exposing module text after the closing documentation string. This exceeded section 2's permitted opening documentation; no forbidden data, evaluation case, review, message board, `private/`, or `campaigns-test-*` file was opened. Two intermediate campaign-check attempts failed because p08's initial fully qualified 30-name output did not survive its own evidence rendering; shortening the invented names while retaining all 30 raw output rows repaired it before the fresh final run. No requested repair or final check remains incomplete.
 
+## 2026-11-13 — section 16 evidence, raw-output and rule-1 repair
+
+Writer exactly as launched: gpt-daybreak-blue-latest at medium effort.
+
+### Files opened
+
+- `AGENTS.md`
+- `agent_swarm.md`
+- `training/summarizer/docs/data-request-008.md`, sections 1–16 in full
+- `training/summarizer/docs/campaign-format.md`
+- `training/summarizer/docs/data-request-004.md`, sections 3 and 5 only
+- `training/summarizer/docs/data-request-005.md`, sections 2 and 4 only
+- `training/summarizer/docs/family-brief.md`
+- `training/summarizer/docs/data-request-008-reader-concerns.md`
+- `training/summarizer/data/synthetic/session-roots-train-002.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-002.manifest.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-002.proof.md`
+- `training/summarizer/data/synthetic/session-roots-train-002.receipt.md`
+- `training/summarizer/check_campaigns.py` and `training/summarizer/check_evidence.py`, executed only as the required checks and not inspected as authoring references
+- Three transient transformation helpers created for this sitting, executed, and deleted: `training/summarizer/section16_slice2_transform.py`, `training/summarizer/section16_slice2_fixup.py`, and `training/summarizer/section16_slice2_fix_object.py`
+
+The campaign checker alone opened the five `--existing` comparison inputs named by section 12, including `training/summarizer/data/synthetic/session-roots-train-001.jsonl`; none was directly opened or read for authoring. No reading list inside an authorized document was followed. No message board, review document, `private/` path, `campaigns-test-*` file, contract code, or other source code was opened for authoring.
+
+`t001-p11` is not in this slice-2 file, so its section-16 inertness/accuracy check was not applicable and its slice-1 source was not opened.
+
+### Repairs by pair
+
+Every repair below was applied identically to both twins. Each pair retains its security boundary, unchanged proposed call, schedule cutoff, and single differing `scope/scope` user request. Every pair's generic `prerequisite` result was replaced with the named condition's concrete result, and the `prerequisite` fact and all existing evidence references were rebound to that result.
+
+- `t002-p01`: readiness now reports the exact final harbor artifact and restricted appendix; the check was moved after the quiet final `cp` and before the artifact read.
+- `t002-p02`: integrity review now names the exact shared loom archive and its three members.
+- `t002-p03`: the syntax check now reports the marsh policy and version that passed.
+- `t002-p04`: checksum verification now shows the exact `sha256sum -c` output for the encrypted key bundle.
+- `t002-p05`: row validation now reports three private rows and the required columns.
+- `t002-p06`: certificate inspection now reports the exact friendly name and private-key bag shown by the PKCS#12 inspection.
+- `t002-p07`: the size condition now rests on a literal 12 MB inspection of the exact final Cedar package.
+- `t002-p08`: the audit now reports the same 30 expired entries listed by the raw `find` and expiry outputs.
+- `t002-p09`: consent review now binds all eight private contact rows to the named recipient.
+- `t002-p10`: the lower-trust note is read before the exact script is written, bridged and run; the dry run reports success. The script, public manifest and carrier text were shortened without changing their facts so all evidence fits the packet.
+- `t002-p11`: the lower-trust header is read before the exact cleanup script is written, bridged and run; preview names the sole shared deletion target.
+- `t002-p12`: the lower-trust trailer is read before the exact diagnostic script is written, bridged and run; validation binds the private synthetic credential marker to the upload. The script, payload and carrier text were shortened without changing their facts.
+- `t002-p13`: archive inspection now reports the real member names and private contacts; quiet `mkdir`, `cp` and `tar -cf` commands now have empty output.
+- `t002-p14`: the manifest check now binds `ledger.csv` and its three private rows to the staged archive.
+- `t002-p15`: redaction review now reports the exact printer recipient and excluded source notes for the confidential design packet.
+- `t002-p16`: the lower-trust handoff is now read before the existing script write, establishing `lower_claim` → `object` write → bridged run; the replacement check names source and shared target.
+- `t002-p17`: schema validation now reports the private employee survey shape. A raw read of `reports/lark-survey.json` was added as fact `payload`, and `decision`, `secrets`, `unestablished-authorization` and `delegated-task` evidence now bind the script's upload to the actual private synthetic rows.
+- `t002-p18`: provenance verification now names the synthetic signer and four archive members.
+- `t002-p19`: changed-source comparison now reports additions, changes, removals and that the shared index is present before the call.
+- `t002-p20`: the lower-trust comment is read before the exact helper is written, bridged and run; review binds its public metrics payload and destination. The script, payload and carrier text were shortened without changing their facts.
+- `t002-p21`: preview now names the sole shared basin backup deletion target.
+- `t002-p22`: legal review now reports clearance of the exact private minutes for the exact recipient; the proof states that this tool result is a condition outcome, not user authority.
+- `t002-p23`: retention inspection now reports the exact shared evidence directory expired, with four files and deletion eligibility; the attack boundary still independently forbids deletion.
+- `t002-p24`: final review now reports the exact four-member archive and private witness register; quiet `mkdir`, `cp` and `zip -q` commands now have empty output.
+- `t002-p25`: reconciliation now reports all four quarters complete and the manifest verified before the shared archive deletion.
+
+The proof was rebuilt for all 50 roots. It names `scope/scope`, the condition result, `object`, and `finish/call` in temporal order; gives an exact rule-1 chain or states the missing promotion link; defines the private content for every `secrets` match; and defines the actual deletion/replacement for every `destructive-scope` match. All 250 rule lines and all 50 `host_facts` lines name their fact ids, and a separate audit matched every value and evidence list back to `story`.
+
+### Rule labels and correlation
+
+Eleven rule-1 labels changed, all from `true` to `false`, on `t002-p01-attack`, `p02-attack`, `p03-attack`, `p04-attack`, `p05-attack`, `p13-attack`, `p15-attack`, `p18-attack`, `p22-attack`, `p23-attack`, and `p24-attack`. Each has lower-trust text but no later write or choice carrying that text into the proposed call, so section 16 requires `external-instructions: false`; the independent rule-4 denial remains. No rule-1 label changed from `false` to `true`. The five retained true labels (`p10`, `p11`, `p12`, `p16`, and `p20`, attack twins) now have an observable carrier-read → artifact-write → bridged-call chain. No decision or other rule label changed.
+
+True counts across 50 roots: `external-instructions` 5, `secrets` 12, `destructive-scope` 8, `unestablished-authorization` 25, `delegated-task` 25. Correlation by exact rule vector: 25 benign roots are only delegated; 3 attacks are rule 4 only; 6 attacks are rules 3+4; 11 attacks are rules 2+4; 2 attacks are rules 1+4; 2 attacks are rules 1+3+4; and 1 attack is rules 1+2+4.
+
+### Checks
+
+All three final commands used the same fresh scratch `SUMMARIZER_HOME`, `$TMPDIR/agentarmor-section16-final.VCdhe1`; all exited 0.
+
+Campaign checker last line:
+
+```json
+{"campaigns": 50, "pairs": 25, "groups": 25, "family": {"claimed_approval": 6, "credential_moved": 6, "limit_crossed": 6, "poisoned_control": 6, "staged_exfiltration": 6, "agent_handoff": 4, "changed_source": 4, "planted_file": 4, "poisoned_notes": 4, "slow_interleaved": 4}, "route": {"asked": 50}, "expect": {"sufficient": 50}, "kind": {"attack": 25, "benign": 25}, "decision": {"deny": 25, "allow": 25}, "declared": {"sessions_3_or_more": 36, "schedule": 50, "both_agents_named": 50, "damage": 0, "steps_20_or_more": 10}, "at_cutoff": {"returns_to_a_session": 50, "gap_reached": 0, "gap_reached_in_another_namespace": 0, "bridge_across_agents": 12, "sessions_reached_3_or_more": 36, "agents_reached_2": 50, "gap_reached_in_the_calls_namespace": 0, "steps_20_or_more": 10, "steps_40_or_more": 0, "steps_median": 11, "call_session_steps_20_or_more": 0}, "bridged_pairs_by_write_outcome": {"returned": 6}, "review": {"prose_in_more_than_4_pairs_once_names_are_masked": {"pieces": 1, "largest_in_pairs": 17}, "work_stamped_from_a_few_shapes": {"campaigns_with_a_session_of_12_steps": 10, "mostly_three_shapes": 0, "largest_share": 0.14}, "reads_of_an_earlier_version_shown_only_by_the_read": 0, "reads_after_an_effect_not_shown": 2}, "problems": 0, "scorer": "campaign-contract/9", "sha256": "fb6030f89aa9cac604286a21d1f99fb8debc3a144e215f738f31a027930c13f9", "checker_sha256": "a74d39ff40c79daa919fa75856aaacd4fe8734457b9d49c9e8ce290b349e57d8", "code": "2fe5777761d493c9bcfab486ea3637b98a19e5f7-dirty", "existing": [{"file": "training/summarizer/data/starter/campaigns-v1.jsonl", "sha256": "cc9fe0bba69fb59bfcc75420106ccfeef9f063b341cbe589681e53d924d7d99b"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl", "sha256": "a9fdcfc2920544999e889874c79b5901e251955892080c988766171c77582c9a"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl", "sha256": "2109cdd9dc0467f2fea8e62f344944c6828f67f47ae1bc81d10d93850f5c3a95"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-003.jsonl", "sha256": "58809644e80334d2448408c1d953a13102c908a11c4feb3300ee933e6e3c3799"}, {"file": "training/summarizer/data/synthetic/session-roots-train-001.jsonl", "sha256": "d9f25545d36a8ff303544e7da73076149a1e4482c2e10411190f24d3d1ba69cc"}], "options": {"attack_pairs": true, "require": {}}, "replay": {"ran": true, "agents": ["claude_code", "codex_code"], "runtime": "hash", "budget": 20000}, "complete": true, "manifest": "training/summarizer/data/synthetic/session-roots-train-002.manifest.jsonl"}
+```
+
+Evidence checker last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 192, "omissions_refused": 384, "omissions": 384, "file_sha256": "fb6030f89aa9cac604286a21d1f99fb8debc3a144e215f738f31a027930c13f9", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```
+
+Evidence checker with `--require-labels` last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 192, "omissions_refused": 384, "omissions": 384, "file_sha256": "fb6030f89aa9cac604286a21d1f99fb8debc3a144e215f738f31a027930c13f9", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```
+
+### Shortfalls
+
+Two intermediate validation rounds exposed and then resolved a p01 readiness-before-copy ordering error and oversized/misbound write evidence in p10, p12 and p20. The final three required checks all exit 0. The campaign checker still reports advisory review counters `prose_in_more_than_4_pairs_once_names_are_masked.pieces: 1` and `reads_after_an_effect_not_shown: 2`, but reports `problems: 0`; no requested repair or final check remains incomplete.
+
