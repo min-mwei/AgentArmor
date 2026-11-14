@@ -101,3 +101,64 @@ Transformers and MLX training extras are allowed; they do not restore MLX servin
   describe this build as production attack prevention.
 - Keep the published benchset and hash-pinned host-fact reference modules intact.
   Their historical implementation comments do not change the vLLM-only direction.
+
+## Summarizer: its rules, moved here from the retired Summarizer repository
+
+Summarizer is a library of AgentArmor: the in-tree package in `src/summarizer/` and its training
+and measurement in `training/summarizer/`. Its repository is being retired at the user's request
+(2026-11-13: "Migrate/Move all training data etc. into AgentArmor"); these rules, which the user set
+there, apply here.
+
+- **Roles.** Three agents work on it: Model Trainer, Model Reviewer and Data Engineer.
+  [agent_swarm.md](agent_swarm.md) says what each owns and how to start it. They hand work over
+  through the shared board, `../msgboard.md` beside this repository, which is append-only: never
+  edit another role's entry.
+- **The summarizer tags; it does not judge.** It marks entries and observables with indicators
+  (label, confidence, basis) and a stronger model decides what is an attack. An entry can be
+  suspicious without being one. Recall matters more than precision: do not add a gate that
+  suppresses an indicator because it is common in benign sessions; give it a low confidence instead.
+- **It watches what the agent does, not the quality of what it writes.** The concern is an agent
+  compromising security by its actions: sending data out, suspicious file activity, reaching
+  credentials, changing controls. Insecure code in the agent's own output is the coding agent's
+  job, and tamper-proofing the event log is not planned. Detectors are tuned for recall; Kai is the
+  low-false-positive stage. The user set this on 2026-11-10.
+- **Where it runs.** For AgentArmor end to end, Summarizer and its model run inside an AgentArmor
+  local server. That server may also run Kai-4B, and a decision model such as Kai-4B may instead
+  run remotely in a cloud environment. The user set this on 2026-11-11.
+- **It reads everything the agent reads and runs**: prompts, tool calls, tool results, instruction
+  files. Anything dropped (clipped, unscanned, unreadable) must show up in `coverage`; never report
+  a partial view as complete.
+- **A summary is evidence for a decision about one tool call.** An attempt is never recorded as an
+  outcome: an action's status says what a hook reported, and `returned` means a result came back,
+  not that an effect happened. A later mention never rewrites who had named something at the time.
+  Confidence is a ranking score, not a probability.
+- **Artifacts are JSON Lines.** `events.jsonl`, `summary.jsonl`, probe sets, training data and
+  session cases hold one record per line.
+- **The summary is extractive.** The embedding model ranks, links and tags; it never writes text.
+  Provenance (user, agent, lower-trust) comes from which hook delivered the text, never from the
+  text. Session strings in the digest stay single-line JSON literals.
+- **The hook is an observer.** It prints nothing to stdout, never blocks or denies, always exits 0,
+  and uses the standard library only. `summarizer.hook`, `store`, `redact`, `facts`, `events`,
+  `labels` and `text` must not import NumPy, Torch or any model runtime.
+- **Secrets are redacted before anything is written.** Do not commit session logs, summaries,
+  seeds, model weights, training runs, held-out sets or `.env` files. Seeds, pairs built from them,
+  held-out sets and other local-only material live under the ignored `private/summarizer/`.
+- **Model.** EmbeddingGemma 2 (`google/embeddinggemma-2`), text encoder only, at the revision pinned
+  in `src/summarizer/summarizer/embedder.py`. It is small: ask it for broad-strokes recognition (a
+  few wide probes), not fine distinctions. It must run on CPU, Apple silicon, NVIDIA and AMD; never
+  use float16 (the model card rules it out).
+- **Training is for pattern recognition, not memorization.** Keep entity randomization, group-wise
+  splits and held-out-family evaluation in `training/summarizer/`. AgentArmor's benchset is for
+  measurement only; never train or calibrate on it.
+- **Training data is synthetic, written from real seeds.** A seed is a masked excerpt of a real
+  session; it shows what real text looks like and is never a training example. Seeds stay in
+  `private/summarizer/seeds/`, untracked. AgentArmor's benchset and the corpora it was built from
+  are never seeds. Every synthetic batch passes `training/summarizer/check_data.py` before it is
+  used, and every campaign file passes `training/summarizer/check_campaigns.py` and
+  `training/summarizer/check_evidence.py`. The user set this on 2026-11-09. Synthetic training,
+  development and evaluation data with their proofs, receipts and manifests are tracked under
+  `training/summarizer/data/`; data requests and protocols are in `training/summarizer/docs/`.
+- **Checks.** From `src/summarizer/` with `PYTHONPATH=$PWD:../../training/summarizer`, run `pytest`;
+  CPU tests use a bag-of-words stand-in for the model, and `SUMMARIZER_TEST_MODEL=1` runs the tests
+  that load EmbeddingGemma 2. EmbeddingGemma renders and the fine-tuning tests need the training
+  environment (`src/summarizer[train]`).
