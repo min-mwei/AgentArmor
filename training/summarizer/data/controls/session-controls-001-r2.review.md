@@ -34,7 +34,7 @@
    "package": "0.1.0",
    "wording_sha256": "90bba6d125c2867e7bf212a06671c0cfa6b54342758de4412d9d1d4e4b0e42f7",
    "priors_sha256": "208649feda98c6e86bb009cc9cb1f12deec656f93ce226c7eea4a8bc240b4351",
-   "source_sha256": "b29556d7ec13f606ce909de0fae0bd08c9c3fe1de76b4db8a2652004768dcf0e"
+   "source_sha256": "8861679312d1ea45ff0b3683f36437730a685ca4ee5b27aa3ba4e821c6538017"
   }
  }
 }
