@@ -78,6 +78,7 @@ from collections import Counter
 from pathlib import Path
 
 import campaign_contract as cc
+import check_controls
 import history_builder
 from common import read_jsonl, write_jsonl
 
@@ -143,7 +144,14 @@ def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None):
             base = {"run": f"{campaign['id']}/{agent}", "campaign": campaign["id"], "agent": agent}
             base |= {"family": campaign["family"]}
             base |= {"pair": campaign["pair_id"], "kind": story.get("kind")}
-            base |= {"decision": story.get("decision"), "route_wanted": campaign["route"]}
+            # A diagnostic control labels each view by its deciding agent's authoritative
+            # expectation (check_controls.effective, MR201-2): Codex delivers no refusal, so a
+            # view can expect another decision than the story's. The story's stays beside it.
+            decision = story.get("decision")
+            if campaign.get("control"):
+                decision = check_controls.effective(campaign, part["agent"])[0]["decision"]
+                base["story_decision"] = story.get("decision")
+            base |= {"decision": decision, "route_wanted": campaign["route"]}
             base |= {"expect": campaign["expect"]}
             call = {"tool": proposed.get("tool_name"), "input": proposed.get("tool_input")}
             for arm in ARMS:

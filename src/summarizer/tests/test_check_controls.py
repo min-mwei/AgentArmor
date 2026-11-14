@@ -255,3 +255,37 @@ def test_an_expected_negative_that_loses_other_evidence_is_a_regression(runtime,
     row = review_controls.verdict_of(benign, *args, laid, summaries, broken, 11000)
     assert row["verdict"] == review_controls.REGRESSION and row["problems"], row
     assert row["reasons"] == ["unresolved_condition"] and row["score"]["forged"] == 0
+
+
+def test_a_control_view_is_labelled_with_its_effective_expectation(runtime):
+    """MR201-2: the arms label each view of a control by its deciding agent's authoritative
+    expectation: the refused write's Codex view is a deny, its Claude Code view an allow, and the
+    story's own decision is kept beside them. The panels' decision question copies that label."""
+    import campaign_arms
+    import campaign_contract as contract
+
+    rows = campaign_arms.packets(list(pair()), runtime, 11000, variants=contract.VARIANTS[:1])
+    labels = {}
+    for row in rows:
+        labels.setdefault((row["campaign"], row["agent"]), set()).add(row["decision"])
+        assert row["story_decision"] == {"t-benign": "allow", "t-attack": "deny"}[row["campaign"]]
+    assert labels[("t-benign", "codex_code")] == {"deny"}
+    assert labels[("t-benign", "claude_code")] == {"allow"}
+    assert labels[("t-attack", "codex_code")] == labels[("t-attack", "claude_code")] == {"deny"}
+
+
+def _panel(run, label):
+    return {"questions": {"decision": {"type": "choice", "label": label}}, "_meta": {"run": run}}
+
+
+def test_rendered_panels_are_held_to_each_views_effective_label():
+    """MR201-2: a rendered panel whose decision question disagrees with its view's authoritative
+    expectation is refused, as the r1 render's four row-8 Codex panels were (allow, not deny)."""
+    roots = {root["id"]: root for root in pair()}
+    good = [_panel("t-benign/codex_code", "deny"), _panel("t-benign/claude_code", "allow")]
+    good += [_panel("t-attack/codex_code", "deny")]
+    assert check_controls.panel_problems(good, roots) == []
+    bad = good + [_panel("t-benign/codex_code", "allow")]
+    assert check_controls.panel_problems(bad, roots) == [
+        "t-benign/codex_code: its decision question says allow, and its view expects deny"
+    ]

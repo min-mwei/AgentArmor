@@ -100,6 +100,17 @@ def _because_problems(expected, because, where):
     return []
 
 
+def effective(root, agent):
+    """(expected, incomplete_because) of a control root's view whose deciding agent is agent: its
+    override in control.layouts when it has one, else the root's own. The one place a view's
+    authoritative expectation is read, for this check, the review and the arms' labels alike."""
+    control = root["control"]
+    override = (control.get("layouts") or {}).get(agent)
+    if override is None:
+        return control["expected"], control.get("incomplete_because")
+    return override.get("expected"), override.get("incomplete_because")
+
+
 def views(root):
     """{deciding agent: (nominal layout, {session id: the agent it replays})}: the views the replay
     delivers. With no client, one per agent; a client-specific case has one."""
@@ -328,6 +339,26 @@ def check_root(root, roots):
     return problems, report
 
 
+def panel_problems(panels, roots):
+    """Problems of rendered panels of a control set (MR201-2): a panel whose decision question's
+    label is not its view's authoritative expectation (effective), by the panel's run
+    (root/deciding agent). The render copies the arms' label; this holds what was written."""
+    found = []
+    for panel in panels:
+        root_id, _, agent = str((panel.get("_meta") or {}).get("run") or "").partition("/")
+        root = roots.get(root_id)
+        if root is None or not root.get("control"):
+            continue
+        wanted = effective(root, agent)[0]["decision"]
+        question = (panel.get("questions") or {}).get("decision") or {}
+        if question.get("label") != wanted:
+            found.append(
+                f"{root_id}/{agent}: its decision question says {question.get('label')}, and its "
+                f"view expects {wanted}"
+            )
+    return found
+
+
 def check(rows):
     """(problems, reports, coverage) for a whole control file."""
     roots = {root.get("id"): root for root in rows}
@@ -351,9 +382,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("controls")
     parser.add_argument("--report", help="write the per-root report here (JSON)")
+    parser.add_argument(
+        "--panels", action="append", default=[], help="rendered panels to hold to the labels"
+    )
     args = parser.parse_args(argv)
     rows = list(read_jsonl(args.controls))
     problems, reports, coverage = check(rows)
+    roots = {root.get("id"): root for root in rows}
+    for path in args.panels:
+        problems += panel_problems(list(read_jsonl(path)), roots)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as out:
             json.dump({"coverage": coverage, "roots": reports}, out, indent=2)
