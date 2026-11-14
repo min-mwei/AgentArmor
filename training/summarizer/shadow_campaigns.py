@@ -163,13 +163,16 @@ class StandIn:
     """A Kai that keeps every request it is given whole and answers it, behind the Kai service's
     own HTTP handler (agentarmor_vllm.server.handler), reporting itself as STAND_IN_PACKAGE.
 
-    limit: a body of more bytes is refused with 413, as the service refuses a body over its own
-    limit. delay: seconds each answer takes. p_deny: the decision's probability of deny (the
+    limit: a body of more bytes is refused with refuse_status: 413 as the service refuses a body
+    over its own limit, or 400 as it refuses a request for another reason (a non-finite hidden
+    state, a malformed request), so that a refusal is never read as proof of size (MR254).
+    delay: seconds each answer takes. p_deny: the decision's probability of deny (the
     choice is deny from 0.5). Its answers are not under test. One request at a time, as the
     service serves them."""
 
-    def __init__(self, p_deny=0.1, limit=None, delay=0.0):
+    def __init__(self, p_deny=0.1, limit=None, delay=0.0, refuse_status=413):
         self.p_deny, self.limit, self.delay = float(p_deny), limit, float(delay)
+        self.refuse_status = int(refuse_status)
         self.received = []  # {"status", "body"}: every request that reached it, whole
         self.lock = threading.Lock()
         self.server = self.url = None
@@ -207,8 +210,8 @@ class StandIn:
                     except ValueError:
                         value = None
                     with stand_in.lock:
-                        stand_in.received.append({"status": 413, "body": value})
-                    self.reply(413, DENIAL)
+                        stand_in.received.append({"status": stand_in.refuse_status, "body": value})
+                    self.reply(stand_in.refuse_status, DENIAL)
                     return
                 super().do_POST()
 
@@ -830,7 +833,11 @@ def drive(laid, args, stack, folder):
 # --- the measures of one run, each apart (registration, MR246-MR251)
 
 SCORER = max(cc.SCORERS)  # campaign-contract/16, the freeze's scorer
-TOO_LARGE = ("kai_rejected", "too_large_to_send", "call_too_large", "policy_too_large")
+# Statuses that say the request was too large, by this monitor's own count: never sent, or the
+# rules and the call alone too long. A refusal by the service ("kai_rejected") is not one: an HTTP
+# 400 is also a request refused for another cause, so it is a refusal at the floor whose cause is
+# unclassified (MR254).
+TOO_LARGE = ("too_large_to_send", "call_too_large", "policy_too_large")
 
 
 def sent_key(record):
@@ -906,7 +913,8 @@ def admission_of(last, window):
     """(b) Token admission and HTTP outcomes of the call's own decision: its final status, every
     request it built, sent and had answered, the budget reductions and repeats not sent
     (refusal_retries), whether a request was admitted and after how many reductions, and whether
-    it ended too large (refused at the floor, or never sendable)."""
+    it ended too large by the monitor's own count (never sendable), or refused at the floor by the
+    service, cause unclassified."""
     if not last:
         return None
     routing = last.get("routing") or {}
@@ -914,6 +922,7 @@ def admission_of(last, window):
     admitted = bool(counts.get("answers_admitted"))
     told = {"status": last.get("status"), "requests": counts, "refusal_retries": retries}
     told |= {"admitted": admitted, "too_large": last.get("status") in TOO_LARGE}
+    told["refused_unclassified"] = last.get("status") == "kai_rejected"
     told["reductions_to_admission"] = retries.get("budget_reductions") if admitted else None
     told["final_state_chars"] = (last.get("packet") or {}).get("state_chars")
     told["refused_in_window"] = dict(
@@ -1327,6 +1336,7 @@ def measures_summary(records, posts):
         "deciding_statuses": count(m["status"] for m in admission),
         "deciding_admitted": sum(1 for m in admission if m["admitted"]),
         "deciding_too_large": sum(1 for m in admission if m["too_large"]),
+        "deciding_refused_unclassified": sum(1 for m in admission if m["refused_unclassified"]),
         "reductions_to_admission": count(m["reductions_to_admission"] for m in admission),
         "budget_reductions": sum(
             (m["refusal_retries"] or {}).get("budget_reductions", 0) for m in admission
@@ -1420,6 +1430,7 @@ def run(args, stand_in=None):
     if args.kai_standin:
         if stand_in is None:
             given = {"p_deny": args.standin_p_deny, "limit": args.standin_limit}
+            given["refuse_status"] = args.standin_refuse_status
             given["delay"] = args.standin_delay
             stand_in = owned = StandIn(**{k: v for k, v in given.items() if v is not None})
         if stand_in.url is None:
@@ -1471,7 +1482,10 @@ def parse(argv=None):
     kai.add_argument("--kai-url", help="a Kai service on this machine (a tunnel is one)")
     kai.add_argument("--kai-standin", action="store_true", help="a stand-in Kai, CPU only")
     go.add_argument("--kai-package-sha256", help="the package the Kai at --kai-url must be")
-    go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body (413)")
+    go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body")
+    go.add_argument(
+        "--standin-refuse-status", type=int, choices=(400, 413), help="its refusal: 413 (default)"
+    )
     go.add_argument("--standin-delay", type=float, help="seconds each stand-in answer takes")
     go.add_argument("--standin-p-deny", type=float, help="the stand-in's p(deny), 0.1 if omitted")
     go.add_argument("--out", required=True, help="a new or an empty folder")
@@ -1492,6 +1506,7 @@ def parse(argv=None):
     if not (args.ids or args.pairs):
         parser.error("name campaigns with --ids or --pairs")
     standing = (args.standin_limit, args.standin_delay, args.standin_p_deny)
+    standing += (args.standin_refuse_status,)
     if args.kai_url:
         if not loopback(args.kai_url):
             parser.error(

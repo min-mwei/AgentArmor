@@ -338,6 +338,20 @@ def one_run(written, out, *more):
     return record, json.loads((out / "summary.json").read_text(encoding="utf-8"))
 
 
+def test_a_refusal_at_the_floor_is_not_counted_as_too_large(written, tmp_path):
+    """MR254: the service refuses with HTTP 400 for causes other than size (a non-finite hidden
+    state, a malformed request). A decision refused at every size ends kai_rejected, a refusal
+    at the floor whose cause is unclassified, and never a proven oversize."""
+    refusing = ["--standin-limit", "0", "--standin-refuse-status", "400", "--layouts", "codex_code"]
+    record, summary = one_run(written, tmp_path / "out", *refusing, "--settle", "2")
+    admission = record["measures"]["b_admission"]
+    assert admission["status"] == "kai_rejected" and admission["admitted"] is False
+    assert admission["too_large"] is False and admission["refused_unclassified"] is True
+    assert admission["refused_in_window"].get("400", 0) >= 1
+    told = summary["measures"]["b_admission"]
+    assert told["deciding_too_large"] == 0 and told["deciding_refused_unclassified"] == 1
+
+
 def test_an_oversize_answer_is_recorded_with_the_monitors_halving(ran, written, tmp_path):
     size = ran["records"]["planted/codex_code"]["kai"]["request"]["bytes"]
     limit = ["--standin-limit", str(size - 1), "--layouts", "codex_code", "--settle", "2"]
