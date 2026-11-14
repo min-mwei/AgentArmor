@@ -331,7 +331,10 @@ def test_a_kai_that_times_out_costs_no_answer_and_never_blocks_the_shadow_gate(m
         ]
         # No answer came in time: the verdict is undecided, and nothing claims Kai allowed the call.
         assert issued["verdict"] == "undecided", issued.get("verdict")
-        assert issued.get("status") == "kai_unavailable", (issued.get("status"), issued.get("error"))
+        assert issued.get("status") == "kai_unavailable", (
+            issued.get("status"),
+            issued.get("error"),
+        )
         assert (issued.get("kai") or {}).get("p_deny") is None
         # The summary loop went on: the call's result, reported later, is summarized.
         assert server.gate("codex_code", "s-late", run[1]) == (0, "")
