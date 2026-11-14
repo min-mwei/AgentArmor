@@ -116,13 +116,16 @@ for _source in reversed(SOURCES[:2]):
     if _source not in sys.path:
         sys.path.insert(0, _source)
 
-from agentarmor_monitor.earlier import alias as monitor_alias  # noqa: E402
+from agentarmor_monitor import earlier  # noqa: E402
+from agentarmor_monitor.escalate import MIN_CHARS, logged_call, proposed, request_sha256  # noqa: E402
 from agentarmor_monitor.escalate import read as read_detections  # noqa: E402
-from agentarmor_monitor.kai import loopback  # noqa: E402
+from agentarmor_monitor.kai import DECISION, XPIA, loopback  # noqa: E402
+from agentarmor_monitor.policy import load_rules, state  # noqa: E402
 from agentarmor_vllm.requests import validate_request  # noqa: E402
 from agentarmor_vllm.server import DENIAL  # noqa: E402
 from agentarmor_vllm.server import handler as service_handler  # noqa: E402
 
+from summarizer import history as lookup  # noqa: E402
 from summarizer.store import load_summary, safe_id  # noqa: E402
 
 SCHEMA = "agentarmor-shadow-campaigns/v1"
@@ -639,7 +642,59 @@ def folder_of(spool, agent, session_id):
 
 def alias(agent, session_id):
     """The alias the server's [s:ALIAS] lines give a session (earlier.alias)."""
-    return monitor_alias(agent, safe_id(session_id))
+    return earlier.alias(agent, safe_id(session_id))
+
+
+def at_cutoff(laid, spool, home, rules, max_chars):
+    """What the server's own code builds for the call under decision from what the server held
+    when the call was answered. Run right after the call's gate returns and before anything more
+    is logged, on the run's spool: every session's summary as the spool holds it (each where the
+    schedule left it), and the packet decide.judge and escalate.detect build from them, by the
+    same calls (earlier.scope and earlier.known, summarizer.history.packet, policy.state), at the
+    first budget a decision gives the packet and at each halving of it that the issued record
+    counts (refusal_retries; down to the floor when there is no such record), each with the
+    identifier of the request it makes (escalate.request_sha256).
+
+    It is a recomputation, so it counts only where a request it makes is the one the issued
+    record names: same identifier, same request. Session text stays in memory."""
+    deciding = laid["deciding"]
+    agent, name, call_id = (
+        deciding["agent"],
+        safe_id(deciding["session_id"]),
+        deciding["laid"]["call"],
+    )
+    with spool_env(spool):
+        summaries = {
+            part["id"]: load_summary(part["agent"], part["session_id"])
+            for part in laid["parts"]
+            if not part["later"]
+        }
+        summary = summaries[deciding["id"]]
+        entry = next(
+            e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
+        )
+        directory = folder_of(spool, agent, deciding["session_id"])
+        issued = [
+            r
+            for r in read_detections(directory)
+            if r.get("stage") == "issued" and r.get("call_id") == call_id
+        ]
+        retries = ((issued[-1].get("routing") or {}).get("refusal_retries") or {}) if issued else {}
+        until = retries.get("budget_reductions")
+        call = proposed(entry, None, logged_call(directory, entry))[:2]
+        others, counts = earlier.scope(agent, name, summary, call_id, home)
+        mine = earlier.known(agent, name, summary)
+        size, views = max_chars - len(state(rules, "", call)), []
+        while True:
+            room = max(size, MIN_CHARS)
+            view = lookup.packet(mine, call_id, others, home, room, entry.get("call_sha256"))
+            body = state(rules, view["text"], call)
+            key = request_sha256(body, (DECISION, XPIA))
+            views.append({"size": room, "view": view, "sha256": key, "state_chars": len(body)})
+            if size <= MIN_CHARS or (isinstance(until, int) and len(views) > until):
+                break
+            size = max(MIN_CHARS, size // 2)
+    return {"summaries": summaries, "views": views, "sessions": counts}
 
 
 def gate_once(argv, event, env, deadline):
@@ -709,6 +764,7 @@ def drive(laid, args, stack, folder):
     /health and exit status, the proxy's accounts, and why the run failed, if it did."""
     seen = {"gates": [], "turns": [], "window": None, "caught_up": None, "health": None}
     seen |= {"outcome": {"fed": False, "source": None, "event": None}, "failed": None}
+    seen["cutoff"] = None
     events, deciding, fed = in_order(laid), laid["deciding"], []
     with live_spool(folder / "spool") as spool:
         env = environment(spool, stack["home"], args)
@@ -739,6 +795,11 @@ def drive(laid, args, stack, folder):
                 window = through(part, event)
                 if index == len(events) - 1:
                     seen["window"] = window
+                    try:  # what the server's code builds from what it held, before more is logged
+                        made = (laid, spool, str(stack["home"]), stack["rules"], args.budget)
+                        seen["cutoff"] = at_cutoff(*made)
+                    except Exception as error:  # noqa: BLE001 - a measure that failed says so
+                        seen["cutoff"] = {"error": type(error).__name__}
                 if number == part["damaged_at"]:  # a line of the log that cannot be read
                     log = folder_of(spool, part["agent"], part["session_id"]) / "events.jsonl"
                     with open(log, "ab") as out:
@@ -764,6 +825,170 @@ def drive(laid, args, stack, folder):
     except OSError:
         seen["nudge_socket"] = None
     return seen
+
+
+# --- the measures of one run, each apart (registration, MR246-MR251)
+
+SCORER = max(cc.SCORERS)  # campaign-contract/16, the freeze's scorer
+TOO_LARGE = ("kai_rejected", "too_large_to_send", "call_too_large", "policy_too_large")
+
+
+def sent_key(record):
+    """The identifier of the last request a record says was handed to the transport, or None."""
+    if not (record.get("last_request") or {}).get("transport_attempts"):
+        return None
+    return (record.get("packet") or {}).get("request_sha256")
+
+
+def as_the_server_knows(laid):
+    """The laid campaign with no session's namespace known, as the server holds every session
+    (earlier.known; earlier.LIMITS says "namespaces": "unknown"). The scorer's oracle then expects
+    what such a server can truthfully say, "(namespace not known)" in an object account included,
+    and not what a builder told every namespace would."""
+    parts = [part | {"namespace": None} for part in laid["parts"]]
+    deciding = next(part for part in parts if part["id"] == laid["deciding"]["id"])
+    return laid | {"parts": parts, "deciding": deciding}
+
+
+def evidence_of(last, cutoff, laid, key):
+    """(a) Capture and evidence for the call under decision, three ways apart: what the issued
+    record says of its packet; the history account of that very packet, recomputed at the cutoff
+    (at_cutoff) and kept only when the recomputed request is the issued one; and the campaign
+    scorer (campaign_contract.score, version 16) run on that packet, with the server's own
+    summaries at the cutoff in place of the harness's replay and every namespace unknown, as the
+    server knows them (as_the_server_knows). Counts, labels and fact ids only."""
+    told = {"recorded": None, "recomputed": None, "scored": None}
+    if last:
+        packet = last.get("packet") or {}
+        history = packet.get("history") or {}
+        kept = ("complete", "why", "coverage_known", "sources", "lines", "route", "route_reason")
+        told["recorded"] = {
+            name: packet.get(name)
+            for name in ("scanned_all_captured", "ready", "complete", "key_dropped", "key_clipped")
+        } | {"unresolved_conditions": packet.get("unresolved_conditions")}
+        told["recorded"]["history"] = {name: history.get(name) for name in kept} or None
+        told["recorded"]["earlier_sessions"] = (last.get("routing") or {}).get("earlier_sessions")
+    if not cutoff or "error" in cutoff:
+        told["recomputed"] = {"error": (cutoff or {}).get("error", "not made")}
+        return told
+    views = cutoff["views"]
+    hit = next((n for n, made in enumerate(views) if key and made["sha256"] == key), None)
+    told["recomputed"] = {"matches_issued_request": hit is not None, "at_halving": hit}
+    told["recomputed"]["budgets"] = [made["size"] for made in views]
+    if hit is None:
+        return told
+    view = views[hit]["view"]
+    account = view.get("history") or {}
+    told["recomputed"] |= {
+        "section": bool(account),
+        "complete": account.get("complete", True),
+        "why": account.get("why", []),
+        "unsupported": account.get("unsupported", []),
+        "left_out": account.get("left_out", {}),
+        "sources": len(account.get("sources", ())),
+        "lines": len(account.get("items", ())),
+        "bridges": len(account.get("bridges", ())),
+        "objects": len(account.get("objects", ())),
+        "route": view.get("route"),
+        "route_reason": view.get("route_reason"),
+    }
+    try:
+        known = as_the_server_knows(laid)
+        scored = cc.score(known, cutoff["summaries"], view, views[hit]["size"], SCORER)
+        told["scored"] = scored | {"summaries": "the server's own, at the cutoff"}
+        told["scored"]["namespaces"] = "unknown, as the server holds them"
+    except Exception as error:  # noqa: BLE001 - a scorer that cannot read the view says so
+        told["scored"] = {"error": type(error).__name__}
+    return told
+
+
+def admission_of(last, window):
+    """(b) Token admission and HTTP outcomes of the call's own decision: its final status, every
+    request it built, sent and had answered, the budget reductions and repeats not sent
+    (refusal_retries), whether a request was admitted and after how many reductions, and whether
+    it ended too large (refused at the floor, or never sendable)."""
+    if not last:
+        return None
+    routing = last.get("routing") or {}
+    counts, retries = routing.get("requests") or {}, routing.get("refusal_retries") or {}
+    admitted = bool(counts.get("answers_admitted"))
+    told = {"status": last.get("status"), "requests": counts, "refusal_retries": retries}
+    told |= {"admitted": admitted, "too_large": last.get("status") in TOO_LARGE}
+    told["reductions_to_admission"] = retries.get("budget_reductions") if admitted else None
+    told["final_state_chars"] = (last.get("packet") or {}).get("state_chars")
+    told["refused_in_window"] = dict(
+        Counter(str(w["status"]) for w in window if w["status"] in (400, 413))
+    )
+    return told
+
+
+def decision_of(last, answer):
+    """(c) What Kai answered for the call, where it answered, and what the shadow gate would
+    have done. No accuracy is claimed of it."""
+    kai = (last or {}).get("kai") or {}
+    told = {"answered_by_kai": bool(kai), "choice": (last or {}).get("decision")}
+    told |= {"p_deny": kai.get("p_deny"), "p_xpia": kai.get("p_xpia")}
+    told |= {"verdict": (last or answer).get("verdict"), "why": (last or answer).get("why")}
+    return told | {"would": answer.get("would"), "answered": answer.get("answered")}
+
+
+def observed_of(outcome, observed):
+    """(d) What the client was made to report of the call, and where it came from: the
+    campaign's own step ("step") or an assumed empty result ("assumed"); with the gate's
+    observed record of it."""
+    kept = ("reported", "order", "answered", "ran_after_deny", "ran_before_answer")
+    return outcome | {"observed": [{name: r.get(name) for name in kept} for r in observed]}
+
+
+def load_of(posts, gated, watched, every, chain, caught, health):
+    """(e) Load: each request the proxy saw, attributed by record to the gate (an issued record
+    names it, or it is one the call's own decision built at a lower budget, chain) or to the
+    watcher (one of its records names it), "both" when the same bytes are named by each, else
+    unattributed; how many requests reached the proxy while another was still in flight there
+    (with a serial Kai service, the one sign of queueing these timestamps give); each gate's own
+    elapsed time; the watcher's records; and the work still open when the run ended."""
+    gate = {key for r in gated if (key := sent_key(r))} | set(chain)
+    watcher = {key for r in watched if (key := sent_key(r))}
+
+    def role(sha):
+        named = (sha in gate, sha in watcher)
+        return {(True, False): "gate", (False, True): "watcher", (True, True): "both"}.get(
+            named, "unattributed"
+        )
+
+    roles, statuses = Counter(), {}
+    for post in posts:
+        who = role(post["sha256"])
+        roles[who] += 1
+        statuses.setdefault(who, Counter())[str(post["status"])] += 1
+
+    def busy(post):  # other requests in flight at the proxy when this one arrived
+        return sum(
+            1
+            for other in posts
+            if other is not post
+            and other["t0"] < post["t0"]
+            and (other["ms"] is None or other["t0"] + other["ms"] / 1000 > post["t0"])
+        )
+
+    told = {"requests_by_role": dict(roles)}
+    told["statuses_by_role"] = {who: dict(found) for who, found in statuses.items()}
+    told["arrived_while_another_was_in_flight"] = sum(1 for post in posts if busy(post))
+    told["gate_records"] = len(gated)
+    told["gate_put_to_kai"] = sum(1 for r in gated if sent_key(r))
+    told["gate_elapsed_ms"] = [
+        r["elapsed_ms"] for r in every if r.get("stage") == "answered" and "elapsed_ms" in r
+    ]
+    told["watcher_records"] = len(watched)
+    told["watcher_statuses"] = dict(Counter(str(r.get("status")) for r in watched))
+    outcomes = Counter(post["outcome"] for post in posts)
+    told["open_at_end"] = {
+        "unfinished": outcomes.get("unfinished", 0),
+        "monitor_gave_up": outcomes.get("monitor_gave_up", 0),
+        "watcher_idle": (caught or {}).get("idle"),
+        "waiting": ((health or {}).get("sessions") or {}).get("waiting"),
+    }
+    return told, busy
 
 
 def run_one(campaign, agent, args, stack):
@@ -877,6 +1102,23 @@ def run_one(campaign, agent, args, stack):
         "records": len(watched),
         "statuses": dict(Counter(str(r.get("status")) for r in watched)),
         "halvings": sum(halvings(r) for r in watched),
+    }
+    # The measures, each apart. The call's own decision built one request per budget down to
+    # the one it last sent: recomputed at the cutoff, those are attributed to the gate as well.
+    cutoff, chain = seen["cutoff"], []
+    made = [one["sha256"] for one in (cutoff or {}).get("views", ())]
+    if key in made:
+        chain = made[: made.index(key) + 1]
+    load, busy = load_of(posts, gated, watched, every, chain, seen["caught_up"], seen["health"])
+    load["deciding_request_arrived_while_another_was_in_flight"] = (
+        busy(named[-1]) if named else None
+    )
+    record["measures"] = {
+        "a_evidence": evidence_of(last, cutoff, laid, key),
+        "b_admission": admission_of(last, record["kai"]["window"]),
+        "c_decision": decision_of(last, answer),
+        "d_observed": observed_of(seen["outcome"], record["observed"]),
+        "e_load": load,
     }
     record["errors"] = error_lines(spool)
     record["server"] = {"health": seen["health"]}
@@ -1010,11 +1252,137 @@ def summarize(records, args):
             1 for r in records if not (r.get("caught_up") or {}).get("idle")
         ),
     }
+    told["measures"] = measures_summary(records, posts)
     told["per_run"] = [
         {"run": r["run"], "failed": bool(r["failed"])} | r["outcome"]
         | {"halvings": r["kai"]["halvings"], "s_lines": (r["kai"]["request"] or {}).get("s_lines")}
+        | per_run_measures(r.get("measures") or {})
         for r in records
     ]  # fmt: skip
+    return told
+
+
+def per_run_measures(measures):
+    """One run's measures in a line of numbers and labels."""
+    recomputed = (measures.get("a_evidence") or {}).get("recomputed") or {}
+    scored = (measures.get("a_evidence") or {}).get("scored") or {}
+    admission = measures.get("b_admission") or {}
+    support = scored.get("support") or {}
+    return {
+        "recomputed": recomputed.get("matches_issued_request"),
+        "history_complete": recomputed.get("complete"),
+        "unsupported": recomputed.get("unsupported"),
+        "facts_shown": [sum(1 for v in support.values() if v), len(support)] if support else None,
+        "evidence_ok": scored.get("evidence_ok"),
+        "admitted": admission.get("admitted"),
+        "reductions": (admission.get("refusal_retries") or {}).get("budget_reductions"),
+        "outcome_source": (measures.get("d_observed") or {}).get("source"),
+    }
+
+
+def measures_summary(records, posts):
+    """The registration's five measures over every run, each apart: counts only."""
+
+    def of(name):
+        return [r["measures"][name] for r in records if r.get("measures")]
+
+    def count(values):
+        return dict(sorted(Counter(str(v) for v in values).items()))
+
+    evidence, admission = of("a_evidence"), [m for m in of("b_admission") if m]
+    recorded = [m["recorded"] or {} for m in evidence]
+    recomputed = [m["recomputed"] or {} for m in evidence]
+    matched = [m for m in recomputed if m.get("matches_issued_request")]
+    scored = [m["scored"] for m in evidence if m.get("scored") and "error" not in m["scored"]]
+    told = {}
+    told["a_evidence"] = {
+        "deciding_calls": len(evidence),
+        "recorded_packet_complete": count(m.get("complete") for m in recorded),
+        "recorded_history_complete": count(
+            (m.get("history") or {}).get("complete") for m in recorded
+        ),
+        "recomputed_is_the_issued_request": len(matched),
+        "recomputed_not_the_issued_request": len(recomputed) - len(matched),
+        "history_complete": count(m["complete"] for m in matched),
+        "why": count(reason for m in matched for reason in m["why"]),
+        "unsupported": count(reason for m in matched for reason in m["unsupported"]),
+        "scored": len(scored),
+        "scorer": cc.SCORERS[SCORER],
+        "facts_shown": sum(sum(1 for v in s["support"].values() if v) for s in scored),
+        "facts_declared": sum(len(s["support"]) for s in scored),
+        "earlier_facts_shown": sum(s["elsewhere"][0] for s in scored),
+        "earlier_facts_declared": sum(s["elsewhere"][1] for s in scored),
+        "chains_shown": sum(s["chains"][0] for s in scored),
+        "chains_declared": sum(s["chains"][1] for s in scored),
+        "forged": sum(s["forged"] for s in scored),
+        "why_forged": count(why for s in scored for why in s["why_forged"]),
+        "evidence_ok": sum(1 for s in scored if s["evidence_ok"]),
+        "route_ok": sum(1 for s in scored if s["route_ok"]),
+    }
+
+    def status(test):
+        return sum(n for code, n in posts.items() if code.isdigit() and test(int(code)))
+
+    told["b_admission"] = {
+        "deciding_statuses": count(m["status"] for m in admission),
+        "deciding_admitted": sum(1 for m in admission if m["admitted"]),
+        "deciding_too_large": sum(1 for m in admission if m["too_large"]),
+        "reductions_to_admission": count(m["reductions_to_admission"] for m in admission),
+        "budget_reductions": sum(
+            (m["refusal_retries"] or {}).get("budget_reductions", 0) for m in admission
+        ),
+        "repeats_not_sent": sum(
+            (m["refusal_retries"] or {}).get("repeats_not_sent", 0) for m in admission
+        ),
+        "every_request": {
+            "total": sum(posts.values()),
+            "http_2xx": status(lambda c: 200 <= c < 300),
+            "http_400": status(lambda c: c == 400),
+            "http_413": status(lambda c: c == 413),
+            "http_5xx": status(lambda c: 500 <= c < 600),
+            "no_response": posts.get("None", 0),
+        },
+    }
+    decisions = of("c_decision")
+    told["c_decision"] = {
+        "answered_by_kai": sum(1 for m in decisions if m["answered_by_kai"]),
+        "choices": count(m["choice"] for m in decisions if m["answered_by_kai"]),
+        "verdicts": count(m["verdict"] for m in decisions),
+        "would": count(m["would"] for m in decisions),
+        "accuracy": "not claimed",
+    }
+    observed = of("d_observed")
+    told["d_observed"] = {
+        "fed": count(m["source"] for m in observed if m["fed"]),
+        "not_fed": sum(1 for m in observed if not m["fed"]),
+        "orders": count(o["order"] for m in observed for o in m["observed"]),
+    }
+    loads = of("e_load")
+    roles, statuses = Counter(), {}
+    for m in loads:
+        roles.update(m["requests_by_role"])
+        for who, found in m["statuses_by_role"].items():
+            statuses.setdefault(who, Counter()).update(found)
+    told["e_load"] = {
+        "requests_by_role": dict(sorted(roles.items())),
+        "statuses_by_role": {who: dict(sorted(found.items())) for who, found in statuses.items()},
+        "arrived_while_another_was_in_flight": sum(
+            m["arrived_while_another_was_in_flight"] for m in loads
+        ),
+        "deciding_requests_that_arrived_while_another_was_in_flight": sum(
+            1 for m in loads if m["deciding_request_arrived_while_another_was_in_flight"]
+        ),
+        "gate_records": sum(m["gate_records"] for m in loads),
+        "gate_put_to_kai": sum(m["gate_put_to_kai"] for m in loads),
+        "gate_elapsed_ms": percentiles(ms for m in loads for ms in m["gate_elapsed_ms"]),
+        "watcher_records": sum(m["watcher_records"] for m in loads),
+        "unfinished_at_end": sum(m["open_at_end"]["unfinished"] for m in loads),
+        "monitor_gave_up": sum(m["open_at_end"]["monitor_gave_up"] for m in loads),
+        "runs_with_watcher_work_open_at_end": sum(
+            1 for m in loads if not m["open_at_end"]["watcher_idle"]
+        ),
+        "queueing": "a hypothesis unless requests arrived while another was in flight",
+    }
     return told
 
 
@@ -1061,6 +1429,7 @@ def run(args, stand_in=None):
         upstream, package = args.kai_url, args.kai_package_sha256
     exe = launcher(out)
     stack = {"out": out, "home": home, "exe": exe, "upstream": upstream, "package": package}
+    stack["rules"] = load_rules(args.policy)  # the server's, for the recomputation at the cutoff
     # Printing a configuration reads no spool: the one named here is never made.
     stack["hooks"] = generated_hooks(exe, environment(out / "no-spool", home, args))
     (out / "hooks.json").write_text(json.dumps(stack["hooks"], indent=2) + "\n", encoding="utf-8")

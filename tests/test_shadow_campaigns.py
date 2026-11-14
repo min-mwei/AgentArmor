@@ -23,6 +23,9 @@ What is checked, the negative controls first:
   quoting the script whole, line by line, as the client wrote it: the apply_patch form with "+"
   lines for Codex, the Write form for Claude Code;
 - a 413 is recorded with the monitor's halving; a stand-in that times out gives kai_unavailable;
+- the registration's measures are kept apart: the call's packet, recomputed at the cutoff, counts
+  only when it is the very request issued (a negative control first), and is scored by the
+  campaign scorer; admission, decision and observed outcome; requests attributed by record;
 - summary.json holds no session text.
 
 Hash embedder and a stand-in Kai: no model is loaded, and no number here is a measurement.
@@ -205,6 +208,19 @@ def test_the_quote_check_refuses_the_control_and_a_quote_cut_short(ran):
         assert cut != body["state"] and not quotes_script(cut, alias, agent)
 
 
+def test_a_recomputed_packet_that_is_not_the_issued_request_is_not_counted(ran):
+    record = ran["records"]["planted/claude_code"]
+    (last,) = record["issued"]
+    key = record["kai"]["issued_request_sha256"]
+    other = {"size": 9999, "view": {"text": ""}, "sha256": "0" * 64, "state_chars": 0}
+    told = shadow.evidence_of(last, {"views": [other], "summaries": {}}, None, key)
+    assert told["recomputed"]["matches_issued_request"] is False
+    assert "complete" not in told["recomputed"] and told["scored"] is None
+    # Nor is one made when no request was sent.
+    told = shadow.evidence_of(last, {"views": [other], "summaries": {}}, None, None)
+    assert told["recomputed"]["matches_issued_request"] is False
+
+
 def test_the_text_check_finds_session_text_where_there_is_some(ran):
     spool = ran["out"] / "runs" / shadow.safe_name("planted/codex_code") / "spool"
     texts = session_text(spool)
@@ -287,6 +303,33 @@ def test_a_script_an_earlier_session_wrote_is_quoted_whole_line_by_line(ran, age
     assert record["outcome"]["route"] == "asked" and record["outcome"]["status"] == "scored"
 
 
+@pytest.mark.parametrize("agent", cc.AGENTS)
+def test_the_measures_are_kept_apart_and_the_packet_is_recomputed_exactly(ran, agent):
+    record = ran["records"][f"planted/{agent}"]
+    measures = record["measures"]
+    # (a) The server's packet, recomputed at the cutoff, is the very request it issued; its
+    # account and the campaign scorer then see the earlier write the call runs, and nothing
+    # untrue.
+    recomputed = measures["a_evidence"]["recomputed"]
+    assert recomputed["matches_issued_request"] is True and recomputed["at_halving"] == 0
+    assert recomputed["complete"] is True and recomputed["unsupported"] == []
+    assert recomputed["bridges"] == 1
+    scored = measures["a_evidence"]["scored"]
+    assert scored["chains"] == [1, 1] and scored["forged"] == 0 and scored["evidence_ok"]
+    # (b) to (d), each apart.
+    assert measures["b_admission"]["admitted"] and measures["b_admission"]["too_large"] is False
+    assert measures["c_decision"]["answered_by_kai"] and measures["c_decision"]["would"] == "none"
+    assert measures["d_observed"]["source"] == "assumed"
+    assert measures["d_observed"]["observed"][0]["order"] == "after_answer"
+    # (e) Every request the proxy saw is named by a record, the gate's or the watcher's.
+    load = measures["e_load"]
+    assert set(load["requests_by_role"]) <= {"gate", "watcher", "both"}
+    assert load["gate_records"] == len([g for g in record["gates"] if g["event"] == "PreToolUse"])
+    told = ran["summary"]["measures"]
+    assert told["a_evidence"]["recomputed_is_the_issued_request"] == ran["summary"]["runs"]
+    assert told["e_load"]["requests_by_role"].get("unattributed", 0) == 0
+
+
 def one_run(written, out, *more):
     """The script campaign alone, through the command line: its record and its summary."""
     argv = ["run", str(written), "--ids", "planted", "--out", str(out), "--kai-standin", *more]
@@ -317,6 +360,22 @@ def test_an_oversize_answer_is_recorded_with_the_monitors_halving(ran, written, 
     assert summary["oversize_halvings"]["deciding"] == record["kai"]["halvings"]
     assert summary["kai_requests"]["http_400_413"] >= len(refused)
     assert summary["gates"]["violations"] == 0
+    # (b) The decision reached an admitted request after its reductions; (a) the packet the
+    # record names is recomputed at the halving it was made at; (e) the refused requests are the
+    # decision's own, attributed to the gate by that recomputation.
+    measures = record["measures"]
+    admission = measures["b_admission"]
+    assert (
+        admission["admitted"] and admission["reductions_to_admission"] == record["kai"]["halvings"]
+    )
+    assert admission["refused_in_window"] == {"413": len(refused)}
+    recomputed = measures["a_evidence"]["recomputed"]
+    assert (
+        recomputed["matches_issued_request"]
+        and recomputed["at_halving"] == record["kai"]["halvings"]
+    )
+    assert measures["e_load"]["statuses_by_role"]["gate"]["413"] == len(refused)
+    assert summary["measures"]["b_admission"]["every_request"]["http_413"] >= len(refused)
 
 
 def test_a_stand_in_that_times_out_gives_kai_unavailable(written, tmp_path):
@@ -332,6 +391,11 @@ def test_a_stand_in_that_times_out_gives_kai_unavailable(written, tmp_path):
     assert summary["kai_unavailable"]["deciding"] == 1 and summary["timeouts"] >= 1
     assert record["kai"]["request"]["outcome"] == "monitor_gave_up"
     assert summary["gates"]["violations"] == 0
+    measures = record["measures"]
+    assert measures["b_admission"]["status"] == "kai_unavailable"
+    assert measures["b_admission"]["admitted"] is False
+    assert measures["c_decision"]["answered_by_kai"] is False
+    assert measures["e_load"]["open_at_end"]["monitor_gave_up"] >= 1
 
 
 def test_the_summary_holds_no_session_text(ran):
