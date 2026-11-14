@@ -1062,11 +1062,11 @@ def _oracle_steps(laid, summaries):
             surely, maybe, observing = set(), set(), False
             if "write" in step:
                 kind = "write"
-                surely = maybe = {os.path.normpath(step["write"])}
+                surely = maybe = {os.path.normpath(os.path.join(cwd, step["write"]))}
             elif "read" in step:
                 kind = "read"
                 if outcome == "returned":
-                    surely = maybe = {os.path.normpath(step["read"])}
+                    surely = maybe = {os.path.normpath(os.path.join(cwd, step["read"]))}
             elif isinstance(step.get("run"), str):
                 kind = "other"
                 for segment in re.split(r"\|\||&&|\||;", step["run"]):
