@@ -1963,3 +1963,23 @@ def test_a_bearing_statement_naming_a_session_leaves_the_history_incomplete(star
     forged13, _ = campaigns.check_history(laid, summaries, view, 13)
     assert not any("not one of the list" in item for item in forged14)
     assert any("not one of the list" in item for item in forged13)
+
+
+def test_a_session_named_by_its_own_alias_is_bound(starter, runtime):
+    """MR187: the earlier limit worded with that earlier session's own host alias binds to it,
+    so the account stays complete; only the sessions searched for this call (the eligible project
+    and namespace, before the call) are candidates, so a later session or one of another namespace
+    with the same alias never binds."""
+    campaign = copy.deepcopy(starter["frozen-file-changed-later"])
+    laid, _, view, _ = built(campaign, runtime)
+    earlier = next(part for part in laid["parts"] if not part["mine"] and not part["later"])
+    alias = earlier["alias"]
+    for session in campaign["sessions"]:
+        for step in session["steps"]:
+            if "frozen until the audit ends" in str(step.get("prompt", "")):
+                step["prompt"] = step["prompt"].replace(
+                    "until the audit ends", f"until the {alias} session's audit ends"
+                )
+    _, _, bound, _ = built(campaign, runtime)
+    assert "session_reference_unbound" not in bound["history"]["why"]
+    assert bound["history"]["complete"] is view["history"]["complete"]
