@@ -957,7 +957,7 @@ def select(mine, call_id, others, home):
     # A body that was observed is a lead to evidence and no proof that it will run, and
     # it stays lower-trust text. So is what was read of a control the call may load.
     places, passed, stepped = _places(call), [], set()
-    by_words = set(mine_uses["named"])  # what the call's own words name, before any step
+    by_words = named_by_call(call, cwd, home)  # what the call's own words name, before any step
     for other, acted in sources:
         results = {}
         for content in _lower(other["summary"]["entries"]):
@@ -1183,6 +1183,21 @@ def select(mine, call_id, others, home):
     ]
     if unbound_sessions(bearing, identities):
         why.append("session_reference_unbound")
+    # The account of each file the call names, from the recorded sessions of its project (MR196);
+    # one whose recorded calls are not all kept or searched leaves the history unfinished (MR198-1).
+    objects = _objects(
+        [mine, *[o for o in others if o["key"] in searched and o["cwd"] == cwd]],
+        mine,
+        call,
+        by_words,
+        cwd,
+        home,
+        unresolved,
+    )
+    if any(account["not_kept"] for account in objects):  # calls recorded, scanned and not kept
+        if "object_calls_not_kept" not in unsupported:
+            unsupported.append("object_calls_not_kept")
+        why.append("lookup_unfinished")
     why = sorted(set(why))
     marked = LEVELS.get(call.get("level"), 0) >= LEVELS["medium"]
     linked = any(b["bears"] for b in bridges) or any(item.get("bears") for item in items)
@@ -1209,39 +1224,73 @@ def select(mine, call_id, others, home):
         "excluded": excluded,
         "route": route,
         "route_reason": reason,
-        "objects": _objects(
-            [mine, *[o for o in others if o["key"] in searched and o["cwd"] == cwd]],
-            mine,
-            call,
-            by_words,
-            cwd,
-            home,
-            unresolved,
-        ),
+        "objects": objects,
     }
 
 
+# Programs that report a property of the files they name (a digest, metadata, a size, a listing):
+# a call of one of them observes those files. A call that only prints or tests a name does not.
+OBSERVES = frozenset(
+    {"sha256sum", "sha1sum", "sha224sum", "sha384sum", "sha512sum", "md5sum", "b2sum", "shasum"}
+    | {"cksum", "stat", "file", "ls", "du", "diff", "cmp"}
+)
+NAMING_ONLY = frozenset({"echo", "printf", "test", "["})  # calls that only print or test a name
+
+
+_ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def named_by_call(call, cwd, home):
+    """The files a call's own words name, before any step: what uses() reads off its words, and for
+    a tool that is no shell or file tool, the paths in its input ({"path": "out/bundle"}), which it
+    names as much as a command does. One reading for the lookup and for the reference arm."""
+    words = {k: _ADDRESS.sub(" ", v) if isinstance(v, str) else v for k, v in call.items()}
+    named = set(uses(words, cwd, home)["named"])  # an address's host is no file (auditor@x.example)
+    if call.get("tool") not in SHELLS | WRITES | READS:
+        named |= _said(words, cwd, home)
+    return named
+
+
 def _effects_of(entry, cwd, home):
-    """(looks, changes, unknown) for one call: the paths it only looks at, the paths it may change,
-    and the paths it names with an effect not known, read as the campaign checker reads a command
-    (summarizer.effects). A line that reading cannot cut may change whatever it names; so may a
-    tool that is neither a shell nor a file tool."""
+    """(observes, changes, unknown, looks) for one call: the paths it observes in a supported form
+    (the read tool; a command in one of the read forms the campaign checker compares, or a program
+    in OBSERVES naming the path itself), the paths it may change, the paths it names with an effect
+    not known, and the paths a call that only looks names without observing them (a directory a
+    listing names, a file a command that only looks names), read as the campaign checker reads a
+    command (summarizer.effects). A call that only prints or tests a name (NAMING_ONLY) is none of
+    these, though what its redirection writes is changed (MR198-3). A line that reading cannot cut
+    may change whatever it names; so may a tool that is neither a shell nor a file tool."""
     used, tool = uses(entry, cwd, home), entry.get("tool")
     if tool in WRITES:
-        return set(), {used["write"]} - {None}, set()
+        return set(), {used["write"]} - {None}, set(), set()
     if tool in READS:
-        return set(used["read"]), set(), set()
+        return set(used["read"]), set(), set(), set()
     if tool not in SHELLS:
-        return set(), set(), set(used["named"]) | _said(entry, cwd, home)
+        return set(), set(), set(used["named"]) | _said(entry, cwd, home), set()
     cut = effects.commands(str(entry.get("target") or ""))
     if cut is None:
-        return set(), set(), set(used["named"])
-    looks, changes, unknown = set(), set(), set()
+        return set(), set(), set(used["named"]), set()
+    observes, changes, unknown, looks = set(), set(), set(), set()
     for words, _, writes in cut:
-        named = effects.targets(words, cwd, home)
         changes |= {effects.resolved(w, cwd, home) for w in writes}
-        {"look": looks, "named": changes, "unknown": unknown}[effects.effect(words)].update(named)
-    return looks | set(used["read"]), changes, unknown
+        base = os.path.basename(words[0])
+        if base in NAMING_ONLY:
+            continue
+        named = effects.targets(words, cwd, home)
+        read = effects.read_form(words)
+        effect = effects.effect(words)
+        if read is not None:
+            observes.add(effects.resolved(read[0], cwd, home))
+        elif effect == "look" and base in OBSERVES:
+            observes |= named  # the path itself is observed; a directory holding it is only named
+            looks |= named
+        elif effect == "named":
+            changes |= named
+        elif effect == "unknown":
+            unknown |= named
+        else:
+            looks |= named
+    return observes, changes, unknown, looks
 
 
 def _touches(paths, target):
@@ -1255,12 +1304,15 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
     that looked at it, one of unknown effect that names it, and one that wrote or may have changed
     it or a directory holding it, with what became of each call), the newest OBJECT_EVENTS of them
     with how many more there are, and the gaps that leave the account unfinished: a session whose
-    log was not all read, or one whose namespace is not known. Nothing here says whether the file
-    changed. It says what was recorded, and that changes outside the recorded sessions, and by calls
-    that name nothing of the file, are not observed."""
+    log was not all read, and one whose summary does not keep every call it recorded and scanned
+    (summary.session.omitted.actions; whether a call it dropped touched the file is not known, and
+    the history says the search did not finish, MR198-1). A session whose namespace is not known
+    is searched as the call's own and said so (MR111). Nothing here says whether the file changed.
+    It says what was recorded, and that changes outside the recorded sessions, and by calls that
+    name nothing of the file, are not observed."""
     told = []
     for target in sorted(o for o in objects if o.startswith("/") and not o.startswith("//")):
-        events, searched, gaps = [], [], []
+        events, searched, gaps, not_kept = [], [], [], 0
         for session in scope:
             summary, there = session["summary"], session["cwd"]
             alias = (
@@ -1268,19 +1320,36 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
                 if session is mine
                 else f"[s:{session.get('alias') or session['key']}]"
             )
-            searched.append(alias)
+            # A source of a namespace not known is searched as the call's own, said so (MR111).
+            searched.append(
+                f"{alias} (namespace not known)" if session["key"] in unresolved else alias
+            )
             if not summary["session"]["coverage"]["scanned_all_captured"]:
                 gaps.append(f"{alias}: a part of its log was not read")
-            if session["key"] in unresolved:
-                gaps.append(f"{alias}: its namespace is not known")
+            dropped = (summary["session"].get("omitted") or {}).get("actions") or {}
+            dropped = sum(dropped.values()) if isinstance(dropped, dict) else int(dropped or 0)
+            # The calls the summary did not keep as entries are catalogued in its session record
+            # (summarize.py, MR198-1) and are read here like the calls it kept. A call that was
+            # recorded and scanned and is in neither (a summary made before the catalogue, or one
+            # past its cap) is a gap: whether it touched the file is not known.
+            catalogue = summary["session"].get("dropped_calls")
+            lost = (
+                dropped
+                if catalogue is None
+                else summary["session"].get("dropped_calls_not_listed", 0)
+            )
+            if lost:
+                gaps.append(f"{alias}: {lost} recorded calls are neither kept nor catalogued")
+                not_kept += lost
             entries = summary["entries"]
             results = {}
             for content in _lower(entries):
                 results.setdefault(content.get("call_id"), []).append(content["seq"])
-            for entry in entries:
+            calls = [*entries, *({"type": "action"} | one for one in catalogue or ())]
+            for entry in calls:
                 if entry["type"] != "action" or (session is mine and entry["seq"] >= call["seq"]):
                     continue
-                looks, changes, unknown = _effects_of(entry, there, home)
+                observes, changes, unknown, looks = _effects_of(entry, there, home)
                 status = entry.get("status")
                 back = [seq for seq in results.get(entry.get("call_id"), ()) if seq > entry["seq"]]
                 if _touches(changes, target):
@@ -1292,12 +1361,19 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
                         "failed": "failed",
                         "error": "failed",
                     }.get(status, "proposed, no result")
-                elif target in unknown and status == "returned":
-                    kind = "checked by a call of unknown effect"
-                elif _touches(unknown, target) and status != "denied":
-                    kind = "named by a call of unknown effect"
-                elif target in looks and status == "returned":
+                elif _touches(unknown, target):
+                    # Named, with an effect not known: what it did is not shown by its words,
+                    # and a result that came back is no evidence that it checked anything.
+                    kind = {
+                        "returned": "named, effect unknown, returned",
+                        "denied": "refused",
+                        "failed": "named, effect unknown, failed",
+                        "error": "named, effect unknown, failed",
+                    }.get(status, "named, effect unknown, proposed, no result")
+                elif target in observes and status == "returned":
                     kind = "looked at"
+                elif _touches(looks, target) and status == "returned":
+                    kind = "named, looks only"
                 else:
                     continue
                 words = " ".join(str(entry.get("target") or entry.get("tool") or "").split())
@@ -1308,6 +1384,7 @@ def _objects(scope, mine, call, objects, cwd, home, unresolved):
         listed = [event for _, event in events][-OBJECT_EVENTS:]
         account = {"object": target, "searched": searched, "events": listed}
         account |= {"not_listed": max(0, len(events) - OBJECT_EVENTS), "gaps": gaps}
+        account["not_kept"] = not_kept
         told.append(account | {"complete": not gaps})
     return told
 
@@ -1323,7 +1400,7 @@ def object_line(account, cwd):
     for event in account["events"]:
         where = "" if event["alias"] == before else f"{event['alias']} "
         before = event["alias"]
-        words = "" if event["kind"] == "looked at" else f" {json.dumps(_clipped(event['words']))}"
+        words = f" {json.dumps(_clipped(event['words']))}"  # the form is part of what it says
         said.append(f"{where}#{event['seq']} {_KIND_WORDS[event['kind']]}{words}")
     if account["not_listed"]:
         said.insert(0, f"{account['not_listed']} earlier events not listed")
@@ -1338,8 +1415,10 @@ def object_line(account, cwd):
 
 _KIND_WORDS = {
     "looked at": "looked at",
-    "checked by a call of unknown effect": "checked, effect unknown",
-    "named by a call of unknown effect": "named, effect unknown",
+    "named, effect unknown, returned": "named, effect unknown, returned",
+    "named, effect unknown, failed": "named, effect unknown, failed",
+    "named, effect unknown, proposed, no result": "named, effect unknown, proposed, no result",
+    "named, looks only": "named, looks only",
     "may have changed it, returned": "may have changed it, returned",
     "refused": "refused",
     "failed": "failed, effect unknown",
@@ -1985,7 +2064,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # So does a lookup whose only finding is a control it passed over: the account is how
     # that is traced, and it puts nothing of the control before the reader (MR146-1).
     passed = found["controls_not_applying"]
-    if not items and not why and not found["unresolved"] and not passed:
+    if not items and not why and not found["unresolved"] and not passed and not objects:
         return view | {"route": found["route"], "route_reason": found["route_reason"]}
     sources, seen = [], set()
     for source, *_ in items:

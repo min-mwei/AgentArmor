@@ -102,6 +102,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import tempfile
 from collections import Counter
 
@@ -109,6 +110,7 @@ import case_contract as contract
 from common import read_jsonl
 from context_eval import AGENTS, CWD, HOME, held
 from score_eval import code_version
+from summarizer import history as history_lookup
 from summarizer.daemon import Daemon
 from summarizer.effects import shell_words  # noqa: F401  (read here and re-exported)
 from summarizer.history import object_line
@@ -133,6 +135,12 @@ SCORERS[14] = "campaign-contract/14"
 # step, or shows that action with its words clipped, does not support the result, whatever else
 # it shows: every author-named fact appearing is not enough when a link they rest on is missing.
 SCORERS[15] = "campaign-contract/15"
+# Version 16 (MR198-2): the account of each file the call names (history.object_line) is held
+# against this harness's own replay, never against itself: every event must be a step that
+# happened before the cutoff and touches the file, of a kind its call and its outcome allow, in
+# the replay's order; the events listed and counted must be every one there is; the gaps must be
+# the ones the replay has; and a file the replay shows touched must have its account.
+SCORERS[16] = "campaign-contract/16"
 # Version 12 is version 11 with that check made of the right part of a line (MR134): the
 # text a content line shows is the string it ends with. A line also quotes where the
 # content came from, and under 11 that quoted origin could pass for the content of another
@@ -786,7 +794,7 @@ def today(laid, summaries, budget=3000):
     return view | {"route": route_of(summary, call)}
 
 
-def with_history(view, sources, items, bridges=(), why=()):
+def with_history(view, sources, items, bridges=(), why=(), objects=(), cwd=""):
     """A view with the section for other sessions written from items, and the account of it.
 
     items are (source, (relation, the write it is of or None), tie, line, the digest's
@@ -802,8 +810,11 @@ def with_history(view, sources, items, bridges=(), why=()):
         | ({"of": relation[1]} if relation[1] is not None else {})
         for source, relation, _, _, about in items
     ]
+    told_of = [object_line(account, cwd) for account in objects]
+    if objects:
+        history["objects"] = list(objects)
     body, _, footer = view["text"].rpartition("\n")
-    text = "\n".join([body, TITLE, header_of(history), *lines, footer])
+    text = "\n".join([body, TITLE, header_of(history), *lines, *told_of, footer])
     return view | {"text": text, "history": history}
 
 
@@ -912,13 +923,244 @@ def reference(laid, summaries, budget=3000):
                     relation, of, tie = "recent", None, "recent"
                 items.append((source, (relation, of), tie, line, about))
     route = campaign["route"]
+    accounts, cwd = object_accounts(laid, summaries), laid["deciding"]["cwd"]
+    why = ["lookup_unfinished"] if any(a["not_kept"] for a in accounts) else []
     if campaign["expect"] == "insufficient":
-        made = with_history(view, sources, items, bridges, ["capture_gap"])
-    elif items or bridges:
-        made = with_history(view, sources, items, bridges)
+        made = with_history(view, sources, items, bridges, ["capture_gap", *why], accounts, cwd)
+    elif items or bridges or accounts:
+        made = with_history(view, sources, items, bridges, why, accounts, cwd)
     else:
         made = view
     return made | {"route": route}
+
+
+def _object_sessions(laid, summaries):
+    """(sessions searched, the call's own, those of a namespace not known) as history.select()
+    searches them for the accounts of the files a call names."""
+    deciding = laid["deciding"]
+
+    def session(part):
+        fields = {"key": part["id"], "summary": summaries[part["id"]], "cwd": part["cwd"]}
+        return fields | {"namespace": part["namespace"], "alias": part["alias"]}
+
+    mine, scope, unresolved = session(deciding), [], set()
+    scope.append(mine)
+    for part in laid["parts"]:
+        if part["mine"] or part["later"] or part["cwd"] != deciding["cwd"]:
+            continue
+        near = history_lookup._known(deciding["namespace"]) and history_lookup._known(
+            part["namespace"]
+        )
+        if near and part["namespace"] != deciding["namespace"]:
+            continue
+        if not near:
+            unresolved.add(part["id"])
+        scope.append(session(part))
+    return scope, mine, unresolved
+
+
+def object_accounts(laid, summaries):
+    """The accounts of the files the call names as the runtime writes them, for the reference arm:
+    both arms carry the same accounts, and the scorer holds both against the replay (MR198-2)."""
+    scope, mine, unresolved = _object_sessions(laid, summaries)
+    call_id = laid["deciding"]["laid"]["call"]
+    entries = mine["summary"]["entries"]
+    call = next(e for e in entries if e.get("call_id") == call_id and e["type"] == "action")
+    named = history_lookup.named_by_call(call, mine["cwd"], HOME)
+    accounts = history_lookup._objects(scope, mine, call, named, mine["cwd"], HOME, unresolved)
+    return [account for account in accounts if account["events"] or account["gaps"]]
+
+
+# The oracle's own reading of what a step does to a file (MR198-2): no part of the runtime's account
+# builder. Programs whose call on a file observes it, and calls that only print or test a name.
+_OBSERVING = {"cat", "head", "tail", "sed", "grep", "egrep", "fgrep", "wc", "nl", "od", "jq"}
+_OBSERVING |= {"sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "md5sum", "b2sum"}
+_OBSERVING |= {"shasum", "cksum", "stat", "file", "ls", "du", "hexdump", "less", "more"}
+_NAMING_ONLY = {"echo", "printf", "test", "["}
+_KINDS_FOR = {  # (what the step is, what became of it) -> the kinds its event may have
+    ("write", "returned"): {"may have changed it, returned"},
+    ("write", "denied"): {"refused"},
+    ("write", "failed"): {"failed"},
+    ("write", "proposed"): {"proposed, no result"},
+    ("read", "returned"): {"looked at"},
+    ("other", "returned"): {"named, effect unknown, returned", "may have changed it, returned"},
+    ("other", "denied"): {"refused"},
+    ("other", "failed"): {"named, effect unknown, failed", "failed"},
+    ("other", "proposed"): {"named, effect unknown, proposed, no result", "proposed, no result"},
+}
+
+
+def _oracle_paths(text, cwd, bare=False):
+    """The paths a step's words name, by the oracle's own plain reading of them: each word that
+    reads as a path (a slash or a dot in it, no @ of an address), and with bare, each word after
+    the first that is no option (a directory named "build" is a path too, to a command that
+    removes it)."""
+    try:
+        words = shlex.split(str(text))
+    except ValueError:
+        words = str(text).split()
+    found = set()
+    for at, word in enumerate(words):
+        word = word.strip("'\"`(),;:[]{}").lstrip(">")
+        pathlike = "/" in word or "." in word.strip(".")
+        if not word or "://" in word or "@" in word:
+            continue
+        if not (pathlike or (bare and at and not word.startswith("-"))):
+            continue
+        path = HOME + word[1:] if word == "~" or word.startswith("~/") else word
+        found.add(os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd, path)))
+    return found
+
+
+def _values(value):
+    """Every string inside a tool's input, however nested."""
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _values(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _values(v)]
+    return [str(value)]
+
+
+def _oracle_steps(laid, summaries):
+    """([step record], {"log": [alias]}): every step that happened before the cutoff in a session the
+    accounts search, in the replay's order, as the oracle reads it, with no part of the runtime's
+    account builder (MR198-2): what became of it by the hook events this layout delivers; the paths
+    it surely touches (a write's or a returned read's file; a path a segment of a command names
+    outright, unless the segment only prints or tests a name; what a redirection writes); and the
+    paths it may touch (any word that can be a path, a directory holding a file among them, and the
+    paths in a tool's input). And the sessions whose log was not all read."""
+    scope, mine, _ = _object_sessions(laid, summaries)
+    parts = {part["id"]: part for part in laid["parts"]}
+    deciding_step = laid["campaign"]["decide"]["step"]
+    order, at = {}, 0
+    for name, start, upto in laid["schedule"]:
+        where = parts[name]["laid"]["where"]
+        for sid in sorted(where, key=lambda s: min(where[s].values())):
+            if start < min(where[sid].values()) <= upto:
+                order[(name, sid)] = at
+                at += 1
+    records, gaps = [], {}
+    for session in scope:
+        part = parts[session["key"]]
+        alias = "this session" if session is mine else f"[s:{part['alias']}]"
+        if not summaries[part["id"]]["session"]["coverage"]["scanned_all_captured"]:
+            gaps.setdefault("log", []).append(alias)
+        steps = {step["id"]: step for step in part["laid"]["case"]["steps"]}
+        for sid, marks in part["laid"]["where"].items():
+            if (part["id"], sid) not in order or "proposed" not in marks:
+                continue
+            if session is mine and sid == deciding_step:
+                continue
+            step, cwd = steps[sid], part["cwd"]
+            outcome = (
+                "returned"
+                if "result" in marks
+                else "denied"
+                if "denied" in marks
+                else ("failed" if "failed" in marks else "proposed")
+            )
+            surely, maybe, observing = set(), set(), False
+            if "write" in step:
+                kind = "write"
+                surely = maybe = {os.path.normpath(step["write"])}
+            elif "read" in step:
+                kind = "read"
+                if outcome == "returned":
+                    surely = maybe = {os.path.normpath(step["read"])}
+            elif isinstance(step.get("run"), str):
+                kind = "other"
+                for segment in re.split(r"\|\||&&|\||;", step["run"]):
+                    words = segment.split()
+                    if not words:
+                        continue
+                    program = os.path.basename(words[0])
+                    written = {w for w in re.findall(r">>?\s*(\S+)", segment)}
+                    surely |= _oracle_paths(" ".join(written), cwd)
+                    maybe |= _oracle_paths(" ".join(written), cwd)
+                    if program in _NAMING_ONLY:
+                        continue
+                    outright = _oracle_paths(segment, cwd)
+                    surely |= outright
+                    maybe |= outright | _oracle_paths(segment, cwd, bare=True)
+                    observing = observing or program in _OBSERVING
+            else:
+                kind = "other"
+                maybe = _oracle_paths(" ".join(_values(step.get("input") or {})), cwd)
+            records.append(
+                {"order": order[(part["id"], sid)], "alias": alias, "seq": marks["proposed"]}
+                | {"kind": kind, "outcome": outcome, "surely": surely, "maybe": maybe}
+                | {"observing": observing}
+            )
+    return sorted(records, key=lambda record: record["order"]), gaps
+
+
+def _held(record, path):
+    """Whether a step may touch the path: it names it or a directory holding it."""
+    return any(path == p or path.startswith(p.rstrip("/") + "/") for p in record["maybe"])
+
+
+def object_problems(laid, summaries, view):
+    """(claims, missing): what a view's object accounts say that this harness's replay does not
+    bear out, and the named files the replay shows surely touched that have no account (MR198-2).
+    A false claim makes the view unsound; a missing account is missing evidence, as a fact is."""
+    deciding = laid["deciding"]
+    step = next(
+        s
+        for s in deciding["laid"]["case"]["steps"]
+        if s["id"] == laid["campaign"]["decide"]["step"]
+    )
+    words = step.get("run") or step.get("write") or step.get("read")
+    words = words or " ".join(_values(step.get("input") or {}))
+    named = _oracle_paths(words, deciding["cwd"])
+    records, gaps = _oracle_steps(laid, summaries)
+    accounts = {a["object"]: a for a in ((view.get("history") or {}).get("objects") or [])}
+    problems = []
+    for path, account in accounts.items():
+        if path not in named:
+            problems.append("an object account of a file the call does not name")
+            continue
+        possible = {(r["alias"], r["seq"]): r for r in records if _held(r, path)}
+        required = [r for r in records if path in r["surely"]]
+        ranks = []
+        for event in account["events"]:
+            record = possible.get((event["alias"], event["seq"]))
+            if record is None:
+                problems.append("an object event the replay does not hold")
+                continue
+            allowed = set(_KINDS_FOR.get((record["kind"], record["outcome"]), ()))
+            if record["kind"] == "other" and record["outcome"] == "returned":
+                allowed |= {"named, looks only"} | ({"looked at"} if record["observing"] else set())
+            if event["kind"] not in allowed:
+                problems.append(
+                    "an object event of another kind than its call and its outcome allow"
+                )
+            ranks.append(record["order"])
+        if ranks != sorted(ranks):
+            problems.append("object events out of the replay's order")
+        listed = len(account["events"])
+        counted = listed + account["not_listed"]
+        if listed != min(counted, history_lookup.OBJECT_EVENTS):
+            problems.append("an object account that lists fewer events than it counts and can show")
+        if not len(required) <= counted <= len(possible):
+            problems.append("an object account that does not count every event the replay has")
+        oldest = min(ranks, default=None)
+        shown = {(e["alias"], e["seq"]) for e in account["events"]}
+        if oldest is not None and any(
+            r["order"] > oldest and (r["alias"], r["seq"]) not in shown for r in required
+        ):
+            problems.append("an object account that leaves out an event newer than one it lists")
+        if listed == 0 and required:
+            problems.append("an object account that leaves out an event newer than one it lists")
+        if any(not any(alias in gap for gap in account["gaps"]) for alias in gaps.get("log", [])):
+            problems.append("an object account that leaves out a gap of its sessions")
+        if account["complete"] is not (not account["gaps"]):
+            problems.append("an object account whose completeness is not what its gaps say")
+    missing = [
+        "a named file the replay shows touched has no object account"
+        for path in sorted(named)
+        if any(path in r["surely"] for r in records) and path not in accounts
+    ]
+    return problems, missing
 
 
 def _entry(summary, about):
@@ -1028,8 +1270,13 @@ def check_history(laid, summaries, view, rules=9):
     else:
         problems_of_objects = []
     if history is None:
-        return (["a section for other sessions with no account of it"] if found else []), {}
+        problems = ["a section for other sessions with no account of it"] if found else []
+        if rules >= 16:  # what an account claims is borne out (missing ones are scored as evidence)
+            problems += object_problems(laid, summaries, view)[0]
+        return problems, {}
     problems, by_alias = list(problems_of_objects), {}
+    if rules >= 16:
+        problems += object_problems(laid, summaries, view)[0]
     for source in history.get("sources", ()):
         match = [
             part
@@ -1205,7 +1452,8 @@ def score(laid, summaries, view, budget=None, rules=9):
     # that gives no account of them has not looked: it claims nothing either way.
     ready = bool(ready and not view["later_events"] and history.get("complete", True) is True)
     sound = not forged and not misplaced and not leaked
-    evidence = all(here) and all(there) and all(chain) and sound
+    missing = object_problems(laid, summaries, view)[1] if rules >= 16 else []
+    evidence = all(here) and all(there) and all(chain) and sound and not missing
     route = view.get("route")
     if campaign["expect"] == "sufficient":
         evidence_ok = evidence and ready
@@ -1225,6 +1473,7 @@ def score(laid, summaries, view, budget=None, rules=9):
         "forged": len(forged),
         "why_forged": sorted(set(forged)),
         "bridges_supported": len(extra),  # shown beyond the campaign's own, and borne out
+        "objects_missing": len(missing),  # named files the replay shows touched, with no account
         "scorer": SCORERS[rules],
         "misplaced": misplaced,
         "leaked": leaked,

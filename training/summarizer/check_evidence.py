@@ -11,7 +11,7 @@ fact a label needs must be one whose absence the scorer notices (MR165-2).
 
 For every root and each agent layout this replays the root (hash stand-in encoder), writes
 its reference packet (every declared fact, bridge and limit, at the checker's reference
-budget) and requires it to pass the scorer (campaign-contract/15). Then, for every fact
+budget) and requires it to pass the scorer (campaign-contract/16). Then, for every fact
 `story.evidence` names, it removes that fact's event from the packet: its lines and shown
 entries in the session under decision, or its lines and history items under EARLIER SESSIONS.
 The removal is noticed only when, fact by fact and whatever the readiness or route, the scorer
@@ -54,9 +54,8 @@ RULES = (
     "unestablished-authorization",
     "delegated-task",
 )
-VERSION = (
-    15  # keeps a gap campaign's available evidence (MR168-1) and a result's producer (MR192-3)
-)
+# Gap evidence (MR168-1), a result's producer (MR192-3), and the object accounts (MR198-2).
+VERSION = 16
 BUDGET = 20000  # the checker's reference budget (check_campaigns.REFERENCE_BUDGET)
 
 

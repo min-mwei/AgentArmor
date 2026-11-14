@@ -114,6 +114,10 @@ class Config:
     max_actions: int = 24  # unmarked actions kept for context: the latest, then the most distinct
     max_content: int = 12  # unmarked lower-trust excerpts kept for context
     max_prompts: int = 200  # user requests kept; they are the task, so nearly always all of them
+    # Calls not kept as entries are catalogued in the session record (event, time, tool, status,
+    # the call's clipped words), the newest this many, so that a lookup can account for every
+    # recorded call it did not keep (MR198-1); how many more there are is said.
+    max_dropped_calls: int = 1024
 
 
 def _digest(value):
@@ -1324,6 +1328,14 @@ class Session:
         shown = set(chosen)
         sources = sorted(self.sources.values(), key=lambda entry: entry["last"])
         missed = Counter(units[i].tool for i in actions if i not in shown)
+        dropped = [
+            {"seq": units[i].seq, "ts": units[i].ts, "tool": units[i].tool}
+            | {"status": units[i].status, "target": clip(units[i].origin, 240)}
+            | {"call_id": units[i].call_id}
+            for i in actions
+            if i not in shown
+        ]
+        catalogue = dropped[-config.max_dropped_calls :] if config.max_dropped_calls else []
         session = {
             "type": "session",
             "schema": SCHEMA,
@@ -1360,6 +1372,8 @@ class Session:
                 "key_messages": lost_key,  # medium or high ones among them
             },
             "recent_calls": list(self.recent_calls),
+            "dropped_calls": catalogue,
+            "dropped_calls_not_listed": len(dropped) - len(catalogue),
         }
         iocs = iocs[: config.max_iocs]
         vectors = {

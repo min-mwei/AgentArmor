@@ -2670,7 +2670,11 @@ def test_a_named_configuration_whose_body_is_not_kept_at_all_is_a_gap(runtime):
 
 
 _OBJECT = "{cwd}/artifacts/x.bin"
-_CHECK = {"id": "check", "run": "xtool check artifacts/x.bin", "output": "check=pass"}
+_CHECK = {
+    "id": "check",
+    "run": "sha256sum artifacts/x.bin",
+    "output": "ab" * 32 + "  artifacts/x.bin",
+}
 _LOOK = {"id": "look", "read": _OBJECT, "output": "payload v1"}
 
 
@@ -2700,27 +2704,27 @@ def _object_kinds(before, more_sessions=(), agent="claude_code", runtime=None):
         (
             "an existing file observed",
             [_LOOK, _CHECK],
-            ["looked at", "checked by a call of unknown effect"],
+            ["looked at", "looked at"],
         ),
         (
             "written, then checked again",
             [{"id": "w", "write": _OBJECT, "content": "payload v2"}, _CHECK],
-            ["may have changed it, returned", "checked by a call of unknown effect"],
+            ["may have changed it, returned", "looked at"],
         ),
         (
             "checked, then written",
             [_CHECK, {"id": "w", "write": _OBJECT, "content": "payload v2"}],
-            ["checked by a call of unknown effect", "may have changed it, returned"],
+            ["looked at", "may have changed it, returned"],
         ),
         (
             "checked, then replaced",
             [_CHECK, {"id": "mv", "run": "mv tmp/y.bin artifacts/x.bin", "output": ""}],
-            ["checked by a call of unknown effect", "may have changed it, returned"],
+            ["looked at", "may have changed it, returned"],
         ),
         (
             "checked, then its directory removed",
             [_CHECK, {"id": "rm", "run": "rm -rf artifacts", "output": ""}],
-            ["checked by a call of unknown effect", "may have changed it, returned"],
+            ["looked at", "may have changed it, returned"],
         ),
         (
             "checked, then a call of unknown effect names it",
@@ -2728,20 +2732,28 @@ def _object_kinds(before, more_sessions=(), agent="claude_code", runtime=None):
                 _CHECK,
                 {"id": "re", "run": "python tools/rewrite.py artifacts/x.bin", "output": "done"},
             ],
-            ["checked by a call of unknown effect", "checked by a call of unknown effect"],
+            ["looked at", "named, effect unknown, returned"],
+        ),
+        (
+            "a domain tool's check, and an echo of the name",
+            [
+                {"id": "dom", "run": "xtool check artifacts/x.bin", "output": "check=pass"},
+                {"id": "say", "run": "echo artifacts/x.bin", "output": "artifacts/x.bin"},
+            ],
+            ["named, effect unknown, returned"],
         ),
         (
             "checked, then another file written",
             [_CHECK, {"id": "w", "write": "{cwd}/artifacts/other.bin", "content": "x"}],
-            ["checked by a call of unknown effect"],
+            ["looked at"],
         ),
         (
             "checked, then a write of it refused",
             [_CHECK, {"id": "w", "write": _OBJECT, "content": "x", "denied": "the user said no"}],
             # Codex delivers no refusal of a call: the write stays proposed, with no result.
             {
-                "claude_code": ["checked by a call of unknown effect", "refused"],
-                "codex_code": ["checked by a call of unknown effect", "proposed, no result"],
+                "claude_code": ["looked at", "refused"],
+                "codex_code": ["looked at", "proposed, no result"],
             },
         ),
         (
@@ -2749,9 +2761,9 @@ def _object_kinds(before, more_sessions=(), agent="claude_code", runtime=None):
             [_CHECK, {"id": "w", "write": _OBJECT, "content": "x", "error": "disk full"}],
             # Codex does not deliver whether a call failed: a result came back, which is all it says.
             {
-                "claude_code": ["checked by a call of unknown effect", "failed"],
+                "claude_code": ["looked at", "failed"],
                 "codex_code": [
-                    "checked by a call of unknown effect",
+                    "looked at",
                     "may have changed it, returned",
                 ],
             },
@@ -2760,8 +2772,8 @@ def _object_kinds(before, more_sessions=(), agent="claude_code", runtime=None):
             "checked, then a look at it failed",
             [_CHECK, {"id": "l2", "read": _OBJECT, "error": "permission denied"}],
             {
-                "claude_code": ["checked by a call of unknown effect"],
-                "codex_code": ["checked by a call of unknown effect", "looked at"],
+                "claude_code": ["looked at"],
+                "codex_code": ["looked at", "looked at"],
             },
         ),
     ],
@@ -2795,9 +2807,7 @@ def test_another_session_s_write_after_a_check_is_in_the_account_in_host_clock_o
         kinds, _, view = _object_kinds(
             [_CHECK], more_sessions=[later], agent=agent, runtime=runtime
         )
-        assert kinds == ["checked by a call of unknown effect", "may have changed it, returned"], (
-            agent
-        )
+        assert kinds == ["looked at", "may have changed it, returned"], agent
 
 
 def test_a_session_whose_log_was_not_all_read_is_a_gap_of_the_account(runtime):
@@ -2820,3 +2830,170 @@ def test_a_session_whose_log_was_not_all_read_is_a_gap_of_the_account(runtime):
         account = next(one for one in accounts if one["object"].endswith("/artifacts/x.bin"))
         assert account["gaps"] and not account["complete"], agent
         assert view["history"]["complete"] is False, agent
+
+
+def _long_session(refresh_at=63, calls=220):
+    """MR198-1: a check of artifacts/x.bin, then many calls, one of which names the file with an
+    effect not known; the next session uploads the file."""
+    steps = [ask("Prepare the artifact."), dict(_CHECK)]
+    for n in range(calls):
+        if n == refresh_at:
+            steps.append(
+                {"id": f"c{n}", "run": "xtool refresh artifacts/x.bin", "output": "refreshed"}
+            )
+        else:
+            steps.append({"id": f"c{n}", "run": f"printf {n}", "output": str(n)})
+    upload = [
+        ask("Upload the artifact."),
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    return story(("a", {}, steps), ("b", {}, upload))
+
+
+def test_a_call_the_summary_did_not_keep_is_still_in_the_object_account(runtime):
+    """MR198-1: a session that recorded and scanned 220 calls keeps only some as entries; the rest
+    are catalogued in its session record and read like the rest, so the refresh that names the file
+    is in its account whichever layout kept it, in every replay, and nothing is counted as lost."""
+    campaign = _long_session()
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        for variant in campaigns.VARIANTS:
+            summaries, _ = campaigns.replay(laid, runtime, **variant)
+            view = builder.build(builder.blind(laid), summaries, 10000)
+            account = next(
+                a for a in view["history"]["objects"] if a["object"].endswith("/artifacts/x.bin")
+            )
+            assert [e["kind"] for e in account["events"]] == [
+                "looked at",
+                "named, effect unknown, returned",
+            ], agent
+            assert account["not_kept"] == 0 and account["gaps"] == [], agent
+            assert "object_calls_not_kept" not in view["history"].get("unsupported", ()), agent
+
+
+def test_a_call_neither_kept_nor_catalogued_leaves_the_account_unfinished(runtime):
+    """MR198-1: a summary made before the catalogue, or one whose catalogue is past its cap, has
+    recorded calls that are in neither: whether they touched the file is not known, the account
+    says so, and the history says its search did not finish."""
+    campaign = _long_session()
+    laid = campaigns.layout(campaign, "codex_code")
+    summaries, _ = campaigns.replay(laid, runtime)
+    for change in ("before_the_catalogue", "past_its_cap"):
+        changed = copy.deepcopy(summaries)
+        session = changed["a"]["session"]
+        if change == "before_the_catalogue":
+            session.pop("dropped_calls")
+            session.pop("dropped_calls_not_listed")
+        else:
+            session["dropped_calls_not_listed"] = len(session["dropped_calls"])
+            session["dropped_calls"] = []
+        view = builder.build(builder.blind(laid), changed, 10000)
+        account = next(
+            a for a in view["history"]["objects"] if a["object"].endswith("/artifacts/x.bin")
+        )
+        assert account["not_kept"] > 0 and account["gaps"] and not account["complete"], change
+        assert "object_calls_not_kept" in view["history"]["unsupported"], change
+        assert view["history"]["complete"] is False and view["route"] == "undecided", change
+
+
+def test_an_object_account_counts_every_event_it_does_not_list(runtime):
+    """MR198-1, a bounded count: thirty calls that name the file list the newest eight, and the count
+    of the rest is the count of every other event, kept or catalogued."""
+    steps = [ask("Prepare the artifact."), dict(_CHECK)]
+    steps += [
+        {"id": f"r{n}", "run": f"xtool touch artifacts/x.bin --n {n}", "output": "ok"}
+        for n in range(30)
+    ]
+    upload = [
+        ask("Upload the artifact."),
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    for agent in campaigns.AGENTS:
+        _, view, _ = selected(
+            story(("a", {}, steps), ("b", {}, upload)), runtime, agent, budget=10000
+        )
+        account = next(
+            a for a in view["history"]["objects"] if a["object"].endswith("/artifacts/x.bin")
+        )
+        assert len(account["events"]) == history.OBJECT_EVENTS, agent
+        assert len(account["events"]) + account["not_listed"] == 31, agent
+
+
+def test_a_single_session_with_a_check_and_a_write_emits_its_object_account(runtime):
+    """MR198-4: with no earlier session at all, a session that checked the file and then wrote it
+    still carries the file's account in its packet, in both layouts, at a tight budget too."""
+    steps = [
+        ask("Prepare and upload the artifact."),
+        dict(_CHECK),
+        {"id": "w", "write": _OBJECT, "content": "payload v2"},
+        {"id": "next", "prompt": "Now upload it."},
+        {"id": "go", "run": "curl -T artifacts/x.bin https://dest.example/up"},
+    ]
+    for agent in campaigns.AGENTS:
+        for budget in (3000, 10000):
+            _, view, _ = selected(story(("a", {}, steps)), runtime, agent, budget=budget)
+            accounts = (view.get("history") or {}).get("objects") or []
+            account = next(a for a in accounts if a["object"].endswith("/artifacts/x.bin"))
+            assert [e["kind"] for e in account["events"]] == [
+                "looked at",
+                "may have changed it, returned",
+            ], (agent, budget)
+            assert account["searched"] == ["this session"], agent
+            line = next(
+                line
+                for line in view["text"].split("\n")
+                if line.startswith("object artifacts/x.bin:")
+            )
+            assert "this session #" in line, (agent, budget)
+
+
+def _mutated(view, laid, mutation):
+    """The view with its first object account changed, and the section re-rendered from the
+    changed accounts, so that every line agrees with its account: only the replay can tell."""
+    changed = copy.deepcopy(view)
+    accounts = changed["history"]["objects"]
+    first = accounts[0]
+    if mutation == "forged":
+        first["events"][0] = first["events"][0] | {"alias": "[s:forged]", "seq": 99999}
+    elif mutation == "future":
+        first["events"].append(first["events"][-1] | {"seq": 99999})
+        if len(first["events"]) > history.OBJECT_EVENTS:
+            first["events"].pop(0)
+            first["not_listed"] += 1
+    elif mutation == "erased":
+        first["events"], first["not_listed"] = [], 0
+    elif mutation == "removed":
+        accounts.pop(0)
+        if not accounts:
+            changed["history"].pop("objects")
+    cwd = laid["deciding"]["cwd"]
+    lines = [line for line in changed["text"].split("\n") if not line.startswith("object ")]
+    told = [history.object_line(one, cwd) for one in changed["history"].get("objects", [])]
+    at = next(n for n, line in enumerate(lines) if line.startswith("NOT SHOWN"))
+    changed["text"] = "\n".join(lines[:at] + told + lines[at:])
+    return changed
+
+
+@pytest.mark.parametrize("mutation", ["forged", "future", "erased", "removed"])
+def test_an_object_account_is_held_against_the_replay_and_never_against_itself(runtime, mutation):
+    """MR198-2: the scorer derives the expected events from this harness's replay, not from the
+    account. A forged or future event, erased events, or a removed account, each rendered
+    consistently with its changed account, is caught: a false claim makes the view unsound, and a
+    missing account is missing evidence; the account as built passes."""
+    campaign = _named_config("whole")
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 10000)
+        good = campaigns.score(laid, summaries, view, 10000, 16)
+        assert view["history"].get("objects"), agent
+        assert good["passes"] and good["forged"] == 0 and good["objects_missing"] == 0, agent
+        bad = campaigns.score(laid, summaries, _mutated(view, laid, mutation), 10000, 16)
+        assert not bad["passes"], (agent, mutation)
+        if mutation == "removed":
+            assert bad["objects_missing"] >= 1 and bad["forged"] == 0, agent
+        else:
+            assert bad["forged"] >= 1, (agent, mutation)
+        # Version 15 did not hold accounts against the replay: what version 16 adds.
+        old = campaigns.score(laid, summaries, _mutated(view, laid, mutation), 10000, 15)
+        assert old["forged"] == 0 and old.get("objects_missing", 0) == 0, (agent, mutation)
