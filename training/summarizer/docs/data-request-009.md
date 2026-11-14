@@ -137,3 +137,39 @@ receipt, `campaigns-dev-003-r2.receipt.md`, holds the writer exactly as your lau
 file you opened, each read you repaired with what it showed and what it shows now, the check's last
 line and its review counts before and after, and every shortfall. Change only those three files and
 the manifest. Do not run `git commit`. Do not write on any message board.
+
+## 6. Revision 3: every command's output is what that command prints (MR181)
+
+Added by the Model Trainer on 2026-11-13. The Reviewer returned revision 2 (MR181): many steps show
+a description where the command prints something else. AgentArmor's campaign check now refuses the
+shapes whose output is known from the command alone: a successful `test` or `[` prints nothing; a
+copy, move, removal, `mkdir`, `touch`, `chmod`, `chown` or `ln` without a verbose option prints
+nothing; `echo` and a `printf '%s' …` print exactly their text; `wc -c`, `-l` or `-w FILE` prints the
+count of the file's bytes, newlines or words, then the file's name. In revision 2 it refuses 148
+such outputs in 36 pairs. The Reviewer also found that other forms the check does not compare print
+something else than shown, for example (lines as in revision 2):
+
+| Lines, pair | Steps | What is wrong |
+|---|---|---|
+| 7–8, `c003-slow-interleaved-01` | `assemble/verify-archive`; `review/inspect-members`, `scan-modes`; `publish/verify-owner` | `tar … \| sort \| uniq -d` prints duplicate names (nothing when there are none), not a sentence; `tar … \| head` prints member names; the `awk` pipelines print the fields they extract |
+| 55–56, `c003-planted-file-later-02` | `audit/compare-card-count`, `assemble/check-card-count` | `find … \| wc -l` prints a number |
+| 59–60, `c003-claimed-approval-02` | `review/count-previews` | the same: a number |
+| 61–62, `c003-handoff-02` | `inspect/list-archive` | `tar -tzf … \| head` prints member names |
+| 35–36, `c003-credential-moved-02` | `document/check-markdown`, `deliver/check-sample-size`, `check-timeline-size` | `wc -w FILE` and `wc -c FILE` print the file's name too; the byte counts are 91 and 73, not 92 and 79 |
+
+Write `training/summarizer/data/synthetic/campaigns-dev-003-r3.jsonl` from revision 2. Review **every**
+command and its output in the file, not only what the check lists: each output is what that exact
+command prints given what the trace shows (real literal stdout; nothing where the command prints
+nothing; names where it lists names; a number where it counts). Where the story needs an observation
+a plain command cannot print, use a command that visibly prints it, never a sentence in place of
+output; descriptions belong in the proof, not in tool output. Do not add success claims that only
+explain an answer. Both twins identically; keep each pair's boundary, call, cutoff and one differing
+fact; no label changes.
+
+The campaign check of section 5 (with section 4's counts, the manifest now
+`training/summarizer/data/eval/campaigns-dev-003-r3.manifest.jsonl`) must exit 0 with `problems: 0`;
+look at every read it lists as not compared. Copy the proof to `campaigns-dev-003-r3.proof.md`,
+changed only where a row's words change. The receipt, `campaigns-dev-003-r3.receipt.md`, holds the
+writer exactly as your launcher gave it, every file you opened, the number of steps changed per pair,
+the check's last line with its review counts, and every shortfall. Change only those three files and
+the manifest. Do not run `git commit`. Do not write on any message board.
