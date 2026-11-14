@@ -12,6 +12,7 @@ from common import read_jsonl
 
 from summarizer import history, summarize
 from summarizer.embedder import HashEmbedder
+from summarizer.labels import combine, content_indicators
 from summarizer.summarize import Config, Runtime
 
 STARTER = (
@@ -2298,7 +2299,10 @@ def test_what_has_not_happened_or_lives_elsewhere_is_never_shown(runtime):
 
 def _producers_missing(view, summaries, laid):
     """The content items of a view's history whose producing call (the action of the same call
-    in that source) is not an item of the same view."""
+    in that source) is not an item of the same view. A piece that came back for a call the source
+    summary does not keep as an entry (one it only catalogues, or has nothing of) is missing its
+    producer too (MR240-2): it can never be shown with it. A piece that first came for no call (an
+    instruction file, a compaction) has none."""
     account = view.get("history") or {"items": []}
     by_alias = {part["alias"]: summaries[part["id"]] for part in laid["parts"]}
     shown = {(item["alias"], item["seq"]) for item in account["items"]}
@@ -2308,6 +2312,8 @@ def _producers_missing(view, summaries, laid):
             continue
         entries = by_alias[item["alias"]]["entries"]
         content = next(e for e in entries if e["type"] == "content" and e["seq"] == item["seq"])
+        if not content.get("call_id"):
+            continue
         call = next(
             (
                 e
@@ -2316,10 +2322,8 @@ def _producers_missing(view, summaries, laid):
             ),
             None,
         )
-        if (
-            call is not None
-            and call["seq"] < content["seq"]
-            and (item["alias"], call["seq"]) not in shown
+        if call is None or (
+            call["seq"] < content["seq"] and (item["alias"], call["seq"]) not in shown
         ):
             missing.append((item["alias"], item["seq"]))
     return missing
@@ -4096,3 +4100,319 @@ def test_slice_three_keeps_the_final_hold_query_in_every_replay(runtime, root_id
             assert scored["elsewhere"] == (2, 2), (agent, variant, scored["support"])
             assert scored["passes"] and not scored["false_ready"], (agent, variant)
             assert view["history"]["complete"] is True, (agent, variant)
+
+
+# --- MR240-1: another session as it stood when the call was proposed -----------------------------
+
+_FIRST = {"id": "first", "run": "hold-query --case 12", "output": "hold=none checked=09:40Z"}
+
+
+def _hold_story(repeated, pending=False):
+    """The earlier session runs the hold query for case 77, after one for case 12 when repeated, in
+    which case the case-77 query prints what the case-12 query printed (its summary keeps the piece
+    once, on the first query's entry, with a sighting for the second). pending holds its result
+    back, as a session cut before the result came."""
+    hold = {"id": "hold", "run": _HOLD["run"]}
+    hold |= {"pending": True} if pending else {"output": (_FIRST if repeated else _HOLD)["output"]}
+    return _keyed_story(earlier=[dict(_FIRST), hold] if repeated else [hold], facts=False)
+
+
+def _came_after_the_call(summaries, laid):
+    """The case-77 query's result stamped one second after the proposed call by the host's clock:
+    its return step, every sighting of an earlier piece for it and every piece that first came with
+    it; its proposal stays before the call. A session that went on, as a monitor reads it. Returns
+    the event of that result."""
+    deciding = laid["deciding"]
+    call = next(
+        e
+        for e in summaries[deciding["id"]]["entries"]
+        if e["type"] == "action" and e.get("call_id") == deciding["laid"]["call"]
+    )
+    later, entries = float(call["ts"]) + 1, summaries["a"]["entries"]
+    made = next(e for e in entries if e["type"] == "action" and "--case 77" in str(e.get("target")))
+    (back,) = [step for step in made["lifecycle"] if step["state"] == "returned"]
+    back["ts"] = later
+    for entry in entries:
+        if entry["seq"] == back["seq"]:
+            entry["ts"] = later
+        for again in entry.get("seen_again", ()):
+            if again["seq"] == back["seq"]:
+                again["ts"] = later
+    return back["seq"]
+
+
+@pytest.mark.parametrize("repeated", [True, False])
+def test_a_result_after_the_call_gives_the_packet_of_the_session_cut_before_it(runtime, repeated):
+    """MR240-1: the case-77 query was proposed before the call and its result came after it, and the
+    summary read holds both. Its later return, its pieces and the later sighting of the repeated
+    text were shown as earlier evidence of a complete history. Whatever the result says, the packet
+    is now byte for byte the one built from the session as it stood before the result came (the
+    query pending): the query proposed with its outcome unknown, and no return, piece or later
+    sighting of it. The summaries given are not changed, and a result that came before the call is
+    shown with its return. Both layouts."""
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(_hold_story(repeated), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        before_the_call = builder.build(builder.blind(laid), copy.deepcopy(summaries), 11000)
+        at = _came_after_the_call(summaries, laid)
+        given = copy.deepcopy(summaries)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        assert summaries == given, agent
+        pending = campaigns.layout(_hold_story(repeated, pending=True), agent)
+        cut, _ = campaigns.replay(pending, runtime)
+        assert view["text"] == builder.build(builder.blind(pending), cut, 11000)["text"], agent
+        assert view["history"]["complete"] is True and view["route"] == "asked", agent
+        section = view["text"].split(campaigns.TITLE, 1)[1]
+        (query,) = [line for line in section.splitlines() if "hold-query --case 77" in line]
+        assert "proposed, outcome unknown" in query and f"#{at} " not in section, agent
+        assert all(
+            at not in [a["seq"] for a in item.get("seen_again", ())]
+            for item in view["history"]["items"]
+        ), agent
+        shown = before_the_call["text"].split(campaigns.TITLE, 1)[1]
+        assert f"returned #{at}" in shown and before_the_call["history"]["complete"] is True
+        assert (f"(again in #{at} " in shown) is repeated, agent
+
+
+@pytest.mark.parametrize("dated", [True, False])
+def test_a_sighting_without_its_own_time_is_dated_by_its_event_or_leaves_the_search_unfinished(
+    runtime, dated
+):
+    """MR240-1: a summary made before sightings carried their time. A sighting whose event the
+    summary dates otherwise (its call's return step) is cut by that time, and a result that came
+    before the call is shown as it was. One nothing dates is never taken to have come before the
+    call: it is not shown, and the search is said not to be finished, the route undecided. Both
+    layouts."""
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(_hold_story(repeated=True), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        entries = summaries["a"]["entries"]
+        made = next(e for e in entries if e["type"] == "action" and "--case 77" in str(e["target"]))
+        (back,) = [step for step in made["lifecycle"] if step["state"] == "returned"]
+        for entry in entries:
+            for again in entry.get("seen_again", ()):
+                del again["ts"]
+        if not dated:
+            del back["ts"]
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        account, section = view["history"], view["text"].split(campaigns.TITLE, 1)[1]
+        if dated:
+            assert account["complete"] is True and "unsupported" not in account, agent
+            assert f"(again in #{back['seq']} " in section, agent
+        else:
+            assert account["complete"] is False and view["route"] == "undecided", agent
+            assert "cutoff_not_established" in account["unsupported"], agent
+            assert f"#{back['seq']} " not in section, agent
+
+
+@pytest.mark.parametrize("catalogued", [False, True])
+def test_a_repeated_result_whose_first_call_is_not_kept_leaves_the_history_unfinished(
+    runtime, catalogued
+):
+    """MR240-2: the case-77 query printed what the case-12 query had printed, and the summary keeps
+    the piece once, on the case-12 query's entry. With that entry taken out (kept only in the
+    catalogue of calls the summary left out, or not at all) and the case-77 query and its sighting
+    of the piece still there, the piece was shown without the call that produced it and the history
+    called complete: the piece does not name the case, so nothing looked for its producer. Every
+    piece shown now needs its own first call kept as an entry, whatever it says: the producer is
+    said not to be kept, the history is unfinished and the route undecided, and what can be shown
+    is shown. _producers_missing() catches the orphan too. Both layouts."""
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(_hold_story(repeated=True), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        session = summaries["a"]
+        first = next(
+            e
+            for e in session["entries"]
+            if e["type"] == "action" and "--case 12" in str(e.get("target"))
+        )
+        session["entries"].remove(first)
+        if catalogued:  # as summarize.py catalogues a call it does not keep
+            fields = ("seq", "ts", "tool", "status", "target", "call_id", "lifecycle")
+            record = {key: first[key] for key in fields} | {"effects": first["effects"]}
+            record["result"] = first["lifecycle"][-1]["seq"]
+            session["session"]["dropped_calls"] = [*session["session"]["dropped_calls"], record]
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        account = view["history"]
+        assert account["complete"] is False and view["route"] == "undecided", agent
+        assert "keyed_producer_not_kept" in account["unsupported"], agent
+        assert "cutoff_not_established" not in account["unsupported"], agent
+        shown = {(item["seq"], item["type"]) for item in account["items"]}
+        assert (first["seq"], "action") not in shown, agent
+        assert _producers_missing(view, summaries, laid), agent
+
+
+def _timed(entries, dropped=()):
+    """A summary of hand-made records, the event numbered n logged at host time 100 + n."""
+    session = {"coverage": {"scanned_all_captured": True, "events": 40}, "omitted": {"actions": {}}}
+    session |= {"dropped_calls": list(dropped), "dropped_calls_not_listed": 0}
+    return {"session": session, "entries": list(entries)}
+
+
+def _at(seq):
+    return 100.0 + seq
+
+
+def _step(state, seq):
+    return {"state": state, "seq": seq, "ts": _at(seq)}
+
+
+def _marked(entry, *indicators):
+    """An entry with these indicators and what they combine to, as summarize.py writes them."""
+    labels, confidence, level = combine(list(indicators))
+    told = {"indicators": list(indicators), "labels": labels, "confidence": confidence}
+    return entry | told | {"level": level}
+
+
+def _call(seq, *steps, marks=(), **more):
+    """A kept call proposed at event seq, then the (state, event) steps given."""
+    lifecycle = [_step("proposed", seq), *(_step(state, at) for state, at in steps)]
+    status = next((s for s, _ in reversed(steps) if s != "approval_requested"), "proposed")
+    made = {"type": "action", "seq": seq, "ts": _at(seq), "tool": "Bash", "call_id": f"c{seq}"}
+    made |= {"status": status, "lifecycle": lifecycle, "target": f"printf {seq}"}
+    return _marked(made | more, *marks)
+
+
+def _piece(seq, call_id, marks=(), **more):
+    """A piece of lower-trust content that first came back at event seq for call_id."""
+    made = {"type": "content", "seq": seq, "ts": _at(seq), "trust": "untrusted"}
+    made |= {"call_id": call_id, "text": f"piece {seq}", "sha256": f"h{seq}"}
+    return _marked(made | more, *marks)
+
+
+def test_a_call_keeps_the_steps_that_came_by_the_call_and_only_their_marks_and_counts():
+    """MR240-1, as_of() on one call: a refusal that came after the call is no refusal and no
+    "denied" indicator (the marks are combined again), an approval request after it is no note,
+    and a return after it brings back nothing: no status, no pieces counted, no result listed.
+    Whatever came by then is as it was. The summary given is never changed, and one cut at a time
+    is that cut again."""
+    refused = {"label": "denied", "confidence": 0.55, "basis": "refused by the classifier"}
+    wide = {"label": "destructive", "confidence": 0.25, "basis": "rm -rf build"}
+    asked = ["approval was requested in #4"]
+    denied = _call(3, ("approval_requested", 4), ("denied", 5), notes=asked, marks=(wide, refused))
+    counted = {"result_pieces": 1, "result_chunks": 1, "results": ["h7"]}
+    returned = _call(6, ("returned", 7), **counted)
+    summary = _timed([denied, returned, _piece(7, "c6")])
+    given = copy.deepcopy(summary)
+    at = history.as_of(summary, _at(4))
+    assert summary == given
+    (call,) = at["entries"]
+    assert call["status"] == "proposed" and call["notes"] == asked
+    assert [step["state"] for step in call["lifecycle"]] == ["proposed", "approval_requested"]
+    assert call["indicators"] == [wide] and (call["labels"], call["level"]) == (
+        ["destructive"],
+        "low",
+    )
+    assert "notes" not in history.as_of(summary, _at(3))["entries"][0]
+    at = history.as_of(summary, _at(6.5))
+    assert at["entries"][0] is denied  # everything of it came by then
+    assert at["entries"][1]["status"] == "proposed" and not counted.keys() & at["entries"][1].keys()
+    assert [e["seq"] for e in at["entries"]] == [3, 6]
+    assert at["as_of"] == {"until": _at(6.5), "unknown": [], "tied": False}
+    assert history.as_of(at, _at(6.5)) is at
+    assert history.as_of(at, _at(8))["as_of"]["unknown"] == ["cut_earlier"]  # what came between
+    assert history.as_of(summary, _at(7))["as_of"]["tied"] is True  # the return at that very time
+    assert history.as_of(summary, 0)["as_of"]["unknown"] == ["call_time"]
+
+
+def test_a_piece_keeps_the_sightings_that_came_by_the_call_and_never_an_undated_one():
+    """MR240-1, as_of() on one piece: each sighting is kept only if it came by the call, dated by its
+    own time or, for one written without it, by its event (its call's return); one nothing dates
+    is dropped and said. Of the sightings it does not list, the count is kept when the last of them
+    came by then, dropped when the first came later, and dropped and said when the call falls
+    between them or the summary does not say when they came."""
+    sightings = [
+        {"seq": 5, "call_id": "c4", "source": "shell", "ts": _at(5)},
+        {"seq": 7, "call_id": "c6", "source": "shell"},  # no time of its own: c6 returned at 7
+        {"seq": 9, "call_id": "c8", "source": "shell", "ts": _at(9)},
+    ]
+    piece, dating = _piece(2, "c1", seen_again=sightings), _call(6, ("returned", 7))
+    for until, listed in ((_at(8), [5, 7]), (_at(9.5), [5, 7, 9]), (_at(4), [])):
+        at = history.as_of(_timed([piece, dating]), until)
+        assert [again["seq"] for again in at["entries"][0].get("seen_again", ())] == listed
+        assert at["as_of"]["unknown"] == [] and ("seen_again" in at["entries"][0]) is bool(listed)
+    alone = history.as_of(_timed([piece]), _at(8))  # nothing dates the sighting at 7
+    assert [again["seq"] for again in alone["entries"][0]["seen_again"]] == [5]
+    assert alone["as_of"]["unknown"] == ["sighting_time"]
+    many = piece | {"seen_again_more": 3, "seen_again_more_ts": [_at(10), _at(12)]}
+    for until, kept, unknown in (
+        (_at(13), 3, []),
+        (_at(9.5), None, []),
+        (_at(11), None, ["unlisted_sightings"]),
+    ):
+        at = history.as_of(_timed([many, dating]), until)
+        assert at["entries"][0].get("seen_again_more") == kept, until
+        assert at["as_of"]["unknown"] == unknown, until
+    undated = {key: value for key, value in many.items() if key != "seen_again_more_ts"}
+    at = history.as_of(_timed([undated, dating]), _at(13))
+    assert "seen_again_more" not in at["entries"][0]
+    assert at["as_of"]["unknown"] == ["unlisted_sightings"]
+
+
+def test_a_catalogued_call_is_cut_as_a_kept_one_is():
+    """MR240-1, as_of() on the catalogue of calls a summary did not keep: each call proposed by the
+    call under decision stays, with what had become of it by then. Its outcome is dated by its
+    steps; for a record written without them, by its result's event, or by the first thing that
+    came back for it; a refusal with nothing to date it is not taken to have come by then, and
+    that is said. A call proposed later is not there."""
+    listed = {"seq": 3, "ts": _at(3), "tool": "Bash", "status": "returned", "call_id": "c3"}
+    listed |= {"result": 10, "lifecycle": [_step("proposed", 3), _step("returned", 10)]}
+    legacy = {"seq": 4, "ts": _at(4), "tool": "Bash", "status": "returned", "call_id": "c4"}
+    legacy |= {"result": 11}
+    bare = {"seq": 5, "ts": _at(5), "tool": "Bash", "status": "returned", "call_id": "c5"}
+    refused = {"seq": 6, "ts": _at(6), "tool": "Bash", "status": "denied", "call_id": "c6"}
+    late = {"seq": 13, "ts": _at(13), "tool": "Bash", "status": "proposed", "call_id": "c13"}
+    pieces = [_piece(11, "c4"), _piece(12, "c5")]
+    summary = _timed(pieces, dropped=[listed, legacy, bare, refused, late])
+    at = history.as_of(summary, _at(9))
+    calls = at["session"]["dropped_calls"]
+    assert [(c["seq"], c["status"], c.get("result")) for c in calls] == [
+        (3, "proposed", None),
+        (4, "proposed", None),
+        (5, "proposed", None),
+        (6, "proposed", None),
+    ]
+    assert calls[0]["lifecycle"] == [_step("proposed", 3)] and at["entries"] == []
+    assert at["as_of"]["unknown"] == ["outcome_time"]  # the refusal at no known time
+    at = history.as_of(summary, _at(14))
+    assert at["session"]["dropped_calls"][:3] == [listed, legacy, bare]
+    assert (
+        at["session"]["dropped_calls"][4] is late
+        and summary["session"]["dropped_calls"][3] == refused
+    )
+
+
+def test_marks_that_rest_on_a_later_call_are_as_they_stood():
+    """MR240-1, as_of() on marks read off later calls of that session: a piece that named what a
+    later call used, or that later calls resemble, is marked only for the calls proposed by the
+    call under decision, as summarizer.labels words it; none left, no such mark. Where only later
+    risky calls were named, whether an earlier plain one resembled it is not known, and that is
+    said. A flow mark that says a sensitive access was known stands only if the access returned by
+    then. Marks that rest on nothing later are as they were."""
+    calls = [_call(6), _call(8)]
+    for made, until, kept, unknown in (
+        ({"named": [6, 8]}, _at(7), {"named": [6]}, []),
+        ({"risky": [6, 8]}, _at(7), {"risky": [6]}, []),
+        ({"followed": [6, 8]}, _at(7), {"followed": [6]}, []),
+        ({"named": [6, 8]}, _at(5), {}, []),
+        ({"followed": [6, 8]}, _at(5), {}, []),
+        ({"risky": [6, 8]}, _at(5), {}, ["marks"]),
+    ):
+        piece = _piece(2, "c1", marks=content_indicators({}, **made))
+        at = history.as_of(_timed([piece, *calls]), until)
+        assert at["entries"][0]["indicators"] == content_indicators({}, **kept), made
+        expected = combine(content_indicators({}, **kept))
+        assert (at["entries"][0]["labels"], at["entries"][0]["level"]) == (
+            expected[0],
+            expected[2],
+        ), made
+        assert at["as_of"]["unknown"] == unknown, made
+    piece = _piece(2, "c1", marks=content_indicators({}, named=[6, 8]))
+    assert history.as_of(_timed([piece, *calls]), _at(9))["entries"][0] is piece
+    flow = {"label": "toxic_flow", "confidence": 0.4}
+    flow["basis"] = "reaches outside after untrusted input #2 and sensitive access #4"
+    access, send = _call(4, ("returned", 9)), _call(6, marks=(flow,))
+    at = history.as_of(_timed([access, send]), _at(7))  # the access returned only at 9
+    assert at["entries"][1]["indicators"] == [] and at["entries"][1]["level"] == "none"
+    assert at["as_of"]["unknown"] == ["marks"]
+    assert history.as_of(_timed([access, send]), _at(10))["entries"][1] is send

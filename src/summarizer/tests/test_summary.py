@@ -443,7 +443,13 @@ def test_repeated_content_is_kept_once_with_each_sighting(runtime):
     kept = one([entry for entry in entries(summary, "content") if entry["text"] == same])
     where = {"field": "tool_response", "start": 0, "end": len(same)}  # each sighting's own place
     assert (kept["origin"], kept["call_id"]) == (f"{CWD}/a.txt", "call-1")
-    assert kept["seen_again"] == [
+    # Each sighting is stamped with the host's time of its own event, the time its call's result
+    # step has (MR240-1): a later arrival is never to be read as one from before a moment.
+    returned = {
+        step["seq"]: step["ts"] for e in entries(summary, "action") for step in e["lifecycle"]
+    }
+    assert [again["ts"] for again in kept["seen_again"]] == [returned[6], returned[8]]
+    assert [{k: v for k, v in again.items() if k != "ts"} for again in kept["seen_again"]] == [
         {"seq": 6, "source": "file", "origin": f"{CWD}/b.txt", "call_id": "call-2"} | where,
         {"seq": 8, "source": "web", "origin": "a.example", "call_id": "call-3"}
         | {**where, "field": "tool_response.result"},
@@ -2195,6 +2201,28 @@ def test_a_sighting_a_line_does_not_list_is_not_shown_and_is_said_not_to_be(runt
     assert condition["pieces_shown"] < condition["pieces"]
     assert condition["resolved"] is False and shown["unresolved_conditions"] == 1
     assert "sightings_not_listed" in shown["text"].split("\n")[-1]
+
+
+def test_every_arrival_and_every_step_says_when_it_came(runtime):
+    """MR240-1: a reader that cuts a summary at a moment (summarizer.history.as_of) must be able to
+    date what came later. Each listed sighting carries the host's time of its event; of those a
+    piece does not list, the summary keeps when the first and the last came; and every call it
+    catalogues instead of keeping carries its lifecycle, each step timed, as a kept call does."""
+    events, _ = repeated(30, last=shell_result("") | {"stderr": "ok!"})
+    summary = summarize(events, runtime)
+    calls = [*entries(summary, "action"), *summary["session"]["dropped_calls"]]
+    assert summary["session"]["dropped_calls"], "some calls are only catalogued"
+    times = {step["seq"]: step["ts"] for call in calls for step in call["lifecycle"]}
+    for call in summary["session"]["dropped_calls"]:
+        back = [step["seq"] for step in call["lifecycle"] if step["state"] == "returned"]
+        assert call["lifecycle"][0] == {"state": "proposed", "seq": call["seq"], "ts": call["ts"]}
+        assert back[:1] == [call["result"]] and call["status"] == "returned"
+    piece = one([e for e in entries(summary, "content") if e["text"] == "ok!"])
+    assert all(again["ts"] == times[again["seq"]] for again in piece["seen_again"])
+    listed = {again["seq"] for again in piece["seen_again"]}
+    unlisted = [times[2 * n + 2] for n in range(2, 31) if 2 * n + 2 not in listed]
+    assert len(unlisted) == piece["seen_again_more"] == 13
+    assert piece["seen_again_more_ts"] == [min(unlisted), max(unlisted)]
 
 
 def test_a_calibration_holds_only_for_the_profile_it_was_measured_under(tmp_path):

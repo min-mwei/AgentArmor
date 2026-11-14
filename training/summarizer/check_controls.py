@@ -63,6 +63,7 @@ UNSUPPORTED = (
     "control_load_unresolved",
     "keyed_producer_not_kept",  # MR233: a key-value observation whose producing call is not kept
     "keyed_observation_cut",  # MR233: a key-value observation not shown whole
+    "cutoff_not_established",  # MR240-1: what a summary cannot date at the call's time
     "program_text_cut",
     "named_body_cut",
     "dependency_search_bounded",

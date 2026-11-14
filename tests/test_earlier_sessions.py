@@ -1,5 +1,6 @@
 """What other sessions hold for a call, counted in shadow and off the decision's path. CPU only."""
 
+import itertools
 import json
 import threading
 import time
@@ -12,7 +13,7 @@ from agentarmor_monitor.decide import Decider
 from agentarmor_monitor.local import question
 from summarizer.embedder import HashEmbedder
 from summarizer.hook import build_record, call_sha256
-from summarizer.store import SUMMARY, append_event, session_dir
+from summarizer.store import SUMMARY, append_event, load_summary, session_dir
 from summarizer.summarize import Runtime
 
 CWD = "/srv/work/proj"
@@ -746,3 +747,139 @@ def test_a_packet_for_another_case_does_not_take_the_observation_of_this_one(spo
     text, about = keyed_packet(6000)
     assert "hold-query --case 77" not in text and "case=77 hold=none" not in text
     assert about["ready"] and about["history"]["complete"] is True
+
+
+# MR240-1: an earlier session queried case 12, then proposed the query for case 77. Its result
+# repeats case 12's, or says something else, and comes before or after the deciding session
+# proposes its conditional delete of case 77.
+ASKED = "Run the hold query for the export."
+FIRST = "hold=none checked=09:40Z"  # what the query for case 12 printed
+OTHER = "hold=none checked=09:43Z"  # a result for case 77 that repeats nothing
+RESULT = 6  # the event of the case-77 result in the earlier session's log
+
+
+def at_times(agent, session, clock, *events):
+    """Hook records of either client, each stamped with the next host time the clock gives."""
+    common = {"cwd": CWD, "permission_mode": "default", "session_id": session}
+    for item in events:
+        record = build_record(agent, common | item)
+        record["ts"] = float(next(clock))
+        append_event(agent, session, record)
+
+
+def shell(agent, number, command, output=None):
+    """A shell call as each client's hook delivers it (as campaign_contract lays them out): Claude
+    Code's result is a record of its streams, Codex's the text the command printed."""
+    call = {"tool_name": "Bash", "tool_input": {"command": command}}
+    call["tool_use_id"] = f"call-{number}"
+    found = [{"hook_event_name": "PreToolUse"} | call]
+    if output is not None:
+        response = bash_output(output) if agent == "claude_code" else output
+        found.append({"hook_event_name": "PostToolUse", "tool_response": response} | call)
+    return found
+
+
+def summarized_as(agent, names, index):
+    watch = Monitor(Runtime(HashEmbedder()), kai.Unsent(), log=lambda message: None, index=index)
+    for name in names:
+        watch.update(agent, name)
+    watch.close()
+
+
+def hold_sessions(agent, clock, result_first, repeated=True):
+    """The two sessions, the earlier one's case-77 result logged first or held back. Returns that
+    result's hook event, for the caller to log when it comes."""
+    start = {"hook_event_name": "SessionStart", "source": "startup"}
+    result = shell(agent, 2, "hold-query --case 77", FIRST if repeated else OTHER)[-1]
+    asked = {"hook_event_name": "UserPromptSubmit", "prompt": ASKED}
+    early = [start, asked, *shell(agent, 1, "hold-query --case 12", FIRST)]
+    at_times(agent, "s-early", clock, *early, *shell(agent, 2, "hold-query --case 77"))
+    if result_first:
+        at_times(agent, "s-early", clock, result)
+    late = [start, {"hook_event_name": "UserPromptSubmit", "prompt": BOUND}]
+    late += shell(agent, 1, "printf '%s\\n' 'target review export'", "target review export")
+    at_times(agent, "s-late", clock, *late, *shell(agent, 2, "case-export delete --case 77"))
+    return result
+
+
+def deciding_packet(agent):
+    """(text, account, review, the other sessions as scope() gives them) of escalate.packet() for
+    the deciding session's delete, as decide.judge() builds it in "on" mode."""
+    summary, home_dir = load_summary(agent, "s-late"), str(Path.home())
+    entry = next(
+        e for e in summary["entries"] if e["type"] == "action" and e["call_id"] == "call-2"
+    )
+    others, counts = earlier.scope(agent, "s-late", summary, "call-2", home_dir)
+    mine = earlier.known(agent, "s-late", summary)
+    sessions = {"mine": mine, "others": others, "counts": counts, "home": home_dir}
+    text, about, _ = escalate.packet(summary, entry, 11000, sessions)
+    return text, about, escalate.review_of(entry, about), others
+
+
+@pytest.mark.parametrize("index", [False, True])
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("repeated", [True, False])
+@pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
+def test_a_result_that_came_after_the_call_is_never_shown_as_earlier_evidence(
+    spool, agent, repeated, when, index
+):
+    """MR240-1, through the spool, the monitor and escalate.packet(). The case-77 result came after
+    the deciding session proposed its delete: its producer's lifecycle said so, and yet the packet
+    showed that later return, and the later sighting of the repeated text, as earlier evidence, and
+    called itself ready, complete and pre-action; it was byte for byte the packet of a result that
+    came before. Now a later result moves nothing: the packet is the one taken before the result
+    came, the query is proposed with its outcome unknown, and no return, sighting or text of that
+    result is in it. The earlier piece the result repeats is still there, without the later
+    sighting. A result that came before is shown with its return, and repeated, as a sighting of
+    the earlier piece. Both clients, a repeated result and another one, with the search index and
+    without."""
+    clock = itertools.count(1_800_000_000)
+    result = hold_sessions(agent, clock, result_first=when == "before", repeated=repeated)
+    summarized_as(agent, ("s-early", "s-late"), index)
+    first_text, *_ = deciding_packet(agent)
+    if when == "after":
+        at_times(agent, "s-early", clock, result)
+        summarized_as(agent, ("s-early",), index)
+        assert load_summary(agent, "s-early")["session"]["coverage"]["events"] == RESULT
+    text, about, review, others = deciding_packet(agent)
+    told = about["history"]
+    assert told["sessions"]["proof"] == ("used" if index else "no_index")
+    assert told["coverage_known"] is True and told["sessions"]["tied_with_the_call"] == 0
+    assert told["complete"] is True and told["why"] == [] and about["ready"] is True
+    assert about["later_events"] == 0 and review == "pre_action"
+    section = text.split("EARLIER SESSIONS", 1)[1]
+    query = next(line for line in section.splitlines() if "hold-query --case 77" in line)
+    (held,) = [other["summary"] for other in others]
+    piece = next(e for e in held["entries"] if e["type"] == "content" and e["text"] == FIRST)
+    sightings = [again["seq"] for again in piece.get("seen_again", ())]
+    if when == "after":
+        assert text == first_text, (agent, repeated, index)
+        assert "proposed, outcome unknown" in query and "returned" not in query
+        assert f"#{RESULT} " not in section and OTHER not in section
+        assert RESULT not in sightings and held["as_of"]["unknown"] == []
+        assert all(e["seq"] < RESULT for e in held["entries"])
+    else:
+        assert f"returned #{RESULT}" in query
+        if repeated:
+            assert f"(again in #{RESULT} " in section and RESULT in sightings
+        else:
+            assert OTHER in section
+
+
+@pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
+def test_a_result_at_the_call_s_very_time_leaves_the_order_unknown(spool, agent):
+    """MR240-1 with MR173-1: the case-77 result stamped at the very millisecond of the proposed
+    delete. Which came first is not known: the session is read, the result kept, and the session
+    is counted as tied, so that coverage is not known and the packet is never ready."""
+    clock = itertools.count(1_800_000_000)
+    result = hold_sessions(agent, clock, result_first=False)
+    summarized_as(agent, ("s-late",), False)
+    entries = load_summary(agent, "s-late")["entries"]
+    call = next(e for e in entries if e["type"] == "action" and e["call_id"] == "call-2")
+    at_times(agent, "s-early", iter([call["ts"]]), result)  # the call's very time
+    summarized_as(agent, ("s-early",), False)
+    text, about, _, _ = deciding_packet(agent)
+    told = about["history"]
+    assert told["sessions"]["tied_with_the_call"] == 1 and told["coverage_known"] is False
+    assert about["ready"] is False
+    assert f"returned #{RESULT}" in text.split("EARLIER SESSIONS", 1)[1]

@@ -109,6 +109,18 @@ could not be read is never taken to show that no earlier session wrote it. A mod
 and not given by a path is a candidate where it could be in the working directory, and a
 write of an earlier session that fits a candidate or a wildcard leaves the search unfinished.
 
+Every other session is taken as it stood when the call was proposed, by the host's clock, and by
+one rule (as_of(), MR240-1), before anything is selected or written: its entries up to the call's
+time; each call's lifecycle up to then, its status by those steps and what it had brought back by
+then; each later arrival of a piece seen before (a sighting) only if it came by then; the calls it
+catalogues the same way; and the marks that rest on a later event of that session (a refusal that
+came later, a later call that took a destination from a piece) as they stood. A piece seen before
+the call and again after it is kept as the earlier piece, and the later arrival is never shown as
+one from before the call. Whatever the summary does not date (a sighting with no time, a count of
+sightings that spans the call, a pieces count that mixes an earlier return and a later one) is
+never taken for a prefix: it is not shown as earlier, and the search is said not to be finished
+("cutoff_not_established").
+
 The items are in groups, and a group is kept or left out whole by whoever renders it: the
 writes of one file in one source with the request, what was shown before them and what
 became of them; or one thing the user said. A group is key evidence, or context, and that
@@ -125,6 +137,7 @@ import re
 from . import effects
 from .events import ENTRY_IOCS, TARGET_CHARS
 from .facts import PERSISTENT, expand, path_classes, shell_segments
+from .labels import combine, content_indicators
 
 WRITES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"})
 READS = frozenset({"Read"})
@@ -958,11 +971,258 @@ def unbound_sessions(statements, candidates):
     return found
 
 
+# --- another session as it stood when the call was proposed (MR240-1) ----------------------------
+
+OUTCOMES = ("returned", "failed", "denied")  # what a later event says became of a call
+_BACK = ("returned", "failed")  # the outcomes that bring a result back, in pieces
+_REFS = re.compile(r"#(\d+)")
+_OBSERVED = re.compile(r" and sensitive access #(\d+)\Z")  # toxic_flow's basis on a known access
+_APPROVAL = "approval was requested in #{}"  # summarize.py's note on that step of a call
+
+
+def _number(value):
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _times(summary):
+    """{event: host time} for every event a summary dates, each from the hook's record of that
+    event: an entry's own event, each step of a call's lifecycle, each sighting that carries its
+    time, each call the summary catalogues and each of its steps. One event is one record timed once
+    by the host, so every piece and every step of it has that time."""
+    times = {}
+
+    def note(seq, ts):
+        if isinstance(seq, int) and _number(ts):
+            times.setdefault(seq, float(ts))
+
+    for entry in summary.get("entries") or ():
+        note(entry.get("seq"), entry.get("ts"))
+        for step in entry.get("lifecycle") or ():
+            note(step.get("seq"), step.get("ts"))
+        for again in entry.get("seen_again") or ():
+            note(again.get("seq"), again.get("ts"))
+    for call in (summary.get("session") or {}).get("dropped_calls") or ():
+        note(call.get("seq"), call.get("ts"))
+        for step in call.get("lifecycle") or ():
+            note(step.get("seq"), step.get("ts"))
+    return times
+
+
+def _remarked(entry, indicators):
+    """An entry with these indicators and the labels, confidence and level they combine to."""
+    labels, confidence, level = combine(indicators)
+    told = {"indicators": indicators, "labels": labels, "confidence": confidence, "level": level}
+    return entry | told
+
+
+def as_of(summary, until):
+    """The summary of another session as it stood at host time `until`, the proposed call's time
+    (MR240-1): the one cut every retrieval and every line of the section works from. Returns a new
+    summary (the one given is never changed) with "as_of": {"until", "unknown": what of it could not
+    be told, "tied": whether something it keeps is at that very time}.
+
+    - An entry whose event came later is not there, nor is a catalogued call proposed later.
+    - A call keeps the steps of its lifecycle that came by then; its status is the last outcome
+      among them, or "proposed"; what it brought back later is not counted (result_pieces,
+      result_chunks, results), nor is its result event, nor the note of a later approval request.
+    - A piece of content keeps the sightings that came by then, each dated by its own time or by
+      its event's; the sightings it does not list are kept only if all of them came by then.
+    - The marks that rest on a later event of that session are as they stood: a refusal that came
+      later is no indicator; a piece's indicators that name calls (it named what they used, they
+      resemble it) name only those proposed by then, as summarizer.labels words them; a flow
+      indicator that says a sensitive access was known is kept only if it was known by then.
+
+    What it cannot date is never taken to have come by then: it is left out and named in unknown,
+    and a lookup that searches such a summary says that its search did not finish (select()). A
+    later count it cannot split (pieces of an earlier return and a later one together, sightings
+    not listed that span the time, risky calls of which only later ones are named) is said the same
+    way. Something at the very time of the call is kept, and "tied" says so: which came first is
+    not known (earlier.scope counts such a session as not known, MR173-1). The time of a call that
+    is not known cuts nothing, and is said (unknown "call_time"). Cutting a summary already cut at
+    the same time changes nothing; one cut at an earlier time lacks what came between, and says so
+    (unknown "cut_earlier")."""
+    held = summary.get("as_of")
+    if isinstance(held, dict) and held.get("until") == until:
+        return summary
+    if not _number(until) or until <= 0:
+        return summary | {"as_of": {"until": until, "unknown": ["call_time"], "tied": False}}
+    times, unknown, tied = _times(summary), set(), []
+    if isinstance(held, dict):  # cut before at another time: what it could not tell still holds,
+        unknown |= set(held.get("unknown") or ())  # and one cut earlier lacks what came between
+        if not (_number(held.get("until")) and held["until"] >= until):
+            unknown.add("cut_earlier")
+    entries = summary.get("entries") or ()
+    session = summary.get("session") or {}
+    actions = {call.get("seq"): call for call in session.get("dropped_calls") or ()}
+    actions |= {e.get("seq"): e for e in entries if e.get("type") == "action"}
+    # The first event that brought something back for each call: a piece that first came for it,
+    # or a sighting of one for it. It dates the outcome of a catalogued call that lists no steps.
+    brought = {}
+    for entry in (e for e in entries if e.get("type") == "content"):
+        for made, seq in [
+            (entry.get("call_id"), entry.get("seq")),
+            *((again.get("call_id"), again.get("seq")) for again in entry.get("seen_again") or ()),
+        ]:
+            if made and isinstance(seq, int) and seq < brought.get(made, seq + 1):
+                brought[made] = seq
+
+    def came(item, what="time"):
+        """Whether an item's event came by until; one that cannot be dated did not."""
+        ts = item.get("ts")
+        when = float(ts) if _number(ts) else times.get(item.get("seq"))
+        if when is None:
+            unknown.add(what)
+            return False
+        if when == until:
+            tied.append(item)
+        return when <= until
+
+    def call_at(call):
+        """A call (an entry, or a record of the catalogue) as it stood at until."""
+        steps = call.get("lifecycle")
+        if not isinstance(steps, list):  # a catalogue record that does not list its steps
+            if call.get("status") not in OUTCOMES:
+                return call
+            back = call.get("result") if call.get("status") in _BACK else None
+            if back is None and call.get("status") in _BACK:
+                back = brought.get(call.get("call_id"))
+            if back is not None and came({"seq": back}, "outcome_time"):
+                return call
+            if back is None:
+                unknown.add("outcome_time")
+            return call | {"status": "proposed", "result": None}
+        by = [came(step, "outcome_time") for step in steps]
+        if all(by):
+            return call
+        kept = [step for step, ok in zip(steps, by, strict=True) if ok]
+        later = [step for step, ok in zip(steps, by, strict=True) if not ok]
+        states = [step.get("state") for step in kept if step.get("state") in OUTCOMES]
+        now = call | {"lifecycle": kept, "status": states[-1] if states else "proposed"}
+        if any(step.get("state") in _BACK for step in later):
+            back = [step for step in kept if step.get("state") in _BACK]
+            if back:  # an earlier return and a later one: what came back by then is not counted
+                unknown.add("result_count")
+            for key in ("result_pieces", "result_chunks", "results"):
+                now.pop(key, None)
+            if "result" in call:
+                now["result"] = back[0].get("seq") if back else None
+        asked = {
+            _APPROVAL.format(step.get("seq"))
+            for step in later
+            if step.get("state") == "approval_requested"
+        }
+        if asked and call.get("notes"):
+            notes = [note for note in call["notes"] if note not in asked]
+            now = (now | {"notes": notes}) if notes else _without(now, "notes")
+        if call.get("status") == "denied" and now["status"] != "denied" and "indicators" in call:
+            now = _remarked(now, [i for i in call["indicators"] if i.get("label") != "denied"])
+        return now
+
+    def known_at(seq):
+        """When access #seq was known to have happened: a call's return, or a piece's arrival."""
+        call = actions.get(seq)
+        if call is None:
+            return times.get(seq)
+        steps = [s for s in call.get("lifecycle") or () if s.get("state") == "returned"]
+        if steps:
+            ts = steps[0].get("ts")
+            return float(ts) if _number(ts) else times.get(steps[0].get("seq"))
+        return times.get(call.get("result")) if call.get("status") == "returned" else None
+
+    def action_marks(entry):
+        marks = entry.get("indicators") or []
+        kept = []
+        for item in marks:
+            basis = str(item.get("basis") or "")
+            observed = item.get("label") == "toxic_flow" and _OBSERVED.search(basis)
+            if observed:
+                when = known_at(int(observed.group(1)))
+                if when is None or when > until:  # not known by then, or not dated
+                    unknown.add("marks")
+                    continue
+            kept.append(item)
+        return entry if len(kept) == len(marks) else _remarked(entry, kept)
+
+    def content_marks(entry):
+        marks = entry.get("indicators") or []
+        kept, changed = [], False
+        for item in marks:
+            if item.get("label") not in ("destination_source", "action_source"):
+                kept.append(item)
+                continue
+            basis = str(item.get("basis") or "")
+            seqs = [int(n) for n in _REFS.findall(basis)]
+            whens = [times.get(n) for n in seqs]
+            risky = basis.startswith("risky ")
+            if not seqs or None in whens:  # a call it names that cannot be dated
+                unknown.add("marks")
+                changed = True
+                continue
+            tied.extend(n for n, when in zip(seqs, whens, strict=True) if when == until)
+            before = [n for n, when in zip(seqs, whens, strict=True) if when <= until]
+            if len(before) == len(seqs):
+                kept.append(item)
+                continue
+            changed = True
+            if item["label"] == "destination_source":
+                kept += content_indicators({}, named=before) if before else []
+            elif before:
+                kept += content_indicators({}, **{"risky" if risky else "followed": before})
+            elif risky:  # only later risky calls named: earlier ones that were not risky are not
+                unknown.add("marks")
+        return _remarked(entry, kept) if changed else entry
+
+    def content_at(entry):
+        now = entry
+        listed = entry.get("seen_again")
+        if listed:
+            kept = [again for again in listed if came(again, "sighting_time")]
+            if len(kept) != len(listed):
+                now = (now | {"seen_again": kept}) if kept else _without(now, "seen_again")
+        if entry.get("seen_again_more"):
+            span = entry.get("seen_again_more_ts")
+            dated = isinstance(span, list) and len(span) == 2 and all(map(_number, span))
+            if dated and span[1] <= until:
+                tied.extend([span] if span[1] == until else [])
+            else:
+                if not dated or span[0] <= until:  # some may have come by then, some later
+                    unknown.add("unlisted_sightings")
+                now = _without(now, "seen_again_more", "seen_again_more_ts")
+        return content_marks(now)
+
+    kept = []
+    for entry in entries:
+        if not came(entry):
+            continue
+        if entry.get("type") == "action":
+            entry = action_marks(call_at(entry))
+        elif entry.get("type") == "content":
+            entry = content_at(entry)
+        kept.append(entry)
+    cut = summary | {"entries": kept}
+    if session.get("dropped_calls") is not None:
+        calls = [call_at(call) for call in session["dropped_calls"] if came(call)]
+        cut["session"] = session | {"dropped_calls": calls}
+    return cut | {"as_of": {"until": until, "unknown": sorted(unknown), "tied": bool(tied)}}
+
+
+def _without(entry, *keys):
+    return {key: value for key, value in entry.items() if key not in keys}
+
+
+def cut_at(others, until):
+    """The other sessions, each as it stood at host time until (as_of()): what select() and
+    packet() search and write from, whoever gave them."""
+    return [other | {"summary": as_of(other["summary"], until)} for other in others]
+
+
 def select(mine, call_id, others, home):
     """What the other sessions hold for the call call_id of the session mine.
 
-    mine and each of others is {"key", "summary", "cwd", "namespace"}; others are the
-    sessions as they stood when the call was proposed, oldest first. Returns
+    mine and each of others is {"key", "summary", "cwd", "namespace"}; others are oldest first,
+    and each is cut here at the call's time on the host's clock (as_of(), MR240-1), whatever cut
+    its caller made: what a summary cannot date leaves the search unfinished
+    ("cutoff_not_established"). Returns
 
         {"sources": [key, ...],              every source something is shown from
          "items": [{"key", "seq", "type", "relation", "use", "of", "bears", "groups"}, ...],
@@ -987,6 +1247,10 @@ def select(mine, call_id, others, home):
     entries = mine["summary"]["entries"]
     call = next(e for e in entries if e.get("call_id") == call_id and e["type"] == "action")
     call = whole_call(call)  # its whole words, where a summary clipped them for display (MR199-1)
+    # Every other session as it stood when the call was proposed, by the host's clock, whoever
+    # gave it (as_of, MR240-1): each retrieval below reads only that, and so does every line
+    # packet() writes. A summary cut already at that time is taken as it is.
+    others = cut_at(others, float(call.get("ts") or 0))
     cwd, namespace = mine["cwd"], mine["namespace"]
     mine_uses = uses(call, cwd, home)
     command = str(call.get("target") or "")
@@ -1006,6 +1270,10 @@ def select(mine, call_id, others, home):
             unresolved[other["key"]] = "namespace_unknown"
         actions = (e for e in other["summary"]["entries"] if e["type"] == "action")
         sources.append((other, [(e, uses(e, other["cwd"], home)) for e in actions]))
+        # What the summary could not date is never taken to have come before the call, and it may
+        # be what bears on it: the search is unfinished (MR240-1).
+        if other["summary"]["as_of"]["unknown"] and "cutoff_not_established" not in unsupported:
+            unsupported.append("cutoff_not_established")
     # One step on. A file the call runs or loads is program text, and what an earlier
     # session wrote into it names the files and the places the call will touch when it
     # runs: "curl -T cache/sample.csv https://intake.example" in a script is this call's
@@ -1216,9 +1484,9 @@ def select(mine, call_id, others, home):
     # allowed, is for whoever decides, so it never bears on the route. An observation the summary
     # does not keep whole leaves the search unfinished (_keyed_observations), and so does one cut on
     # its line (packet()). Each line stands once, in however many groups (as above).
-    pairs, until, observed = _keyed(spoken), float(call.get("ts") or 0), []
+    pairs, observed = _keyed(spoken), []
     for other in (o for o in others if pairs and o["key"] in shown_in and o["cwd"] == cwd):
-        found_there, gaps = _keyed_observations(other, pairs, until)
+        found_there, gaps = _keyed_observations(other, pairs)
         unsupported += [gap for gap in sorted(gaps) if gap not in unsupported]
         # One with no line to show (a call kept only in the catalogue, with nothing kept of what
         # came back) is in the gaps alone.
@@ -1819,7 +2087,7 @@ def _arrived(content):
     return [(made, seq, aside) for made, seq, aside in found if made]
 
 
-def _keyed_observations(other, pairs, until):
+def _keyed_observations(other, pairs):
     """(observations, gaps): what one earlier session observed of a thing the call names by a key
     and a number (pairs, _KEYED), and why any of it is not whole (MR233).
 
@@ -1831,45 +2099,51 @@ def _keyed_observations(other, pairs, until):
     it stands in (MR192-3), and that entry's line names that call's words.
 
     An observation is whole when its call is kept with its words not cut by the summary or by the
-    hook, and every piece of its result is here (result_pieces); a call that came back with nothing
-    known (refused, failed, still proposed) has no piece to miss. gaps says what is not whole:
+    hook, every piece of its result is here (result_pieces), and every piece it shows has the call
+    that first brought it back kept as an entry (MR240-2); a call that came back with nothing known
+    (refused, failed, still proposed) has no piece to miss. gaps says what is not whole:
     "keyed_producer_not_kept" for a call kept only in the catalogue of calls the summary left out,
-    or for a result whose call is not kept at all, and "keyed_observation_cut" for words or a
-    result cut. until is the proposed call's time on the host's clock, 0 when not known: what was
-    logged after it is no observation, and the sessions a lookup is given are cut there already. A
-    match is no judgement: the same key and number say that two calls name one thing, never that a
-    condition passed or that anything was allowed."""
+    for a result whose call is not kept at all, and for a piece seen again whose first call is not
+    kept as an entry, whatever the piece says; "keyed_observation_cut" for words or a result cut.
+    The session is the one select() cut at the proposed call's time (as_of): what came after it,
+    a later arrival of an earlier piece included, is not there to be observed. A match is no
+    judgement: the same key and number say that two calls name one thing, never that a condition
+    passed or that anything was allowed."""
     summary = other["summary"]
     entries = summary["entries"]
-
-    def later(one):
-        return bool(until) and float(one.get("ts") or 0) > until
 
     # Every arrival of what came back, by call, and whether each piece gives a pair: read once.
     arrivals, naming = {}, {}
     for content in _lower(entries):
-        if not later(content):
-            naming[id(content)] = bool(_keyed(content.get("text")) & pairs)
-            for made, seq, aside in _arrived(content):
-                arrivals.setdefault(made, []).append((content, seq, aside))
+        naming[id(content)] = bool(_keyed(content.get("text")) & pairs)
+        for made, seq, aside in _arrived(content):
+            arrivals.setdefault(made, []).append((content, seq, aside))
     calls = [(e, True) for e in entries if e["type"] == "action"]
     by_id = {made.get("call_id"): made for made, _ in calls if made.get("call_id")}
 
     def producers(back, made):
-        found = [by_id.get(content.get("call_id")) for content in back]
-        return [
-            one
-            for one, content in zip(found, back, strict=True)
-            if one is not None and one is not made and one["seq"] < content["seq"]
-        ]
+        """The calls that first brought back the pieces of back that came again for made: every
+        piece's own (MR240-2). One whose first call the summary does not keep as an entry by then
+        (kept only in its catalogue, or not at all) is shown without the call that produced it,
+        and that is a gap: whether the piece names the pair itself does not matter. A piece that
+        first came for no call (an instruction file, a compaction) has none to keep."""
+        found = {}
+        for content in back:
+            first = content.get("call_id")
+            if not first or (made is not None and first == made.get("call_id")):
+                continue
+            one = by_id.get(first)
+            if one is None or one["seq"] > content["seq"]:
+                gaps.add("keyed_producer_not_kept")
+            else:
+                found.setdefault(id(one), one)
+        return list(found.values())
 
     left_out = summary["session"].get("dropped_calls") or ()
     calls += [({"type": "action"} | e, False) for e in left_out]
     known = {made.get("call_id") for made, _ in calls if made.get("call_id")}
     observations, gaps, held = [], set(), set()
     for made, kept in sorted(calls, key=lambda one: one[0]["seq"]):
-        if later(made):
-            continue
         came = [
             (content, aside)
             for content, seq, aside in arrivals.get(made.get("call_id"), ())
@@ -2352,8 +2626,8 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
 
     mine and each of others is {"key", "summary", "cwd", "namespace", "alias", "agent",
     "session_id"}: what a server knows of a session, with a display alias that identifies
-    nothing by itself. others are the sessions as they stood when the call was proposed,
-    oldest first.
+    nothing by itself. others are oldest first, and each is taken as it stood when the call was
+    proposed, by the host's clock (as_of): its lines, their status and their sightings included.
 
     Room is given to whole groups (select() says which items make one): key groups first,
     those that bear on the route before the rest, then context. A group whose lines do not
@@ -2377,6 +2651,14 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         return view
 
     view = digested(budget)
+    # The other sessions as they stood when the call was proposed (as_of, MR240-1): the lines are
+    # written from the very summaries select() searched, never from what came after the call.
+    call = next(
+        e
+        for e in mine["summary"]["entries"]
+        if e.get("call_id") == call_id and e["type"] == "action"
+    )
+    others = cut_at(others, float(call.get("ts") or 0))
     parts = {other["key"]: other for other in others}
     found = select(mine, call_id, others, home)
     # Each source's own lines, every one with the account of the entry it was written for

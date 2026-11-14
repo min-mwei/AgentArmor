@@ -29,8 +29,9 @@ summaries it was given. "coverage_known" is whether every listed session could b
 up to date: where it is false, nothing here says that earlier sessions hold nothing.
 
 LIMITS is recorded with every count, because the instrument is not a replay: the other
-sessions are taken as their summaries stand when the worker runs, with entries logged
-after the call left out by their time; no session's namespace is known; only the newest
+sessions are taken as their summaries stand when the worker runs, cut at the call's time
+(history.as_of: what was logged after it, a later outcome or a later repeat of an earlier
+piece included, is left out by its time); no session's namespace is known; only the newest
 sessions are looked at.
 """
 
@@ -179,9 +180,11 @@ def _proven_apart(listed, here, call_uses, cut, home_dir, work=None):
 
 
 def scope(agent, name, summary, call_id, home_dir, budget=None):
-    """(the other sessions as the lookup takes them, oldest first, each cut at the call's time;
-    coverage counts). The one rule for both the routing of a call and whether its packet is
-    complete, in the shadow count and in the "on" mode (MR169-1, MR171).
+    """(the other sessions as the lookup takes them, oldest first, each cut at the call's time by
+    the lookup's own rule, history.as_of: its entries, each call's lifecycle, status and result,
+    and each repeated arrival, up to then, MR240-1; coverage counts). The one rule for both the
+    routing of a call and whether its packet is complete, in the shadow count and in the "on" mode
+    (MR169-1, MR171).
 
     Every other session is in exactly one of: read (its summary is up to date and searched);
     proven apart by the search index (_proven_apart); or unknown: no summary or one that cannot
@@ -190,9 +193,10 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
     `budget` summaries (NEWEST unless given): a decision opens no more than that, and never a
     log, and the index's proof runs under its own budget (_proven_apart). "unknown" is how many
     sessions might hold something that bears on the call and could not be read: coverage is
-    known only when it is 0. A session with an entry at the very time of the call is read and
-    its entry kept (it may bear on the call), and is counted unknown as well, "tied_with_the_call":
-    which came first is not known, so it can never make a packet complete (MR173-1)."""
+    known only when it is 0. A session with an entry, a step of a call or a sighting at the very
+    time of the call is read and that kept (it may bear on the call), and is counted unknown as
+    well, "tied_with_the_call": which came first is not known, so it can never make a packet
+    complete (MR173-1)."""
     budget = NEWEST if budget is None else budget
     call = next(
         e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
@@ -216,8 +220,13 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
         if entries is None:
             counts["no_summary_or_unreadable"] += 1
             continue
-        before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
-        if any(float(e.get("ts") or 0.0) == cut for e in before):
+        # The session as it stood at the call's time, by the lookup's one rule (history.as_of,
+        # MR240-1): its entries, and each call's status, result and repeated arrivals, up to then.
+        # Something at the very time of the call (an entry, a step, a sighting) leaves the order
+        # unknown.
+        cut_there = history.as_of(held, cut)
+        before = cut_there["entries"]
+        if cut_there["as_of"]["tied"]:
             counts["tied_with_the_call"] += 1
         if not held.get("fresh"):
             # What its log holds beyond the summary is not known, before the call or
@@ -229,7 +238,7 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
             counts["read"] += 1
         if before:
             first = min(float(e.get("ts") or 0.0) for e in before)
-            others.append((first, known(a, n, held | {"entries": before})))
+            others.append((first, known(a, n, cut_there)))
     counts["unknown"] = (
         counts["no_summary_or_unreadable"]
         + counts["summary_behind_its_log"]

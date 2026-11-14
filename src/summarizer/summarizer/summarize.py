@@ -312,6 +312,9 @@ class Session:
         # capped for display, and what a call returned must not depend on that cap.
         self.returned_by = {}
         self.unlisted = {}  # unit index -> sightings of it beyond those listed on it
+        # unit index -> [first, last] host time of those sightings, so that a reader who cuts the
+        # summary at a moment can tell how many of them came before it (history.as_of, MR240-1)
+        self.unlisted_at = {}
         self.seen = {}  # dotted token -> index of the first lower-trust unit that carried it
         self.user_tokens = {}  # dotted token -> seq of the first user request that carried it
         self.user_paths = {}  # sensitive or configuration path -> seq of the request that named it
@@ -485,10 +488,16 @@ class Session:
                     self.counts["duplicate_chunks"] += 1
                     held = self.hashes[digest]
                     again = self.units[held].occurrences
-                    again.append((seq, source, origin, call, field, start, end, schema))
+                    # Each sighting keeps the host's time of its event: a later arrival of what was
+                    # seen before is never to be read as one from before a moment (MR240-1).
+                    again.append((seq, source, origin, call, field, start, end, schema, ts))
                     if len(again) > MAX_SIGHTINGS:  # the oldest of the later ones gives way
-                        del again[FIRST_SIGHTINGS]
+                        gone = again.pop(FIRST_SIGHTINGS)[8]
                         self.unlisted[held] = self.unlisted.get(held, 0) + 1
+                        span = self.unlisted_at.get(held)
+                        self.unlisted_at[held] = (
+                            [min(span[0], gone), max(span[1], gone)] if span else [gone, gone]
+                        )
                     if call:
                         self.returned_by.setdefault(call, []).append((held, schema))
                     continue
@@ -1141,11 +1150,15 @@ class Session:
             if unit.occurrences:
                 keys = ("seq", "source", "origin", "call_id", "field", "start", "end")
                 entry["seen_again"] = [
-                    dict(zip(keys, again[:7], strict=True)) | ({"aside": True} if again[7] else {})
+                    dict(zip(keys, again[:7], strict=True))
+                    | ({"aside": True} if again[7] else {})
+                    | {"ts": again[8]}
                     for again in unit.occurrences
                 ]
             if self.unlisted.get(index):  # sightings there was no room to list
                 entry["seen_again_more"] = self.unlisted[index]
+                # when the first and the last of them came, by the host's clock (MR240-1)
+                entry["seen_again_more_ts"] = list(self.unlisted_at[index])
         if unit.call_id:
             entry["call_id"] = unit.call_id
         if unit.actor:
@@ -1386,11 +1399,14 @@ class Session:
         sources = sorted(self.sources.values(), key=lambda entry: entry["last"])
         missed = Counter(units[i].tool for i in actions if i not in shown)
         # Each call the summary does not keep is catalogued with what became of it, the event that
-        # brought that back, and the effects recorded from its whole words (MR199-1).
+        # brought that back, and the effects recorded from its whole words (MR199-1); and with its
+        # lifecycle, each step with the host's time of its event, so that what had become of it
+        # by a given moment can be told as for a call that is kept (history.as_of, MR240-1).
         dropped = [
             {"seq": units[i].seq, "ts": units[i].ts, "tool": units[i].tool}
             | {"status": units[i].status, "target": clip(units[i].origin, TARGET_CHARS)}
             | {"call_id": units[i].call_id, "result": result_seq(units[i])}
+            | {"lifecycle": [{"state": s, "seq": q, "ts": t} for s, q, t in units[i].lifecycle]}
             | effects_record(units[i])
             for i in actions
             if i not in shown
