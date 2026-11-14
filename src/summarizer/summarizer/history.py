@@ -937,7 +937,7 @@ def select(mine, call_id, others, home):
     # that file's body as it was observed then, whoever wrote it and whenever (MR143-1).
     # A body that was observed is a lead to evidence and no proof that it will run, and
     # it stays lower-trust text. So is what was read of a control the call may load.
-    places, passed = _places(call), []
+    places, passed, stepped = _places(call), [], set()
     for other, acted in sources:
         results = {}
         for content in _lower(other["summary"]["entries"]):
@@ -971,11 +971,35 @@ def select(mine, call_id, others, home):
                 if unsettled and "control_load_unresolved" not in unsupported:
                     unsupported.append("control_load_unresolved")
             for body in bodies:
-                mine_uses["named"] |= _said(body, cwd, home) - {path}
+                said = _said(body, cwd, home) - {path}
+                stepped |= said - mine_uses["named"]
+                mine_uses["named"] |= said
                 places |= _places(body)
                 cut = cut or len(body.get("iocs") or ()) >= ENTRY_IOCS
             if cut and "program_text_cut" not in unsupported:
                 unsupported.append("program_text_cut")
+    # A second step, and no third (MR192-1). A file that program text names may be program text
+    # too: a script the helper sources, a configuration it reads. What an earlier session wrote
+    # into such a file names files and places in turn, and they are counted as well. What a
+    # file of that second step names is not followed: where it names a file that a searched
+    # session wrote and that is not already counted, the search is said to be unfinished.
+    written = {theirs["write"] for _, acted in sources for _, theirs in acted if theirs["write"]}
+    for step in ("second", "third"):
+        found_now, cut = set(), False
+        for _, acted in sources:
+            for entry, theirs in acted:
+                if theirs["write"] in stepped:
+                    found_now |= _said(entry, cwd, home) - mine_uses["named"] - {theirs["write"]}
+                    cut = cut or "text_chars" in entry
+                    if step == "second":
+                        places |= _places(entry)
+        if step == "second":
+            mine_uses["named"] |= found_now
+            stepped = found_now
+            if cut and "program_text_cut" not in unsupported:
+                unsupported.append("program_text_cut")
+        elif found_now & written and "dependency_search_bounded" not in unsupported:
+            unsupported.append("dependency_search_bounded")
     # What the user said in this very session that states a bound the call can be held
     # against. It is in the session's own packet already; here it decides the route.
     stated = [
@@ -1216,21 +1240,27 @@ def _around(before, linked):
     return kept
 
 
-def _turn_before(entries, write, before, linked):
-    """The lower-trust content shown before a write of what the call runs or loads that stands
-    with it: what the write resembles, and every piece shown in the same turn (since the user's
-    last request before the write), in order, however many ordinary reads stand between an
-    instruction and the write (MR189-2). Each is shown as shown before that write, which says when
-    and never why; adjacency claims no adoption. Nothing is cut here: the group is fitted whole or
-    left out and said to be, so a long turn costs room, never silence."""
+def _antecedents(entries, write, before, linked):
+    """(near, earlier): the lower-trust content a session was shown before a write that stands
+    with it. near is what the write resembles and every piece shown in the same turn (since the
+    user's last request before the write), in order, however many ordinary reads stand between an
+    instruction and the write (MR189-2); with nothing shown in that turn, what it resembles and the
+    last piece shown before it (_around). earlier is every other piece that session was shown
+    before the write: a new request does not take back what the agent was shown before it, and an
+    instruction read in an earlier turn is still before it when it writes (MR192-1). Each is shown
+    as shown before that write, which says when and never why; adjacency claims no adoption.
+    Nothing is cut here: near stands in the write's own group and earlier in a group of its own,
+    each fitted whole or left out and said to be, so a long session costs room, never silence."""
     starts = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] < write["seq"]]
     start = max(starts, default=-1)
     turn = [e for e in before if e["seq"] > start]
-    return (
+    near = (
         _around(before, linked)
         if not turn
         else _dedup([e for e in before if e["seq"] == linked] + turn)
     )
+    kept = {(e["seq"], e.get("sha256")) for e in near}
+    return near, [e for e in before if (e["seq"], e.get("sha256")) not in kept]
 
 
 def _dedup(found):
@@ -1261,19 +1291,33 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
         if more.get("bears"):  # an entry in two groups bears if it does in either
             taken[at]["bears"] = True
 
+    def shown_before(entry, group, relation, of=None):
+        """The lower-trust content shown before a write (_antecedents): its turn, and what it
+        resembles, in the write's own group; what that session was shown in earlier turns in a
+        group of its own, of the same kind, fitted whole or left out and said to be (MR192-1)."""
+        linked = (entry.get("resembles") or {}).get("seq")
+        before = [e for e in _lower(entries) if e["seq"] < entry["seq"]]
+        near, earlier = _antecedents(entries, entry, before, linked)
+        tied = {"of": of} if of is not None else {}
+        for content in near:
+            take(content, relation, group, **tied)
+        if earlier:
+            parent, more = groups[group], f"{group}:before:{entry['seq']}"
+            groups.setdefault(more, {"id": more, "kind": parent["kind"], "key": parent["key"]})
+            groups[more]["bears"] = groups[more].get("bears", False) or parent.get("bears", False)
+            for content in earlier:
+                take(content, relation, more, **tied)
+
     def around(entry, relation, group, bears=False):
         """A call of that session with what stands around it: the request it was working
-        on, the lower-trust content shown before it (what it is linked to, and the last thing
-        shown before it, which may be what moved it, MR187), the call, and what came back for
-        it. Content is "shown", and no more is said."""
-        linked = (entry.get("resembles") or {}).get("seq")
+        on, the lower-trust content shown before it (shown_before: its turn, what it is linked
+        to and the last thing shown before it, MR187, and what came in earlier turns), the
+        call, and what came back for it. Content is "shown", and no more is said."""
         asked = (entry.get("request") or {}).get("seq")
         prompts = [e for e in entries if e["type"] == "prompt" and e["seq"] < entry["seq"]]
         for prompt in [e for e in prompts if e["seq"] == asked] or prompts[-1:]:
             take(prompt, "request", group)
-        before = [e for e in _lower(entries) if e["seq"] < entry["seq"]]
-        for content in _around(before, linked):
-            take(content, "shown", group)
+        shown_before(entry, group, "shown")
         take(entry, relation, group, bears=bears)
         came_back(entry, group)
 
@@ -1297,7 +1341,6 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
             # denied from the words. No bridge is claimed. The write is kept with what
             # stands around it, so that the chain can be read with the doubt beside it.
             pattern = True
-            linked = (entry.get("resembles") or {}).get("seq")
             marked = _marked(entry, entries, there, home)
             candidates.append({"key": other["key"], "seq": entry["seq"], "resource": path})
             candidates[-1]["bears"] = marked
@@ -1308,13 +1351,7 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
             prompts = [e for e in entries if e["type"] == "prompt" and e["seq"] < entry["seq"]]
             for prompt in [e for e in prompts if e["seq"] == asked] or prompts[-1:]:
                 take(prompt, "request", group)
-            before = [
-                e
-                for e in entries
-                if e["type"] == "content" and e["seq"] < entry["seq"] and e.get("trust") != "user"
-            ]
-            for content in _around(before, linked):
-                take(content, "shown", group)
+            shown_before(entry, group, "shown")
             take(entry, "candidate", group)
             for content in entries:
                 same_call = content.get("call_id") == entry.get("call_id")
@@ -1370,7 +1407,6 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
                 take(entry, "recent", group)
                 came_back(entry, group)
             continue
-        linked = (entry.get("resembles") or {}).get("seq")
         # A write bears on the call's route when something marks it: a level of its own,
         # a level on the lower-trust content it is nearest to, or its being a control. A
         # file the user simply asked for and the agent wrote is evidence to show, and no
@@ -1381,18 +1417,11 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
         group = f"{other['key']}:{path}"  # every write of one file in one source, together
         groups.setdefault(group, {"id": group, "kind": "writer", "key": True, "bears": False})
         groups[group]["bears"] = groups[group]["bears"] or marked
-        before = [
-            e
-            for e in entries
-            if e["type"] == "content" and e["seq"] < entry["seq"] and e.get("trust") != "user"
-        ]
-        shown = _turn_before(entries, entry, before, linked)
         asked = (entry.get("request") or {}).get("seq")
         prompts = [e for e in entries if e["type"] == "prompt" and e["seq"] < entry["seq"]]
         for prompt in [e for e in prompts if e["seq"] == asked] or prompts[-1:]:
             take(prompt, "request", group)
-        for content in shown:
-            take(content, "before_write", group, of=entry["seq"])
+        shown_before(entry, group, "before_write", of=entry["seq"])
         take(entry, "writer", group, use=use)
         # What came back for that write, whatever its status: a result can report another
         # content than was proposed, another target, or a partial outcome, and "returned"
