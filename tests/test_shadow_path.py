@@ -5,7 +5,7 @@ event goes through the command the shipped hook templates run, `agentarmor-monit
 --agent CLIENT` with the event on stdin. Kai is stood in for behind the service's own HTTP handler
 by a stand-in that keeps every request it receives whole: the server keeps only a request's
 SHA-256. The scenario is one earlier session that writes a script and one later session that
-proposes to run it. Each pairing of the clients takes one of the two sessions.
+proposes to run it, for each of the four ways of giving the two sessions to the two clients.
 
 What is checked:
 - a gate in shadow prints nothing and exits 0 for every event;
@@ -200,7 +200,12 @@ def lines_of(agent, session, body):
 
 @pytest.mark.parametrize(
     ("early_agent", "late_agent"),
-    [("claude_code", "claude_code"), ("claude_code", "codex_code"), ("codex_code", "claude_code")],
+    [
+        ("claude_code", "claude_code"),
+        ("claude_code", "codex_code"),
+        ("codex_code", "claude_code"),
+        ("codex_code", "codex_code"),
+    ],
 )
 def test_the_request_kai_receives_carries_the_earlier_session(
     machine, kai_stand_in, early_agent, late_agent

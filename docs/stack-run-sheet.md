@@ -43,9 +43,11 @@ Pins: AgentArmor runtime freeze `a453deb` (only documents and tests have changed
    `campaign_arms.py write ROOTS --out DIR --budget 11000 --embedder embeddinggemma --replays first`.
    This is a development run of the encoder. It takes about 3 minutes per 100 roots on this machine.
 2. Make the panels: `agentarmor-monitor panels DIR/packets.jsonl --out PANELS --purpose evaluation`.
-3. Admit every request with Kai's tokenizer at K0's 2,048. A request that does not fit is held and counted, never cut.
-4. Build K0's read recipe by binding the panels to the template above, then run `kai.qwen.run check` (CPU).
-5. Read K0 (`kai.qwen.run read`). Going by K0's DEV reads (1,654 requests in 460 to 467 s, host peak 45 to 53 GB), 320 requests take a few minutes after loading.
+3. Admit every request with Kai's tokenizer at the session proposal's 4,096-token research cap, for K0 as for the future K1 (MR218). Count the admission at the published 2,048 separately. A request that does not fit is held and counted, never cut.
+   - Done, as Kai `train/recipes/summarizer-campaign-measure-20261114-v3` (registration v3): all 320 asked views admitted at 4,096 (history states up to 3,625 tokens).
+   - The 2,048 census, a serving finding: history 48 of 160, reference 124 of 160, newest 52 of 160 and none 152 of 160 fit. Most 11,000-character packets do not fit the published export.
+4. Build K0's read recipe by binding the panels to the template above, then run `kai.qwen.run check` (CPU). Done: `read.json` `dc52e1ae…` passes `check`.
+5. Read K0 (`kai.qwen.run read`), through the package's `read.sh`, which refuses without a release holding the registered scope. Going by K0's DEV reads (1,654 requests in 460 to 467 s, host peak 45 to 53 GB), 320 requests take a few minutes after loading.
 6. Score with `campaign_arms.py score DIR --answers F`, which already separates:
    - not asked;
    - not admitted;
@@ -102,17 +104,17 @@ The package: Kai `train/recipes/kai-session-decision-20261113-v1`. Its `registra
 
 | Pin | Made by | Status |
 |---|---|---|
-| `prepare_receipt` | `prepare.py RENDER PANELS ROOTS admission-template-4k.json OUT` | Ready to make. Render the two slices, concatenated into one roots file as before, with E0 at 11,000, then prepare (CPU). |
+| `prepare_receipt` | `prepare.py RENDER PANELS ROOTS admission-template-4k.json OUT` | Made (not yet pinned): the two slices concatenated, E0 at 11,000; 200 records, 50 of 50 pairs with every cell, longest state 3,534 tokens; `check_prepare` 10/10. |
 | `cpu_check` | `kai.qwen.run check` | After `recipe`. |
 | `preflight` | `kai.qwen.run preflight --out FILE` (CPU) | After `recipe`. |
-| `blind_gate` | `blind4.py seal`, `read`, `gate` | **Open question for the Reviewer.** Protocol v4 asks for a population no reader or reviewer has seen. The training slices have been reviewed, and slice 1's earlier revision was read under v2. Which admission do the TRAIN records need? |
-| `source_registration` | `make_preparation.py PREPARED GATE`, then `publish_source.py` | **Broken.** `blind4.py` writes gate schema `kai-session-blind-gate/v5`; `make_preparation.py` accepts only `/v3` and `/v4`. Needs a reviewed repair. |
+| `blind_gate` | `blind4.py seal`, `read`, `gate` | Settled by MR218: a separate TRAIN-admission protocol reusing v4's reader and bars, with exposure declared and no fresh claim. Proposed as Kai `blind/protocol-train-admission-v1.json`; a dry-run seal under it holds 200 requests in 50 pairs. Waits for its freeze. |
+| `source_registration` | `make_preparation.py PREPARED GATE`, then `publish_source.py` | Repaired in Kai `018c413ed`: gate v5 is accepted, with every refusal kept (`check_make_preparation.py`, 33 checks). |
 | `recipe` | `build_recipe.py SOURCE PREPARED` | After `source_registration`. Sets `max_state` 4,096. |
 
 **Stale statements to correct with the pins:**
 - **README:** its section on a render at 10,000 of `session-roots-train-001` (AgentArmor `cc4cf0c`, 68 records), its "two readers" step, and its fact-free `facts_sufficient`.
 - **The proposal:** "development file 003 r1" (the freeze names control set 001 r2 and the two slices), and "the longest session state is 2,249 tokens".
-- **`prepare.py:96`** hard-codes the question source `session-roots-train-001`.
+- **`prepare.py:96`** hard-codes the question source `session-roots-train-001`, so slice 2's records carry it too. The reader never sees `src`. `prepare.py` is also in the v4 chain for test 004, so the repair lands after that prepare phase and before publication.
 
 **Cost.**
 
@@ -149,15 +151,12 @@ A 50-pair test cannot certify a 1% false-intervention rate. That remains the CAL
 | Test 004 v4 read: Codex Daybreak at xhigh, about 200 requests, one retry pass, gate | registered measurement | The v3 read of 190 requests took about 30 minutes | **Blocked on the user's release** and on the prepare phase. |
 | DEV renders with E0; E1 fits | development | Minutes per 100 roots | **May run** (the user: "run EmbeddingGemma freely during development"). E1 is registered first. |
 | Version 3 of the campaign measurement (pins only) | CPU | Minutes | **May run.** |
-| K0 DEV reads (sections 3 and 6) | Kai read | About 8 minutes per 1,654 requests, host peak 53 GB | **Blocked on a registered read recipe and the Reviewer's agreement.** Then the Trainer records a one-job release quoting the user's 2026-11-13 words, "Launch training for Kai (and refactor data and code in [the Kai repository]) as needed", if the Reviewer agrees those words cover reads that judge this cycle's training. Otherwise the user is asked once. |
+| K0 DEV reads (sections 3 and 6) | Kai read | About 8 minutes per 1,654 requests, host peak 53 GB | **The section 3 read waits for the Reviewer's agreement to its recipe.** MR218 ruled that the user's 2026-11-13 words, "Launch training for Kai (and refactor data and code in [the Kai repository]) as needed", cover these reads. After agreement the Trainer records a one-job release quoting them with the registered scope. |
 | Kai memory probe, then training | Kai model jobs | 120 s / 77 GB; 7,132 s / 79.3 GB | **Blocked on the pins of section 5** and the Reviewer's agreement to the registered recipe. Then a one-job release quoting the same words. |
 
 No release file is present, and the user's two hold files stand.
 
-**A defect in the guard.** Kai's `kai.guard` command line tests `result.get("reason")`, but the key it writes is `stopped`, so its documented exit status 2 on a breach never fires. Callers must read `stopped` from the printed JSON. The fix is a one-line Kai change, but
-`train/kai/guard.py` is in the code closure that K0's read template pins (31 files). Changing it
-alone would make that template fail `check`, so the fix lands with the next re-pinned recipe,
-with its test.
+**A defect in the guard, repaired.** Kai's `kai.guard` command line tested `result.get("reason")`, but the key it writes is `stopped`, so its exit status 2 on a breach never fired. Kai `018c413ed` repairs it, with `train/tests/test_guard_exit.py`. The section 3 read recipe pins the repaired closure. The historical K0 template keeps its own pins and so fails `check` at HEAD, as Run 1's original recipe already did.
 
 ## 8. The shadow runner and the serving checklist
 
