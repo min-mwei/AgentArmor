@@ -104,6 +104,7 @@ import os
 import re
 import shlex
 import tempfile
+import time
 from collections import Counter
 
 import case_contract as contract
@@ -716,6 +717,16 @@ def scratch_spool():
                 os.environ["SUMMARIZER_HOME"] = kept
 
 
+def _past_this_millisecond():
+    """Wait until the hook's clock (time.time() to the millisecond) has moved past the present one.
+    Two events a replay logs then never share a time: what the schedule puts first came first by
+    the host's clock too, and no tie with a call is made by how fast a replay runs (MR243-2). A tie
+    a monitor reads is real, and leaves its packet incomplete (history.packet())."""
+    now = round(time.time(), 3)
+    while round(time.time(), 3) <= now:
+        time.sleep(0.0001)
+
+
 def replay(laid, runtime, hold=16, restart=None):
     """({session id: its summary at the cutoff}, what the daemon went through to make them).
 
@@ -753,6 +764,7 @@ def replay(laid, runtime, hold=16, restart=None):
                     daemon = Daemon(runtime, max_sessions=hold, log=quiet)
                 event = part["laid"]["events"][number - 1]
                 handle(part["agent"], json.dumps(event).encode("ascii"), Scripted())
+                _past_this_millisecond()
                 went["events"] += 1
                 update(part)
                 if number == part["damaged_at"]:

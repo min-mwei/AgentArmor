@@ -1534,6 +1534,11 @@ def select(mine, call_id, others, home):
         if (prompt["seq"], "prompt") not in shown_in[other["key"]]:
             items.append(_item(other, prompt, "earlier", groups=[group["id"]]))
             groups.append(group | {"key": False, "bears": False})
+    # Every result the lookup shows keeps the call it first came back for, whichever path found it
+    # (MR240-2, MR243-1): _producers() closes the items over their producers, and says when one is
+    # not kept.
+    if _producers(items, others) and "producer_not_kept" not in unsupported:
+        unsupported.append("producer_not_kept")
     items.sort(key=lambda item: (searched.index(item["key"]), item["seq"]))
     # A module the call loads by name was looked for where its words say, and nowhere else:
     # where else the program finds it is not known, so the search is not finished either.
@@ -2102,7 +2107,7 @@ def _keyed_observations(other, pairs):
     hook, every piece of its result is here (result_pieces), and every piece it shows has the call
     that first brought it back kept as an entry (MR240-2); a call that came back with nothing known
     (refused, failed, still proposed) has no piece to miss. gaps says what is not whole:
-    "keyed_producer_not_kept" for a call kept only in the catalogue of calls the summary left out,
+    "producer_not_kept" for a call kept only in the catalogue of calls the summary left out,
     for a result whose call is not kept at all, and for a piece seen again whose first call is not
     kept as an entry, whatever the piece says; "keyed_observation_cut" for words or a result cut.
     The session is the one select() cut at the proposed call's time (as_of): what came after it,
@@ -2134,7 +2139,7 @@ def _keyed_observations(other, pairs):
                 continue
             one = by_id.get(first)
             if one is None or one["seq"] > content["seq"]:
-                gaps.add("keyed_producer_not_kept")
+                gaps.add("producer_not_kept")
             else:
                 found.setdefault(id(one), one)
         return list(found.values())
@@ -2158,7 +2163,7 @@ def _keyed_observations(other, pairs):
         pieces = sum(not aside for _, aside in came)
         expected = made.get("result_pieces", None if made.get("status") == "returned" else 0)
         if not kept:
-            gaps.add("keyed_producer_not_kept")
+            gaps.add("producer_not_kept")
         elif "text_chars" in made or made.get("input_clipped") or expected != pieces:
             gaps.add("keyed_observation_cut")
     # A result that gives a pair, of a call the summary keeps neither as an entry nor in its
@@ -2169,11 +2174,48 @@ def _keyed_observations(other, pairs):
             continue
         if not any(made not in known for made, _, _ in _arrived(content)):
             continue
-        gaps.add("keyed_producer_not_kept")
+        gaps.add("producer_not_kept")
         if id(content) not in held:
             held.add(id(content))
             observations.append((None, [content], producers([content], None)))
     return observations, gaps
+
+
+def _producers(items, others):
+    """Close the items over their producers; whether a shown result's producer is not kept.
+
+    A piece of a result keeps the call it first came back for (a piece that came again is kept
+    once, on the entry it first came as, with a sighting for each later arrival): that call is shown
+    in every group the piece stands in, as take() does (MR192-3), whichever path found the piece
+    (MR240-2, MR243-1). A piece that came back for a call the summary does not keep as an entry
+    before it, kept only in its catalogue of left-out calls or not at all, is shown without the call
+    that brought it, its words and its status: True, and the lookup says its search did not finish.
+    A piece captured with no call (an attachment of a request, an instruction file) has none."""
+    sources = {other["key"]: other for other in others}
+    at = {(item["key"], item["seq"], item["type"]): item for item in items}
+    missing = False
+    for item in [item for item in items if item["type"] == "content"]:
+        other = sources[item["key"]]
+        entries = other["summary"]["entries"]
+        calls = {}
+        for entry in entries:
+            if entry["type"] == "action" and entry.get("call_id"):
+                calls.setdefault(entry["call_id"], entry)
+        for content in (e for e in entries if e["type"] == "content" and e["seq"] == item["seq"]):
+            if not content.get("call_id"):
+                continue
+            made = calls.get(content["call_id"])
+            if made is None or made["seq"] >= content["seq"]:
+                missing = True
+                continue
+            key = (item["key"], made["seq"], "action")
+            if key not in at:
+                at[key] = _item(other, made, "recent")
+                items.append(at[key])
+            for group in item["groups"]:
+                if group not in at[key]["groups"]:
+                    at[key]["groups"].append(group)
+    return missing
 
 
 def _item(other, entry, relation, use=None, of=None, bears=False, groups=()):
@@ -2780,6 +2822,15 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
                 unsupported.append("program_text_cut")
             if "lookup_unfinished" not in why:
                 why.append("lookup_unfinished")
+    # Something a searched session keeps is at the very time of the call by the host's clock (as_of
+    # "tied"): which came first is not known, so the account is not complete (MR243-2), as
+    # earlier.scope() counts such a session as not known. The lookup's route is its own and
+    # stands: a tie is read and kept, and never makes a packet complete (MR173-1).
+    if any(parts[key]["summary"]["as_of"]["tied"] for key in found["searched"] if key in parts):
+        if "cutoff_tied" not in unsupported:
+            unsupported.append("cutoff_tied")
+        if "lookup_unfinished" not in why:
+            why.append("lookup_unfinished")
     items = [line for index in sorted(chosen) for line in rendered[index]]
     used = {(found["items"][index]["key"], found["items"][index]["seq"]) for index in chosen}
     bridges = [

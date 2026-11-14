@@ -4075,8 +4075,8 @@ def _words_cut_by_the_summary(summaries, laid):
 
 
 _NOT_WHOLE = {  # each case, and the reason the account gives for it
-    "its call not kept": "keyed_producer_not_kept",
-    "its call only catalogued": "keyed_producer_not_kept",
+    "its call not kept": "producer_not_kept",
+    "its call only catalogued": "producer_not_kept",
     "its result not kept whole": "keyed_observation_cut",
     "its words cut by the summary": "keyed_observation_cut",
     "its call cut on its line": "keyed_observation_cut",
@@ -4123,7 +4123,7 @@ def test_a_keyed_observation_that_cannot_be_shown_whole_leaves_the_history_incom
         assert "lookup_unfinished" in account["why"], (case, agent)
         assert _NOT_WHOLE[case] in account["unsupported"], (case, agent, account["unsupported"])
         # What can be shown is shown: the result is a line, and the call where it is kept.
-        kept = _NOT_WHOLE[case] != "keyed_producer_not_kept"
+        kept = _NOT_WHOLE[case] != "producer_not_kept"
         assert _hold_shown(view, where) == (kept, True), (case, agent)
 
 
@@ -4162,7 +4162,7 @@ def _hold_story(repeated, pending=False):
     return _keyed_story(earlier=[dict(_FIRST), hold] if repeated else [hold], facts=False)
 
 
-def _came_after_the_call(summaries, laid):
+def _came_after_the_call(summaries, laid, by=1):
     """The case-77 query's result stamped one second after the proposed call by the host's clock:
     its return step, every sighting of an earlier piece for it and every piece that first came with
     it; its proposal stays before the call. A session that went on, as a monitor reads it. Returns
@@ -4173,7 +4173,7 @@ def _came_after_the_call(summaries, laid):
         for e in summaries[deciding["id"]]["entries"]
         if e["type"] == "action" and e.get("call_id") == deciding["laid"]["call"]
     )
-    later, entries = float(call["ts"]) + 1, summaries["a"]["entries"]
+    later, entries = float(call["ts"]) + by, summaries["a"]["entries"]
     made = next(e for e in entries if e["type"] == "action" and "--case 77" in str(e.get("target")))
     (back,) = [step for step in made["lifecycle"] if step["state"] == "returned"]
     back["ts"] = later
@@ -4280,11 +4280,80 @@ def test_a_repeated_result_whose_first_call_is_not_kept_leaves_the_history_unfin
         view = builder.build(builder.blind(laid), summaries, 11000)
         account = view["history"]
         assert account["complete"] is False and view["route"] == "undecided", agent
-        assert "keyed_producer_not_kept" in account["unsupported"], agent
+        assert "producer_not_kept" in account["unsupported"], agent
         assert "cutoff_not_established" not in account["unsupported"], agent
         shown = {(item["seq"], item["type"]) for item in account["items"]}
         assert (first["seq"], "action") not in shown, agent
         assert _producers_missing(view, summaries, laid), agent
+
+
+_FIRST_KEYS = {"77": "12", "RV-77": "RV-12"}
+
+
+@pytest.mark.parametrize("identifier", ["77", "RV-77"])
+@pytest.mark.parametrize("catalogued", [False, True])
+def test_a_shown_result_without_its_first_call_is_unfinished_whichever_lookup_found_it(
+    runtime, identifier, catalogued
+):
+    """MR243-1: the closure over a shown result's producer was the numeric key matcher's alone.
+    With the case named "RV-77" the piece is found by the identifier it shares with the call
+    (_told()), and it was shown without the call it first came back for, the history called
+    complete. One closure now covers every result the lookup shows, whichever path found it: a
+    piece whose first call is not kept as an entry (kept only in the catalogue, or not at all)
+    leaves the history unfinished (producer_not_kept), and is shown as far as it goes. With that
+    call kept the history is complete (the positive). Both layouts."""
+    first_key = _FIRST_KEYS[identifier]
+    output = f"case {identifier} hold=none checked=09:40Z"
+    first = {"id": "first", "run": f"hold-query --case {first_key}", "output": output}
+    hold = {"id": "hold", "run": f"hold-query --case {identifier}", "output": output}
+    call = {"id": "go", "run": f"case-export delete --case {identifier} --copy review"}
+    campaign = _keyed_story(earlier=[first, hold], call=call)
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        whole = builder.build(builder.blind(laid), summaries, 11000)
+        assert whole["history"]["complete"] is True and whole["route"] == "asked", agent
+        assert not _producers_missing(whole, summaries, laid), agent
+        session = summaries["a"]
+        made = next(
+            e
+            for e in session["entries"]
+            if e["type"] == "action" and f"--case {first_key}" in str(e.get("target"))
+        )
+        session["entries"].remove(made)
+        if catalogued:  # as summarize.py catalogues a call it does not keep
+            fields = ("seq", "ts", "tool", "status", "target", "call_id", "lifecycle")
+            record = {key: made[key] for key in fields} | {"effects": made["effects"]}
+            record["result"] = made["lifecycle"][-1]["seq"]
+            session["session"]["dropped_calls"] = [*session["session"]["dropped_calls"], record]
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        account = view["history"]
+        assert account["complete"] is False and view["route"] == "undecided", agent
+        assert account["unsupported"] == ["producer_not_kept"], agent
+        assert account["why"] == ["lookup_unfinished"], agent
+        assert _producers_missing(view, summaries, laid), agent  # shown as far as it goes
+
+
+@pytest.mark.parametrize("repeated", [True, False])
+def test_a_result_at_the_very_time_of_the_call_leaves_a_direct_history_unfinished(
+    runtime, repeated
+):
+    """MR243-2: the case-77 query's result logged at the very time of the call, by the host's
+    clock. as_of() keeps it and says tied, as it must: which came first is not known. select()
+    carried only what could not be dated, so a history packet built directly showed the return and
+    called the history complete. A tie now leaves it unfinished (cutoff_tied), as earlier.scope()
+    counts such a session as not known (MR173-1). The same result strictly before the call gives a
+    complete history (the positive). Both layouts."""
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(_hold_story(repeated), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        before = builder.build(builder.blind(laid), summaries, 11000)
+        assert before["history"]["complete"] is True and before["route"] == "asked", agent
+        _came_after_the_call(summaries, laid, by=0)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        assert view["history"]["complete"] is False and view["route"] == "undecided", agent
+        assert view["history"]["unsupported"] == ["cutoff_tied"], agent
+        assert view["history"]["why"] == ["lookup_unfinished"], agent
 
 
 def _timed(entries, dropped=()):
