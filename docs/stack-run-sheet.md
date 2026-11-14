@@ -226,12 +226,16 @@ No release file is present, and the user's two hold files stand.
   1. **No separate memory probe.** The 150-update prefix the rule gives would repeat the first 150 updates of the same plan. The guard returns its whole-host peak only when a job ends (`kai/guard.py`), so no margin can be read at update 150.
   2. **Built-in stops:**
      - a non-finite same-forward CE, gradient norm or trained parameter stops the trainer;
-     - `kai.guard` stops above 90 GB of host memory in use, on swap growth above 512 MiB, or at the 14,400 s timeout.
+     - `kai.guard` stops above 90 GB of host memory in use, on swap growth above 512 MiB, or at the recipe's timeout: 14,400 s for the first attempt, 17,400 s for the recovery below.
   3. **No first-fifth loss stop.** The trainer's CE is accumulated over the records each window visited, not over a repeated fixed set, so the fixed-set comparison MR221 required cannot be made in-run. `CE_by_update` is descriptive only; no first-fifth result is claimed, and no intermediate checkpoint is read.
   4. **The memory margin is a read condition, after the fit.** The guard's receipt must show a successful, complete run with no stop and `peak_host_bytes` at most 82,000,000,000 (8 GB under the limit). Missing or invalid guard or training receipts do not pass. Otherwise the failure is kept, nothing is read, and a separately registered `mlp_checkpointing` run follows, with no automatic retry or resume.
   5. The five retention panels must lose no measure at the final update (rule v2), in their own registered read.
+- **The first attempt and the recovery.**
+  - **The first attempt** (`train-s0.json`, 14,400 s) was stopped by the guard: host memory in use 93.3 GB against 90 GB at 24.5 s. It stopped before the first ten-update progress report, so the completed-update count is unavailable. The failure and its correction are kept (Kai `k1-train-s0-failed-20261114.json` and `…-correction.json`), and nothing from it is read.
+  - **The recovery, agreed in MR250,** is the single registered `mlp_checkpointing` variant: `train-s0-mlpckpt.json` `1dc3e8b8…`, preflight `ad970b65…`, registration v3 `9b79579a…`. Against the first attempt, only name, description, `mlp_checkpointing` (on) and the timeout (17,400 s) differ. Same data, plan, seed, objective and read condition.
+  - **The 17,400 s** is a planning allowance from three ratio estimates and three fitted regressions on Run 1's timings, with a recompute factor measured on short records. It is not a measured completion time or a bound.
 - **No sweep.**
-- **Budget:** about 2 to 3 hours on this machine (Run 1: 582 updates in 7,132 s, 79.3 GB host); the timeout is 4 hours. It is not a promise of a result: the fit can use its whole budget without learning what is wanted, and only the registered comparisons can show an improvement.
+- **Budget:** about 3 to 4 hours on this machine for the recovery (Run 1: 582 updates in 7,132 s, 79.3 GB host); the timeout is 17,400 s. It is not a promise of a result: the fit can use its whole budget without learning what is wanted, and only the registered comparisons can show an improvement.
 - **Then:** read the final update only, on the full exposed DEV, both arms, at 4,096.
 
 **Serving: local MLX first (MR221).** The user chose: "Use vLLM Metal or MLX." vLLM Metal's pooling scope excludes the raw token hidden states Kai's pointer readout needs. So the route is a direct MLX backbone adapter under AgentArmor's existing service, with one request encoder, one pointer implementation, one HTTP API and one monitor. It reuses Kai's MLX text forward and the trainer-owned export.
