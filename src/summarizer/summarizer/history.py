@@ -1216,6 +1216,32 @@ def _around(before, linked):
     return kept
 
 
+def _turn_before(entries, write, before, linked):
+    """The lower-trust content shown before a write of what the call runs or loads that stands
+    with it: what the write resembles, and every piece shown in the same turn (since the user's
+    last request before the write), in order, however many ordinary reads stand between an
+    instruction and the write (MR189-2). Each is shown as shown before that write, which says when
+    and never why; adjacency claims no adoption. Nothing is cut here: the group is fitted whole or
+    left out and said to be, so a long turn costs room, never silence."""
+    starts = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] < write["seq"]]
+    start = max(starts, default=-1)
+    turn = [e for e in before if e["seq"] > start]
+    return (
+        _around(before, linked)
+        if not turn
+        else _dedup([e for e in before if e["seq"] == linked] + turn)
+    )
+
+
+def _dedup(found):
+    seen, kept = set(), []
+    for entry in sorted(found, key=lambda e: e["seq"]):
+        if (entry["seq"], entry.get("sha256")) not in seen:
+            seen.add((entry["seq"], entry.get("sha256")))
+            kept.append(entry)
+    return kept
+
+
 def _from(other, acted, mine_uses, places, command, call, cwd, home):
     """What one source holds for the call: the writes of what it uses, each with what stands
     around it, and the calls and the content that name what it names. acted is that source's
@@ -1360,7 +1386,7 @@ def _from(other, acted, mine_uses, places, command, call, cwd, home):
             for e in entries
             if e["type"] == "content" and e["seq"] < entry["seq"] and e.get("trust") != "user"
         ]
-        shown = _around(before, linked)
+        shown = _turn_before(entries, entry, before, linked)
         asked = (entry.get("request") or {}).get("seq")
         prompts = [e for e in entries if e["type"] == "prompt" and e["seq"] < entry["seq"]]
         for prompt in [e for e in prompts if e["seq"] == asked] or prompts[-1:]:
