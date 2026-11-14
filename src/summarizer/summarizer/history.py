@@ -298,7 +298,6 @@ PLACES = ("domain", "url", "ip", "email")  # observables that are somewhere a ca
 # Labels content gets from the calls that followed it, not from what it says.
 _FROM_CALLS = frozenset({"action_source", "destination_source"})
 UNDER = 3  # writes shown of what a session did under a bound the user stated
-LINKED = 8  # lower-trust results of earlier sessions shown for a tie to the call (MR180-1)
 EARLIER = 3  # other requests of the project's earlier sessions shown as context, the newest
 
 
@@ -1079,10 +1078,12 @@ def select(mine, call_id, others, home):
 
 def _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses, bearing):
     """The lower-trust results of this project's earlier sessions that are tied to the call or
-    to a statement that bears on it, each with the action that brought it back, at most
-    LINKED of them: first those that share an identifier, a place or a path with the call
-    (or an identifier with a bearing statement), then those that share more words of five
-    letters or more, the newer first. Two shared words make a tie; one does not, and the words
+    to a statement that bears on it, each with the action that brought it back, every one of
+    them, in the order they are given room: first those that share an identifier, a place or a
+    path with the call (or an identifier with a bearing statement), then those that share more
+    words of five letters or more, the newer first by the host's clock. None is dropped here:
+    packet() fits them after the evidence that bears on the route, and one that finds no room
+    makes the account incomplete (MR185-1). Two shared words make a tie; one does not, and the words
     of a path the earlier text names are not counted (the path ties only as that very file).
     A tie retrieves a candidate and certifies nothing: it never bears on the route or makes
     the account complete (MR182)."""
@@ -1114,9 +1115,10 @@ def _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses,
             plain = _words(_PATHISH.sub(" ", text))
             shared = max(len(plain & words), len(plain & stated))
             if strong or shared >= 2:
-                found.append(((not strong, -shared, -content["seq"]), other, content, action))
+                when = float(content.get("ts") or 0)  # the host's clock, comparable across sessions
+                found.append(((not strong, -shared, -when), other, content, action))
     found.sort(key=lambda one: one[0])
-    return [(other, content, action) for _, other, content, action in found[:LINKED]]
+    return [(other, content, action) for _, other, content, action in found]
 
 
 def _item(other, entry, relation, use=None, of=None, bears=False, groups=()):
