@@ -293,3 +293,69 @@ Both commands ran from the AgentArmor repository root with one fresh scratch `SU
 ### Shortfalls
 
 - None. All reopened roots have outcome 1 grounded in their traces, no root is held, and both required checks exit 0.
+
+## 2026-11-13 — section 18 sitting after MR180-5
+
+- Writer: `gpt-daybreak-blue-latest`
+- Reasoning effort: `medium`
+- Scope: section 18 only. Four returned-output strings were corrected, the manifest was rewritten by the campaign checker, and this receipt section was added. No proof content, other campaign content, commit, or message-board entry was changed.
+
+### Files opened
+
+- `AGENTS.md`
+- `agent_swarm.md`
+- `training/summarizer/docs/data-request-008.md`, sections 12, 17 and 18 only
+- `training/summarizer/docs/campaign-format.md`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.manifest.jsonl`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.proof.md`
+- `training/summarizer/data/synthetic/session-roots-train-001-r2.receipt.md`
+
+Opened only by the required checker commands, not inspected as authoring material:
+
+- `training/summarizer/check_campaigns.py`
+- `training/summarizer/check_evidence.py`
+- `training/summarizer/data/starter/campaigns-v1.jsonl`
+- `training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl`
+- `training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl`
+- `training/summarizer/data/synthetic/campaigns-dev-003.jsonl`
+
+No code, message board, `private/` path, `campaigns-test-*` file, or other file was opened.
+
+### Four strings before and after
+
+The four rows were `t001-control-attack` `setup/s09`, `t001-control-attack` `review/r06`, `t001-control-benign` `setup/s09`, and `t001-control-benign` `review/r06`. Each had this exact string before:
+
+```text
+{
+  "before_task": [
+    "python tools/redact_report.py"
+  ]
+}
+```
+
+Each has this exact string after:
+
+```text
+{
+    "before_task": [
+        "python tools/redact_report.py"
+    ]
+}
+```
+
+### Final checks
+
+The campaign checker has no `--require-labels` option, so it was run in the section-17 form; the evidence checker was run with `--require-labels`. Both successful commands used the same fresh scratch `SUMMARIZER_HOME` under `$TMPDIR` and exited 0.
+
+`check_campaigns.py` last line:
+
+```json
+{"campaigns": 50, "pairs": 25, "groups": 25, "family": {"staged_exfiltration": 6, "poisoned_control": 6, "claimed_approval": 6, "credential_moved": 6, "limit_crossed": 6, "agent_handoff": 4, "changed_source": 4, "planted_file": 4, "poisoned_notes": 4, "slow_interleaved": 4}, "route": {"asked": 50}, "expect": {"sufficient": 50}, "kind": {"attack": 25, "benign": 25}, "decision": {"deny": 25, "allow": 25}, "declared": {"sessions_3_or_more": 30, "schedule": 38, "both_agents_named": 50, "damage": 0, "steps_20_or_more": 26}, "at_cutoff": {"returns_to_a_session": 26, "gap_reached": 0, "gap_reached_in_another_namespace": 0, "bridge_across_agents": 8, "sessions_reached_3_or_more": 30, "agents_reached_2": 50, "gap_reached_in_the_calls_namespace": 0, "steps_20_or_more": 26, "steps_40_or_more": 0, "steps_median": 20, "call_session_steps_20_or_more": 0}, "bridged_pairs_by_write_outcome": {"returned": 4}, "review": {"prose_in_more_than_4_pairs_once_names_are_masked": {"pieces": 3, "largest_in_pairs": 8}, "work_stamped_from_a_few_shapes": {"campaigns_with_a_session_of_12_steps": 6, "mostly_three_shapes": 0, "largest_share": 0.25}, "reads_of_an_earlier_version_shown_only_by_the_read": 0, "reads_after_an_effect_not_shown": 78, "of_them_showing_other_text_than_the_last_write": 0, "reads_in_a_form_not_compared": 0}, "problems": 0, "scorer": "campaign-contract/9", "sha256": "a0d9727879a72b95a72c6dba1c6499f9864d5840d05a1b0d7c8bd3b75f9b7b12", "checker_sha256": "d65668d8cfe9021dae7537f3ad78be403f2ca1a60f52613d178919a186021134", "code": "3b97c5307a391357bcd03e50291843e1246265a3-dirty", "existing": [{"file": "training/summarizer/data/starter/campaigns-v1.jsonl", "sha256": "cc9fe0bba69fb59bfcc75420106ccfeef9f063b341cbe589681e53d924d7d99b"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-001-r1.jsonl", "sha256": "a9fdcfc2920544999e889874c79b5901e251955892080c988766171c77582c9a"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-002-full.jsonl", "sha256": "2109cdd9dc0467f2fea8e62f344944c6828f67f47ae1bc81d10d93850f5c3a95"}, {"file": "training/summarizer/data/synthetic/campaigns-dev-003.jsonl", "sha256": "58809644e80334d2448408c1d953a13102c908a11c4feb3300ee933e6e3c3799"}], "options": {"attack_pairs": true, "require": {}}, "replay": {"ran": true, "agents": ["claude_code", "codex_code"], "runtime": "hash", "budget": 20000}, "complete": true, "manifest": "training/summarizer/data/synthetic/session-roots-train-001-r2.manifest.jsonl"}
+```
+
+`check_evidence.py --require-labels` last line:
+
+```json
+{"roots": 50, "refused": 0, "labelled": 50, "named_facts": 161, "omissions_refused": 322, "omissions": 322, "file_sha256": "a0d9727879a72b95a72c6dba1c6499f9864d5840d05a1b0d7c8bd3b75f9b7b12", "checker_sha256": "e4f3225bd5bcab4174606886d5c5b075fee588e7761f88c1a0f64ecd82d5cb26", "scorer": "campaign-contract/13", "budget": 20000}
+```

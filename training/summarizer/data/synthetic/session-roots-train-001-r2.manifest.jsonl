@@ -1,7 +1,7 @@
 {"id": "t001-stage-attack", "pair_id": "t001-p01", "group": "t001-g01", "family": "staged_exfiltration", "sessions": 2, "steps": 32, "sha256": "96a8249c60f56fb71def851f417a0eb1108cbba6fffbf7292394fb4a01fae904"}
 {"id": "t001-stage-benign", "pair_id": "t001-p01", "group": "t001-g01", "family": "staged_exfiltration", "sessions": 2, "steps": 32, "sha256": "7cd1bd53048a82c0e1a60afba7ffafd644026bc79f1c83cd2246c8636889381f"}
-{"id": "t001-control-attack", "pair_id": "t001-p02", "group": "t001-g02", "family": "poisoned_control", "sessions": 3, "steps": 22, "sha256": "106374becdfa99d8204edf90357ede35efae67349f66468ec3aa144e6116f15d"}
-{"id": "t001-control-benign", "pair_id": "t001-p02", "group": "t001-g02", "family": "poisoned_control", "sessions": 3, "steps": 22, "sha256": "a3aa10803baed0a6af626371091b7c0f37983b6626e11b3e5db27a9914c0b6e8"}
+{"id": "t001-control-attack", "pair_id": "t001-p02", "group": "t001-g02", "family": "poisoned_control", "sessions": 3, "steps": 22, "sha256": "45a8a0c182987fd408753ab314609f426ace0e240a08e813280f07f2c67ac9ef"}
+{"id": "t001-control-benign", "pair_id": "t001-p02", "group": "t001-g02", "family": "poisoned_control", "sessions": 3, "steps": 22, "sha256": "19624dfbe34b4e7c60b7838e7b6f7d0554ae4c6b42cca7c2c01d64c9c47b9bf6"}
 {"id": "t001-approval-attack", "pair_id": "t001-p03", "group": "t001-g03", "family": "claimed_approval", "sessions": 2, "steps": 17, "sha256": "88b14961e2906704ce07d578e5bdb83d6369f3982a02160a329b1648979a9f4b"}
 {"id": "t001-approval-benign", "pair_id": "t001-p03", "group": "t001-g03", "family": "claimed_approval", "sessions": 2, "steps": 17, "sha256": "df295b10b7d12e968494904a7b0d6177b5cf33dee29b89e88a662ed9b287d70f"}
 {"id": "t001-credential-attack", "pair_id": "t001-p04", "group": "t001-g04", "family": "credential_moved", "sessions": 4, "steps": 19, "sha256": "193b935529caf520d414fa5ead4cdfd18e845397b8ad48a5c2635cd5f6721742"}
@@ -48,4 +48,4 @@
 {"id": "t001-slow2-benign", "pair_id": "t001-p24", "group": "t001-g24", "family": "slow_interleaved", "sessions": 4, "steps": 22, "sha256": "c82955658e203d4d0bf3848d3e33daa3a975bb6dffe4537f519fc7fcced267cd"}
 {"id": "t001-stage3-attack", "pair_id": "t001-p25", "group": "t001-g25", "family": "staged_exfiltration", "sessions": 3, "steps": 21, "sha256": "7d43fd935a896257b617bfd2fa10f1f12326e4902f4e9fd24a314d98e7bc61ca"}
 {"id": "t001-stage3-benign", "pair_id": "t001-p25", "group": "t001-g25", "family": "staged_exfiltration", "sessions": 3, "steps": 21, "sha256": "38aaace9085ab10cd930f5ebf8dbbfb746855021bb1244191f418680100f5456"}
-{"file_sha256": "ab47d13af6e6b5acddcf46e4000d94afab08010216f74abecd1606c34a5b8d64", "campaigns": 50, "pairs": 25}
+{"file_sha256": "a0d9727879a72b95a72c6dba1c6499f9864d5840d05a1b0d7c8bd3b75f9b7b12", "campaigns": 50, "pairs": 25}
