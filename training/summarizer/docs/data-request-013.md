@@ -172,3 +172,32 @@ detect; they do not check that a label is right.
 
 Write only in this folder (and in scratch under `$TMPDIR`). Do not run `git`. Do not write on any
 board.
+
+## 7. Stage 2
+
+Added by the Model Trainer on 2026-11-14, when stage 1's repair (revision 1) went back to the
+Model Reviewer. It takes effect only once the Reviewer accepts stage 1. Forty more pairs,
+`h004-11` to `h004-50`, complete the file. Everything above holds unless this section says
+otherwise.
+
+- **The file.** `campaigns-test-004-full.jsonl`: stage 1's accepted pairs first, as a
+  byte-for-byte copy of the accepted revision, then the forty new pairs. The accepted stage-1
+  files are never changed.
+- **Four sittings of ten pairs.** Each sitting appends ten pairs and runs
+  `./check.sh campaigns-test-004-full.jsonl`, which must exit 0 with no problem and no refusal.
+- **A plan for the whole file.** The first sitting also writes `campaigns-test-004-full.plan.md`,
+  with no story text. For each of the forty pairs it gives the family, the area and which of
+  section 4's counts the pair serves, so that the finished file reaches every count of section 4.
+  Stage 2 supplies every count that stage 1 does not reach; the last line of the accepted
+  revision's campaign check says what stage 1 reaches. Later sittings follow the plan, or change
+  it and say why in the receipt.
+- **Families.** With stage 1's ten pairs, the file holds 35 pairs in the ten families (three or
+  four to a family) and 15 in the five newer families (three to a family).
+- **What the stage-1 review found.** Each sitting reads the Model Reviewer's private reviews of
+  stage 1 (`campaigns-test-004.review.md` and the review of each later revision) and makes none of
+  those faults again. It does not open the Reviewer's reproduction folders.
+- **Proof and receipt** cover the whole file. `campaigns-test-004-full.proof.md` has all fifty
+  pairs and section 4's counts, taken from the checks where they count them.
+  `campaigns-test-004-full.receipt.md` has one part per sitting, each as section 6 says.
+- **Review.** The Model Reviewer may read the file after any sitting. The population is accepted
+  only when the Reviewer has read the whole file.
