@@ -653,7 +653,10 @@ def bridge_problem(laid, part, bridge, rules=9):
     """
     step = next(s for s in part["laid"]["case"]["steps"] if s["id"] == bridge["step"])
     resource = bridge["resource"].replace("{cwd}", part["cwd"]).replace("{home}", HOME)
-    if step.get("write") != resource:
+    written = step.get("write")
+    if isinstance(written, str) and not written.startswith("/"):  # a path relative to its session
+        written = os.path.normpath(os.path.join(part["cwd"], written))
+    if written != resource:
         return "its earlier end is not a call that writes that resource"
     mine = laid["deciding"]
     if part["namespace"] != mine["namespace"]:
@@ -929,7 +932,8 @@ def reference(laid, summaries, budget=3000):
                     relation, of, tie = "recent", None, "recent"
                 items.append((source, (relation, of), tie, line, about))
     route = campaign["route"]
-    accounts, cwd = object_accounts(laid, summaries), laid["deciding"]["cwd"]
+    every, cwd = object_accounts(laid, summaries, every=True), laid["deciding"]["cwd"]
+    accounts = [account for account in every if account["events"] or account["gaps"]]
     why = (
         ["lookup_unfinished"]
         if any(a["not_kept"] or a["effects_unknown"] for a in accounts)
@@ -941,7 +945,7 @@ def reference(laid, summaries, budget=3000):
         made = with_history(view, sources, items, bridges, why, accounts, cwd)
     else:
         made = view
-    return made | {"route": route}
+    return with_conditions(made, laid, summaries, every) | {"route": route}
 
 
 def _object_sessions(laid, summaries):
@@ -969,9 +973,10 @@ def _object_sessions(laid, summaries):
     return scope, mine, unresolved
 
 
-def object_accounts(laid, summaries):
+def object_accounts(laid, summaries, every=False):
     """The accounts of the files the call names as the runtime writes them, for the reference arm:
-    both arms carry the same accounts, and the scorer holds both against the replay (MR198-2)."""
+    both arms carry the same accounts, and the scorer holds both against the replay (MR198-2).
+    every keeps the accounts with nothing in them as well (the files the call names)."""
     scope, mine, unresolved = _object_sessions(laid, summaries)
     call_id = laid["deciding"]["laid"]["call"]
     entries = mine["summary"]["entries"]
@@ -979,7 +984,38 @@ def object_accounts(laid, summaries):
     call = history_lookup.whole_call(call)
     named = history_lookup.named_by_call(call, mine["cwd"], HOME)
     accounts = history_lookup._objects(scope, mine, call, named, mine["cwd"], HOME, unresolved)
-    return [account for account in accounts if account["events"] or account["gaps"]]
+    return (
+        accounts
+        if every
+        else [account for account in accounts if account["events"] or account["gaps"]]
+    )
+
+
+def with_conditions(view, laid, summaries, every):
+    """A reference view that gives a condition of the call's session the candidate evidence an
+    earlier session shows, as history.packet() does, from what this view shows (MR201 ruling):
+    the same functions, so both arms are held to one reading. every is object_accounts(every)."""
+    history, deciding = view.get("history"), laid["deciding"]
+    mine = {"summary": summaries[deciding["id"]], "cwd": deciding["cwd"]}
+    wanted = history_lookup._settled_only_elsewhere(mine, view, every, HOME) if history else {}
+    if not wanted:
+        return view
+    showing = {
+        (item.get("alias"), item.get("seq"), item.get("type"), item.get("sha256"))
+        for item in history.get("items", ())
+    }
+    showing |= {(alias, seq, kind) for alias, seq, kind, _ in showing}
+    by_alias = {part["alias"]: {"summary": summaries[part["id"]]} for part in laid["parts"]}
+    conditions = history_lookup.condition_evidence(wanted, every, showing, by_alias)
+    if not conditions:
+        return view
+    lines = [condition_line(condition, deciding["cwd"]) for condition in conditions]
+    body, _, footer = view["text"].rpartition("\n")
+    return view | {
+        "text": "\n".join([body, *lines, footer]),
+        "history": history | {"conditions": conditions},
+        "unresolved_conditions": view["unresolved_conditions"] - len(conditions),
+    }
 
 
 # The oracle's own reading of what a step does to a file (MR198-2): no part of the runtime's account

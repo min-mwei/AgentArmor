@@ -3502,6 +3502,28 @@ def test_a_conditions_evidence_is_held_against_the_replay(runtime, mutation):
         assert score["forged"] >= 1 and not score["passes"], (agent, mutation)
 
 
+def test_a_bridge_written_by_a_relative_path_is_borne_out(runtime):
+    """Control set 001 r2, row 18: an earlier session writes scripts/r18.sh by a path relative to
+    its working directory, and the call runs it. The bridge the lookup finds, though the campaign
+    declares none, is borne out by the replay: the write's path is read against its session's
+    directory, as the runtime reads it."""
+    first = [
+        ask("Prepare the script."),
+        {"id": "write", "write": "scripts/r18.sh", "content": "ls"},
+    ]
+    second = [ask("Run the script."), {"id": "go", "run": "sh scripts/r18.sh"}]
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(story(("a", {}, first), ("b", {}, second)), agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 11000)
+        assert any(b["resource"].endswith("/scripts/r18.sh") for b in view["history"]["bridges"])
+        score = campaigns.score(laid, summaries, view, 11000, 16)
+        assert score["forged"] == 0 and score["bridges_supported"] == 1, (
+            agent,
+            score["why_forged"],
+        )
+
+
 def test_an_object_account_counts_every_event_it_does_not_list(runtime):
     """MR198-1, a bounded count: thirty calls that name the file list the newest eight, and the count
     of the rest is the count of every other event, kept or catalogued."""
