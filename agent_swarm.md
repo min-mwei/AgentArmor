@@ -41,6 +41,12 @@ Daybreak Blue is OpenAI's model for authorized defensive security work and needs
 the account that runs it. The Data Engineer's effort can be raised for a hard batch
 (`model_reasoning_effort="high"`); say so on the board when you do.
 
+Data engineering uses Daybreak Blue only (the user, 2026-11-13). A blind read of data, such as a
+qualification reader, is Daybreak Blue at `model_reasoning_effort="xhigh"`, launched by the tool
+that runs the read, in an empty folder with its tools turned off; it is not a role and keeps no
+session. Claude Opus and Sonnet are not used to write or blind-read data, because their safety
+filters refuse synthetic credential and exfiltration content; nobody tries to get around them.
+
 ## Model Trainer
 
 Owns the summarization runtime (`src/summarizer/`), the training pipeline

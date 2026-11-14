@@ -113,6 +113,14 @@ there, apply here.
   [agent_swarm.md](agent_swarm.md) says what each owns and how to start it. They hand work over
   through the shared board, `../msgboard.md` beside this repository, which is append-only: never
   edit another role's entry.
+- **Data engineering runs on Codex Daybreak Blue.** The Data Engineer, who writes and repairs
+  synthetic data, is Codex CLI `gpt-daybreak-blue-latest` at medium reasoning effort (high for a
+  hard batch, said on the board). A reader that judges data blind, as a qualification does, is
+  Codex `gpt-daybreak-blue-latest` at xhigh effort, run with no tools and no files. Claude Opus
+  and Sonnet do not author or blind-read data: their safety filters refuse synthetic credential and
+  exfiltration content, and the work does not try to get around them. A blind reader on the
+  author's own model is less independent, and its results say so. The user set this on
+  2026-11-13.
 - **The summarizer tags; it does not judge.** It marks entries and observables with indicators
   (label, confidence, basis) and a stronger model decides what is an attack. An entry can be
   suspicious without being one. Recall matters more than precision: do not add a gate that
