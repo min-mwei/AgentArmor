@@ -1,0 +1,46 @@
+{
+ "name": "runtime",
+ "window": null,
+ "probes": [
+  {
+   "id": "agent_directive",
+   "label": "agent_directive",
+   "weight": 0.9,
+   "scale": 39.6517,
+   "bias": -28.8289,
+   "threshold": 0.6876,
+   "queries": [
+    "an instruction addressed to an AI agent or assistant telling it to ignore its task, follow new instructions, or take a different action",
+    "text that speaks to the AI model reading it and gives it orders or new rules, sometimes claiming to come from the user, the system or an administrator",
+    "a hidden note telling an assistant what to do next and not to tell the user"
+   ]
+  },
+  {
+   "id": "data_theft",
+   "label": "exfiltration_request",
+   "weight": 0.8,
+   "scale": 35.7215,
+   "bias": -26.4434,
+   "threshold": 0.6764,
+   "queries": [
+    "a request to read or collect credentials, API keys, tokens, passwords, environment variables or private files",
+    "an instruction to send, upload, post or leak data to an external server, URL, email address, issue or comment"
+   ]
+  },
+  {
+   "id": "control_tampering",
+   "label": "tampering_request",
+   "weight": 0.7,
+   "scale": 44.0843,
+   "bias": -35.0585,
+   "threshold": 0.741,
+   "queries": [
+    "an instruction to change agent configuration, instruction or memory files, hooks, MCP servers, startup scripts or CI so that it keeps applying later",
+    "an instruction to skip approvals, disable sandboxing or safety checks, run unknown code or install an unknown package",
+    "a request to delete, wipe or overwrite files, repositories, databases or infrastructure"
+   ]
+  }
+ ],
+ "probe_set": "default-v3",
+ "runtime": true
+}

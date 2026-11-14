@@ -1,9 +1,14 @@
-# Training runs and model weights stay local. Of the data, only the hand-written starter
-# set is tracked here. Seeds are excerpts of real sessions and built pairs are derived:
-# both stay out, as do synthetic batches and evaluation files until they are released.
+# Training runs and model weights stay local. Tracked data: the hand-written starter set,
+# the synthetic training and development campaigns with their proofs, receipts and
+# manifests, and the evaluation files (moved here from the Summarizer repository on
+# 2026-11-13 at the user's request). Seeds are excerpts of real sessions, built pairs are
+# derived from them, and held-out sets are read only by their author and the Reviewer: all
+# three stay out of the repository, under the ignored top-level private/ folder.
 /runs/
 /data/*
 !/data/starter/
+!/data/synthetic/
+!/data/eval/
 models/
 checkpoints/
 *.safetensors

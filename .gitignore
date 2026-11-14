@@ -23,3 +23,7 @@ adapters/
 .DS_Store
 .codex/
 .claude/
+
+# Local-only material never published: seeds (excerpts of real sessions), pairs built from
+# them, held-out sets and their results, and other runs (see training/summarizer/.gitignore).
+/private/
