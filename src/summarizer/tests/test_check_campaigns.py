@@ -650,19 +650,85 @@ def test_a_read_showing_exactly_the_last_write_passes(pair):
     assert checker.read_consistency(_plant_then(pair, exact)) == ([], [])
 
 
-def test_a_validator_in_between_changes_nothing_but_an_editor_leaves_the_read_to_look_at(pair):
+def test_a_program_whose_effect_is_unknown_leaves_the_read_to_look_at(pair):
+    """MR176-2: a script or tool without a changing word is not proven to only look."""
     paraphrase = {
         "id": "look",
         "read": "{cwd}/scripts/setup.sh",
         "output": "A script that fetches the installer.",
     }
-    validator = {
-        "id": "check",
-        "run": "python tools/check_script.py scripts/setup.sh",
-        "output": "ok",
-    }
-    found, look = checker.read_consistency(_plant_then(pair, validator, paraphrase))
-    assert found and look == []
-    editor = {"id": "edit", "run": "sed -i s/curl/wget/ scripts/setup.sh", "output": ""}
-    found, look = checker.read_consistency(_plant_then(pair, editor, paraphrase))
-    assert found == [] and look and "may have changed it" in look[0]
+    for between in (
+        {"id": "check", "run": "python tools/check_script.py scripts/setup.sh", "output": "ok"},
+        {"id": "check", "run": "python tools/mutate.py", "output": ""},
+        {"id": "edit", "run": "sed -i s/curl/wget/ scripts/setup.sh", "output": ""},
+        {"id": "back", "run": "git -C . restore -- scripts/setup.sh", "output": ""},
+        {"id": "unpack", "run": "tar -xf bundle.tar", "output": ""},
+    ):
+        found, look = checker.read_consistency(_plant_then(pair, between, paraphrase))
+        assert found == [] and look and "may have changed it" in look[0], between
+    for between in (
+        {"id": "state", "run": "git status", "output": "clean"},
+        {"id": "pretty", "run": "python -m json.tool config.json", "output": "{}"},
+        {"id": "other", "run": "rm notes/old.txt", "output": ""},
+        {"id": "refused", "run": "python tools/mutate.py scripts/setup.sh", "denied": "no"},
+    ):
+        found, look = checker.read_consistency(_plant_then(pair, between, paraphrase))
+        assert found and look == [], between
+    whole = {"id": "clear", "run": "rm -r scripts", "output": ""}
+    found, look = checker.read_consistency(_plant_then(pair, whole, paraphrase))
+    assert found == [] and look
+
+
+_TWO = {"id": "note", "write": "{cwd}/notes/f.txt", "content": "alpha\nbeta\n"}
+
+
+@pytest.mark.parametrize(
+    "command, right, wrong",
+    [
+        ("cat notes/f.txt", "alpha\nbeta", "alpha\ngamma"),
+        ("cat -n notes/f.txt", "     1\talpha\n     2\tbeta", "alpha\nbeta"),
+        ("head -n 1 notes/f.txt", "alpha", "invented"),
+        ("head -n 1 notes/f.txt", "alpha", "alpha\nbeta"),
+        ("head -n1 notes/f.txt", "alpha", "beta"),
+        ("head -1 notes/f.txt", "alpha", "alpha\nbeta"),
+        ("head notes/f.txt", "alpha\nbeta", "alpha"),
+        ("tail -n 1 notes/f.txt", "beta", "invented"),
+        ("tail --lines=1 notes/f.txt", "beta", "alpha"),
+        ("tail -n +2 notes/f.txt", "beta", "alpha\nbeta"),
+        ("sed -n 2p notes/f.txt", "beta", "alpha"),
+        ("sed -n '1,$p' notes/f.txt", "alpha\nbeta", "beta"),
+        ("grep alpha notes/f.txt", "alpha", "1:alpha"),
+        ("grep -n alpha notes/f.txt", "1:alpha", "alpha"),
+        ("grep -i ALPHA notes/f.txt", "alpha", "ALPHA"),
+        ("grep -F a.b notes/f.txt", "", "alpha"),
+        ("grep zeta notes/f.txt", "", "no matches"),
+    ],
+)
+def test_each_read_form_shows_exactly_what_it_prints(pair, command, right, wrong):
+    """MR176-1: every compared form has its count, numbering and pattern enforced."""
+    for output, refused in ((right, False), (wrong, True)):
+        step = {"id": "look", "run": command, "output": output}
+        found, look = checker.read_consistency(_plant_then(pair, _TWO, step))
+        assert bool(found) is refused and look == [], (command, output)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -E 'al+' notes/f.txt",
+        "grep 'al.*' notes/f.txt",
+        "nl notes/f.txt",
+        "cat notes/f.txt | head -1",
+    ],
+)
+def test_a_form_the_check_does_not_compare_is_looked_at(pair, command):
+    step = {"id": "look", "run": command, "output": "alpha"}
+    found, look = checker.read_consistency(_plant_then(pair, _TWO, step))
+    assert found == [] and look and "does not compare" in look[0]
+
+
+def test_the_comparison_ignores_line_ends_but_not_indentation(pair):
+    for output, refused in (("alpha  \nbeta\n\n", False), ("  alpha\nbeta", True)):
+        step = {"id": "look", "read": "{cwd}/notes/f.txt", "output": output}
+        found, _ = checker.read_consistency(_plant_then(pair, _TWO, step))
+        assert bool(found) is refused
