@@ -496,6 +496,54 @@ tolerance is set to hide it.
 They describe seventeen campaigns written to show a gap. They are not a rate of anything in
 real sessions.
 
+### The whole stack in shadow, on campaigns
+
+`shadow_campaigns.py` puts campaigns through what a user runs (run sheet, section 9, serving
+step 3): every event through the gate command `agentarmor-monitor hooks-config --gate EXE
+--shadow` generates, the local server `serve --shadow --earlier-sessions on` with a scratch
+spool, home and Codex home, and a recording proxy in front of Kai. Each campaign gets a stack of
+its own, so no campaign is an earlier session of another. Its docstring says what a run is and
+what it cannot observe: no client, no enforcement, no tool effect.
+
+```sh
+.venv/bin/python training/summarizer/shadow_campaigns.py run CAMPAIGNS --ids ID [ID ...] \
+    --layouts claude_code --kai-standin --embedder hash --out private/shadow-campaigns/NAME
+```
+
+It reports five measures apart (MR246-MR251): (a) capture and evidence, (b) token admission and
+HTTP outcomes, (c) Kai's answers, (d) observed outcomes, (e) load. For (a) the runner rebuilds
+the call's packet right after the call is answered, with the server's own code on the server's
+spool, and keeps that account (`unsupported` included) only where the rebuilt request's SHA-256
+is the one the server's issued record names. `campaign_contract.score` version 16 is then run
+on that very packet, with the server's summaries at the cutoff and every namespace unknown, as
+the server holds them. `runs.jsonl` and `summary.json` hold no session text; `runs/RUN/` does.
+
+**The first real-model run is registered, not run.** `shadow-registration-dev003-8pairs-v1.json`,
+proposed to the Model Reviewer, pins:
+
+- AgentArmor `5b9a9ee`: the repaired monitor of `4617665` with the runner's measures (runner
+  SHA-256 `9e9cfa2a…`).
+- The 16 campaigns of the eight DEV 003 r5 pairs, in one nominal layout: every session names its
+  own agent, so a second layout adds no input. That is 46 sessions (24 Claude Code, 22 Codex) and
+  16 calls under decision (10 Claude Code, 6 Codex).
+- Kai-4B on MLX from the published 2,048-state export (`kai.json` `b91aa764…` at revision
+  `5bd63725…`), served under `kai.guard`.
+- EmbeddingGemma 2 at the pinned revision with the default-v3 probes, on CPU in float32. That is
+  not the MPS bfloat16 E0 render, and the probes were fitted in bfloat16.
+- The runner's settings, with the output under `private/`.
+
+It launches only after the K1 job has freed the GPU lock and the Reviewer has agreed. The dry
+run of the same command lines with the stand-in and the hash embedder is
+`shadow-registration-dev003-8pairs-v1.dry-run.json` (counts only). In it:
+
+- 16 runs, none failed; 684 gate processes, every one exiting 0 with nothing printed.
+- One answered record and one observed record (outcome assumed) for each of the 16 calls.
+- 16 of 16 rebuilt packets are the issued request; the scorer finds 62 of 62 declared facts
+  (54 of 54 earlier), 10 of 10 bridge chains and nothing untrue.
+- 512 requests, all attributed by record: 256 the gate's, 250 the watcher's, 6 both.
+
+It checks the plumbing, nothing of any model.
+
 ## An independent test for the probes
 
 A family held out of a batch shares that batch's writer, seeds and recipe, so it shows transfer
@@ -977,6 +1025,9 @@ The panel figures are measurements only; nothing was tuned or calibrated against
 | `context_eval.py` | Session cases → how much of the needed evidence each packet holds |
 | `case_contract.py` | The contract for held-out session cases: schema, validator and source-bound scorer |
 | `campaign_contract.py` | Campaigns over several sessions: schema, validator, a replay through the real hook and daemon, and a scorer that counts a fact of another session only at that session and event |
+| `shadow_campaigns.py` | Campaigns through the whole stack in shadow: generated gates, the local server with earlier sessions on, a recording proxy in front of Kai; five measures, apart |
+| `shadow-registration-dev003-8pairs-v1.json` | The registration of the first real-model shadow run: eight DEV 003 pairs, Kai-4B on MLX, EmbeddingGemma 2 on CPU (proposed) |
+| `shadow-registration-dev003-8pairs-v1.dry-run.json` | That run's command lines with the stand-in and the hash embedder: counts only |
 | `common.py` | Shared loading, encoding and scoring |
 | `data/starter/facets.jsonl` | 85 hand-written examples in 42 groups across 11 carrier families |
 | `data/starter/sessions.jsonl` | 25 hand-written session cases in 11 families |
