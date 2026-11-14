@@ -22,6 +22,10 @@ be incomplete), version 13 requires it to keep every earlier fact the gap did no
 loss is caught without asking a correct refusal to change. A named fact the gap took cannot be
 shown at all and is listed under `review`. The gold labels are never changed.
 
+With `--require-labels` (for a file whose request asks every campaign to be labelled, such as a
+held-out set) a root without `story.rules` is refused too, instead of being counted as held: the
+labels and their evidence map belong inside `story`.
+
 Refused (one line per root, exit status 1): a labelled root without `story.evidence`, or with
 other keys than `decision` and the rules it labels, or naming a fact it does not declare; a
 reference packet that does not pass; a named fact whose removal the scorer does not notice.
@@ -95,10 +99,17 @@ def label_problems(root):
     return found
 
 
-def check(root, runtime):
+def check(root, runtime, require_labels=False):
     """(problems, review, counts) of one root."""
     story = root.get("story") or {}
     if not isinstance(story.get("rules"), dict):
+        if require_labels:
+            where = " (they are at the campaign's top level)" if "rules" in root else ""
+            return (
+                [f"no story.rules, story.host_facts and story.evidence{where}"],
+                [],
+                {"unlabelled": 1},
+            )
         return [], [], {"held": 1}
     problems = label_problems(root)
     if problems:
@@ -154,6 +165,9 @@ def check(root, runtime):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("roots", help="the training roots (JSONL)")
+    parser.add_argument(
+        "--require-labels", action="store_true", help="refuse a root without story.rules"
+    )
     args = parser.parse_args(argv)
     from summarizer.embedder import create
     from summarizer.summarize import Runtime
@@ -163,7 +177,7 @@ def main(argv=None):
     runtime = Runtime(create("hash"))
     totals, failing = {}, 0
     for root in roots:
-        problems, review, counts = check(root, runtime)
+        problems, review, counts = check(root, runtime, args.require_labels)
         for key, value in counts.items():
             totals[key] = totals.get(key, 0) + value
         if problems or review:

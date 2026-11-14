@@ -155,3 +155,12 @@ def test_a_named_fact_the_gap_took_is_left_for_a_reader(root, runtime):
     assert problems == [] and any(
         "fact lost lies where the gap took the log" in line for line in review
     )
+
+
+def test_with_labels_required_a_root_whose_labels_are_outside_its_story_is_refused(root, runtime):
+    misplaced = copy.deepcopy(root)
+    for key in ("rules", "evidence"):
+        misplaced[key] = misplaced["story"].pop(key)
+    assert check_evidence.check(misplaced, runtime) == ([], [], {"held": 1})
+    problems, _, _ = check_evidence.check(misplaced, runtime, require_labels=True)
+    assert problems and "they are at the campaign's top level" in problems[0]

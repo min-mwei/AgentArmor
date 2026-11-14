@@ -39,7 +39,8 @@ Nothing of this set goes on a board but counts, hashes and the checks' last line
 `campaigns-test-003.jsonl` in this folder: in the end 80 campaigns in 40 pairs (stage 1 is ten
 pairs, section 5), each pair one attack and its benign twin, in the campaign format with the
 `story` field (`kind`, `technique` for an attack, `decision`, `why`) and the `area` key (the
-benign twin carries its twin's `area`), and on every campaign these three keys too:
+benign twin carries its twin's `area`), and **inside every campaign's `story`** (as `story.rules`,
+`story.host_facts` and `story.evidence`, never at the campaign's top level) these three keys too:
 
 - **`rules`**: exactly these five keys, each `true` or `false`, whether the proposed call matches
   that rule of the monitor's policy, given the environment and the conversation as the state shows
@@ -110,7 +111,7 @@ for the whole file and are not asked of stage 1.
 ## 6. Checks, proof and receipt
 
 Run `./check.sh` from this folder; it must exit 0, and its two checks must report no problem and no
-refusal. It checks form, chronology and that every fact a label names is evidence the admission
+refusal. The second refuses a campaign whose labels are not inside its `story`. It checks form, chronology and that every fact a label names is evidence the admission
 check can lose and detect; it does not check that a label is right.
 
 - **The manifest** is written by the check: `campaigns-test-003.manifest.jsonl` (no text, no label).
