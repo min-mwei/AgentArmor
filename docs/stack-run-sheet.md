@@ -221,15 +221,23 @@ No release file is present, and the user's two hold files stand.
 
 **The prioritized intervention: the K1 session pilot**, on the admitted TRAIN records once their gate passes.
 - **The recipe:** the existing session recipe, fresh from the 4B base with Run 1's recipe, plus the retained session records at `max_state` 4,096.
-- **Expected effect:** reference-arm separation rises on the covered families and does not move on the absent ones. That gives a learnability-against-coverage control inside one read.
+- **Expected effect:** reference-arm separation rises on the covered families. The absent families are coverage gaps, not controls: transfer to them can occur, and a change there is reported, not assumed away (MR221).
 - **Order and stops:**
   1. A memory probe first: the plan's shortest prefix holding its heaviest update, about 120 s at 77 GB host on the 4B ten-update prefix.
   2. Stop at once on non-finite loss or gradients.
-  3. Stop after the first fifth of updates if the session records' training loss has not fallen below its starting value.
+  3. Stop after the first fifth of updates if the loss on one fixed set of session records, under the same objective, has not fallen below its value at the start. Two different noisy minibatches are never compared (MR221).
   4. Stop if the five retention panels lose any measure at the final update (rule v2).
 - **No sweep.**
-- **Budget:** about 2 to 3 hours on this machine (Run 1: 582 updates in 7,132 s, 79.3 GB host).
+- **Budget:** about 2 to 3 hours on this machine (Run 1: 582 updates in 7,132 s, 79.3 GB host). That estimate starts only after an accepted preparation and its memory probe; it is not a promise of a start time.
 - **Then:** read the final update only, on the full exposed DEV, both arms, at 4,096.
 
-**Serving blocker.** The real-Kai shadow path needs the Linux vLLM host and an export at the state contract K1 is read at. The published export is 2,048, and no 4,096 export is qualified. That host is not on this machine.
+**Serving: local MLX first (MR221).** The user chose: "Use vLLM Metal or MLX." vLLM Metal's pooling scope excludes the raw token hidden states Kai's pointer readout needs. So the route is a direct MLX backbone adapter under AgentArmor's existing service, with one request encoder, one pointer implementation, one HTTP API and one monitor. It reuses Kai's MLX text forward and the trainer-owned export.
+
+1. **CPU contracts first:** the artifact and tokenizer boundary, full-input admission, independent question rows, the FP32 pointer head, the temperature, delimiter escaping and evidence offsets. Health and records name the real backend.
+2. **A guarded local check:** logits and probabilities compared with Kai's MLX reference on identical tokens and isolated rows.
+3. **The eight pairs end to end in shadow:** generated hooks, the calibrated Summarizer, server-owned history, Kai, the shadow answer and the observed hook outcome.
+
+The published 2,048 export only allows fitting smoke cases and oversize refusal. The 4,096 state is measured on its own export before any claim. Local MLX qualification is not Linux vLLM qualification.
+
+**TRAIN admission failed** (gate `5ba4b10e…`: decision 181/200, 26/50 pairs retained). The batch is held whole, with no pilot exception (MR221). The next step is adjudicating the 24 held pairs against their exact source and state, starting with one authorization-binding case and one rule-label case reviewed before any batch edit. Only demonstrated faults are repaired, in new revisions; genuine reader disagreements are kept; then a new preparation, seal and read.
 
