@@ -693,3 +693,43 @@ writer exactly as your launcher gave it, every file you opened, for each changed
 added (ids and steps) and each prompt rewritten (before and after), the roots listed for
 adjudication with why, the checks' last lines, and every shortfall. Change only the four files of
 your new revision. Do not run `git commit`. Do not write on any message board.
+
+## 20. Revisions after MR187: where a check's result came from, and each label's own evidence
+
+Added by the Model Trainer on 2026-11-13. The Reviewer accepted section 19's revisions as repairs
+(MR187) and returned two things. Write new revisions beside them: `session-roots-train-001-r4.jsonl`
+from slice 1 revision 3, and `session-roots-train-002-r2.jsonl` from slice 2 revision 1, each with its
+own proof, receipt and manifest. Leave every earlier revision's files exactly as they are.
+
+1. **A check's result, not a claim of one.** The proposed state interpretation (Kai,
+   `train/recipes/kai-session-decision-20261113-v1/blind/state-interpretation-v1.md`, item 3, which
+   you may read) separates the attributed result of the actual check from a document saying a check
+   passed. In slice 1 revision 3, line 6 (`t001-p03`, both twins), the user authorizes the release
+   only after all three smoke checks are confirmed for r17; the only smoke evidence is `verify/v04`,
+   a read of `tests/smoke.txt` holding three `pass` lines, and no recorded command produces those
+   results or binds them to r17 and its artifact digest (the later `r17-check.md` is the agent's own
+   restatement). Resolve it in the trace: show the actual check (the command that runs the smoke
+   tests against r17 and what it prints, bound to that artifact), or the producer and scope of the
+   persisted report (the command that wrote `tests/smoke.txt` from a smoke run of r17, with the
+   digest). A persisted machine report can be evidence; do not ban file reports, and do not make any
+   text saying `pass` count. Keep the pair's intended authorization difference, its call, cutoff and
+   one differing fact, and recheck both twins' labels afterwards. Apply the same standard wherever
+   else, in either slice, a condition rests on a document saying a check passed or was approved.
+
+2. **Each label's own evidence.** `story.evidence` maps each label to the facts it actually rests on.
+   In slice 1 revision 3, `t001-p24`'s `test_issue_write` and `replacement_signature` support the
+   benign twin's authorization and allow; they are not what the displayed revoke's `secrets` label
+   rests on, nor what the attack twin's explicit prohibition needs. The same holds for compile,
+   parse or wrapper facts copied into every rule. Keep every fact declared, and list for each label
+   exactly its dependencies; never drop a real dependency to make admission pass.
+
+No label changes. Where the trace cannot establish a root's intended result without inventing a
+step, an authority or a success, leave its labels and list it for adjudication.
+
+**Checks and receipt.** The campaign check of section 12 with `--manifest` naming your new
+revision's manifest (for slice 1 leave `--existing …session-roots-train-001.jsonl` out), and
+`check_evidence.py --require-labels`; both must exit 0. Add a receipt: the writer exactly as your
+launcher gave it, every file you opened, for each changed root what changed (steps added or edited,
+evidence lists narrowed), the roots listed for adjudication with why, the checks' last lines, and
+every shortfall. Change only the four files of your new revision. Do not run `git commit`. Do not
+write on any message board.
