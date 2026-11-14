@@ -252,6 +252,7 @@ def judge(
             )
         mine = earlier_sessions.known(agent, directory.name, summary)
         sessions = {"mine": mine, "others": others, "counts": counts, "home": str(Path.home())}
+        routing["earlier_sessions"] = counts  # every call decided in "on" mode is accounted for
         if not marked:
             # What other sessions hold is asked before an unmarked call is let through
             # (MR169-1, MR171): a call an earlier session bears on is put to the decision model,
@@ -265,7 +266,6 @@ def judge(
                 marked = True
                 routing |= {"eligible": True, "eligible_by": "earlier_sessions"}
             elif route == "undecided" or not earlier_sessions.coverage_known(counts):
-                routing["earlier_sessions"] = counts
                 return unasked("undecided", "earlier_history_unknown", "unmarked_earlier_unknown")
     if not marked:
         # "Not marked" is a finding only when Summarizer scanned everything it captured.

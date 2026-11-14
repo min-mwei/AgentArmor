@@ -50,6 +50,7 @@ from summarizer import history
 SCHEMA = "agentarmor-earlier-sessions/v1"
 RECORDS = "earlier-sessions.jsonl"  # beside a session's detections; counts only
 NEWEST = 40  # other sessions looked at, the most recently written first
+INDEX_WORK = 2_000_000  # SQLite steps the proof of what is apart may take on a decision's path
 WAITING = 32  # offers that can wait for the worker; one more is dropped and counted
 RECORDS_WAITING = 256  # records that can wait for the writer; one more is lost and counted
 LIMITS = {
@@ -95,8 +96,10 @@ def _listed(agent, name):
 SHELL_TOOLS = ("Bash", "exec_command", "shell", "local_shell")
 
 
-def _proven_apart(listed, here, call_uses, cut, home_dir):
-    """The sessions the search index proves cannot bear on the call (MR171-1), or {}.
+def _proven_apart(listed, here, call_uses, cut, home_dir, work=None):
+    """(the sessions the search index proves cannot bear on the call, how the proof went) (MR171-1,
+    MR173). How it went is "used", or why nothing was proven: "no_index", "index_unreadable",
+    "call_uses_not_fully_known" or "index_work_exhausted".
 
     A session is set aside only when all of this holds: the index covers its whole log as it is
     now; it ran in another working directory (the user's words in the call's own project bear on
@@ -109,9 +112,14 @@ def _proven_apart(listed, here, call_uses, cut, home_dir):
     if it ran a shell command with a variable or a "../" in it, whose files cannot be told. The
     call's own uses must be fully known: a pattern, a module found by name or an unsupported
     command proves nothing. Without an index, or when it cannot be read, nothing is proven and
-    every session not read is unknown. One query; no log is opened."""
+    every session not read is unknown.
+
+    A piece logged at the very time of the call counts as before it (MR173-1): the hook keeps
+    times to the millisecond, and a tie proves nothing about which came first. The query runs
+    under a budget of SQLite steps (INDEX_WORK): when it runs out, nothing is proven and every
+    session not read stays unknown. No log is opened."""
     if call_uses["unsupported"] or call_uses["patterns"] or call_uses["by_name"] or not here:
-        return {}
+        return {}, "call_uses_not_fully_known"
     exact = sorted(
         {*call_uses["run"], *call_uses["read"], *call_uses["named"]}
         | ({call_uses["write"]} if call_uses["write"] else set())
@@ -119,8 +127,10 @@ def _proven_apart(listed, here, call_uses, cut, home_dir):
     bases = sorted({os.path.basename(p) for p in exact if len(os.path.basename(p)) >= 3})
     try:
         index = Index()
+    except FileNotFoundError:
+        return {}, "no_index"
     except Exception:
-        return {}
+        return {}, "index_unreadable"
 
     def like(text, before="%", after="%"):
         escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -137,13 +147,21 @@ def _proven_apart(listed, here, call_uses, cut, home_dir):
     given.extend(SHELL_TOOLS)
     query = (
         "SELECT DISTINCT s.agent, s.name FROM units u JOIN sessions s ON s.id = u.session"
-        " WHERE u.ts < ? AND (" + " OR ".join(tests) + ")"
+        " WHERE u.ts <= ? AND (" + " OR ".join(tests) + ")"
     )
+    steps = {"left": INDEX_WORK if work is None else work}
+    every = max(1, min(1000, steps["left"]))  # how many steps between two looks at the budget
+
+    def spend():
+        steps["left"] -= every
+        return 1 if steps["left"] <= 0 else 0  # non-zero interrupts the statement
+
     try:
+        index.db.set_progress_handler(spend, every)
         rows = {(r["agent"], r["name"]): r for r in index.sessions()}
         reach = {(r["agent"], r["name"]) for r in index.db.execute(query, [cut, *given]).fetchall()}
     except Exception:
-        return {}
+        return {}, "index_work_exhausted" if steps["left"] <= 0 else "index_unreadable"
     finally:
         index.close()
     proven = {}
@@ -157,7 +175,7 @@ def _proven_apart(listed, here, call_uses, cut, home_dir):
             and (a, n) not in reach
         ):
             proven[(a, n)] = "index_shows_nothing_it_could_reach"
-    return proven
+    return proven, "used"
 
 
 def scope(agent, name, summary, call_id, home_dir, budget=None):
@@ -170,8 +188,11 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
     be read, a summary behind its log (searched as far as it goes, and still unknown beyond
     it), or beyond the work budget. Sessions not proven apart are taken newest first, at most
     `budget` summaries (NEWEST unless given): a decision opens no more than that, and never a
-    log. "unknown" is how many sessions might hold something that bears on the call and could
-    not be read: coverage is known only when it is 0."""
+    log, and the index's proof runs under its own budget (_proven_apart). "unknown" is how many
+    sessions might hold something that bears on the call and could not be read: coverage is
+    known only when it is 0. A session with an entry at the very time of the call is read and
+    its entry kept (it may bear on the call), and is counted unknown as well, "tied_with_the_call":
+    which came first is not known, so it can never make a packet complete (MR173-1)."""
     budget = NEWEST if budget is None else budget
     call = next(
         e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
@@ -179,9 +200,10 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
     cut = float(call.get("ts") or 0.0)
     here = str(summary["session"].get("cwd") or "")
     listed = _listed(agent, name)
-    proven = _proven_apart(listed, here, history.uses(call, here, home_dir), cut, home_dir)
+    proven, proof = _proven_apart(listed, here, history.uses(call, here, home_dir), cut, home_dir)
     open_to = [item for item in listed if (item[0], item[1]) not in proven]
-    counts = {"listed": len(listed), "read": 0, "proven_apart": len(proven)}
+    counts = {"listed": len(listed), "read": 0, "proven_apart": len(proven), "proof": proof}
+    counts["tied_with_the_call"] = 0
     counts |= {"no_summary_or_unreadable": 0, "summary_behind_its_log": 0}
     counts |= {"nothing_before_the_call": 0, "beyond_the_budget": len(open_to[budget:])}
     others = []
@@ -195,6 +217,8 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
             counts["no_summary_or_unreadable"] += 1
             continue
         before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
+        if any(float(e.get("ts") or 0.0) == cut for e in before):
+            counts["tied_with_the_call"] += 1
         if not held.get("fresh"):
             # What its log holds beyond the summary is not known, before the call or
             # after: it is searched as far as it goes and counted as behind.
@@ -210,6 +234,7 @@ def scope(agent, name, summary, call_id, home_dir, budget=None):
         counts["no_summary_or_unreadable"]
         + counts["summary_behind_its_log"]
         + counts["beyond_the_budget"]
+        + counts["tied_with_the_call"]
     )
     return [other for _, other in sorted(others, key=lambda pair: pair[0])], counts
 

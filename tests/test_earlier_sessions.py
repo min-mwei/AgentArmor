@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 
 import pytest
 from agentarmor_monitor import decide, earlier, kai
@@ -28,6 +29,7 @@ def log(session, *events):
     common = {"cwd": CWD, "permission_mode": "default", "session_id": session}
     for item in events:
         append_event("claude_code", session, build_record("claude_code", common | item))
+        time.sleep(0.002)  # the hook keeps milliseconds: no two events of a fixture share one
 
 
 def tool(number, name, tool_input, response=None):
@@ -100,6 +102,8 @@ def test_what_earlier_sessions_hold_is_counted_apart_and_nothing_of_them_is_reco
         "listed": 1,
         "read": 1,
         "proven_apart": 0,
+        "proof": "no_index",
+        "tied_with_the_call": 0,
         "no_summary_or_unreadable": 0,
         "summary_behind_its_log": 0,
         "nothing_before_the_call": 0,
@@ -365,6 +369,7 @@ def log_at(session, cwd, *events):
     common = {"cwd": cwd, "permission_mode": "default", "session_id": session}
     for item in events:
         append_event("claude_code", session, build_record("claude_code", common | item))
+        time.sleep(0.002)
 
 
 def unmarked_call(command="ls docs"):
@@ -576,3 +581,91 @@ def test_a_decision_reads_at_most_the_budget_of_summaries_and_no_log(spool, monk
     assert len(loads) == earlier.NEWEST and told["beyond_the_budget"] == 60 - earlier.NEWEST
     assert told["unknown"] == 60 and (verdict, why) == ("undecided", "earlier_history_unknown")
     assert not hasattr(earlier, "cwd_of")
+
+
+def log_timed(session, cwd, times, *events):
+    """Hook records with the times given, to the millisecond as the hook keeps them."""
+    common = {"cwd": cwd, "permission_mode": "default", "session_id": session}
+    for when, item in zip(times, events, strict=True):
+        record = build_record("claude_code", common | item)
+        record["ts"] = round(when, 3)
+        append_event("claude_code", session, record)
+
+
+@pytest.mark.parametrize("marked", [False, True])
+@pytest.mark.parametrize("when", ["tied", "before", "after"])
+def test_a_writer_at_the_call_s_very_time_is_kept_and_leaves_its_order_unknown(spool, when, marked):
+    """MR173-1: a tie proves nothing; it is read, kept, and never makes a packet complete."""
+    call_at = 1_800_000_000.500
+    write_at = {"tied": call_at, "before": call_at - 0.010, "after": call_at + 0.010}[when]
+    start = min(write_at, call_at) - 0.010
+    writes = tool(1, "Write", {"file_path": WRITTEN, "content": PLANTED}, "saved")
+    log_timed(
+        "s-writer",
+        ELSEWHERE,
+        [start, start + 0.001, write_at, write_at + 0.001]
+        if when != "after"
+        else [write_at - 0.002, write_at - 0.001, write_at, write_at + 0.001],
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Prepare the submit helper."},
+        *writes,
+    )
+    note = {"type": "text", "file": {"filePath": f"{CWD}/CHECKLIST.md", "content": NOTE}}
+    marking = tool(1, "Read", {"file_path": f"{CWD}/CHECKLIST.md"}, note) if marked else []
+    late = [
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Finish the checklist."},
+        *marking,
+        *tool(2 if marked else 1, "Bash", RUN),
+    ]
+    times = [call_at - 0.009 + 0.001 * k for k in range(len(late) - 1)] + [call_at]
+    log_timed("s-late", CWD, times, *late)
+    summarized_indexed("s-writer", "s-late")
+    model = Answering("allow")
+    verdict, record, why = judged_on(
+        call_sha256("Bash", RUN), model, call="call-2" if marked else "call-1"
+    )
+    if when == "after":  # the write came after the call: the index proves the writer apart
+        told = record["routing"]["earlier_sessions"]
+        assert told["proven_apart"] == 1 and told["unknown"] == 0
+        assert all(WRITTEN not in state for state in model.states)
+        assert (verdict, why) == ("abstain", None)
+        return
+    assert len(model.states) == 1 and "EARLIER SESSIONS" in model.states[0]
+    assert WRITTEN in model.states[0].split("EARLIER SESSIONS", 1)[1]
+    told = record["packet"]["history"]
+    if when == "tied":
+        assert told["sessions"]["tied_with_the_call"] == 1 and told["coverage_known"] is False
+        assert record["packet"]["complete"] is False and (verdict, why) == (
+            "undecided",
+            "incomplete",
+        )
+    else:
+        assert told["sessions"]["tied_with_the_call"] == 0 and told["coverage_known"] is True
+        assert (verdict, why) == ("abstain", None)
+
+
+def test_when_the_index_runs_out_of_work_nothing_is_proven_apart(spool, monkeypatch):
+    """MR173-2: the proof runs under a budget, and running out leaves the session unknown."""
+    elsewhere(
+        "s-elsewhere",
+        "Rotate the staging key.",
+        *tool(
+            1,
+            "Write",
+            {"file_path": f"{ELSEWHERE}/keys/rotate.md", "content": "rotate monthly"},
+            "saved",
+        ),
+    )
+    identity = unmarked_call()
+    summarized_indexed("s-elsewhere", "s-late")
+    monkeypatch.setattr(earlier, "NEWEST", 0)
+    monkeypatch.setattr(earlier, "INDEX_WORK", 1)
+    verdict, record, why = judged_on(identity, Answering("allow"))
+    told = record["routing"]["earlier_sessions"]
+    assert (
+        told["proof"] == "index_work_exhausted"
+        and told["proven_apart"] == 0
+        and told["unknown"] == 1
+    )
+    assert (verdict, why) == ("undecided", "earlier_history_unknown")
