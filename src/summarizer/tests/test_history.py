@@ -2362,3 +2362,122 @@ def test_under_version_15_a_result_without_its_call_or_with_its_call_clipped_is_
     call["text_chars"] = len(str(call.get("text") or "")) + 100
     cut = campaigns.score(laid, clipped, view, 20000, 15)
     assert cut["support"][fact["id"]] is False and cut["passes"] is False
+
+
+def _chain(read_at=None, host="RILL_TARGET=https://rill-metrics.example/push", endpoint=None):
+    """MR194-1: the helper sources config/rill.env, which sources config/rill-endpoint.txt,
+    which sources config/rill-host.txt. read_at turns that one file's write in session "scope"
+    into a look at it that returns the same body."""
+    campaign = _two_step(third=True)
+    scope = next(s for s in campaign["sessions"] if s["id"] == "scope")
+    bodies = {
+        "settings": ". config/rill-endpoint.txt",
+        "endpoint": endpoint or ". config/rill-host.txt",
+        "host": host,
+    }
+    for step in scope["steps"]:
+        if step["id"] in bodies:
+            step["content"] = bodies[step["id"]]
+        if step["id"] == read_at:
+            step["read"], step["output"] = step.pop("write"), step.pop("content")
+    return campaign
+
+
+@pytest.mark.parametrize("read_at", [None, "settings", "endpoint", "host"])
+def test_a_dependency_seen_by_a_look_is_followed_as_one_seen_by_a_write(runtime, read_at):
+    """MR194-1: whichever file of the chain was seen by a look rather than written, its body is
+    followed the same way, and the file one step beyond the bound (observed either way) leaves
+    the search unfinished: never a complete account that has not followed it, and the same
+    packet in every replay."""
+    campaign = _chain(read_at)
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        texts = set()
+        for variant in campaigns.VARIANTS:
+            summaries, _ = campaigns.replay(laid, runtime, **variant)
+            view = builder.build(builder.blind(laid), summaries, 10000)
+            texts.add(view["text"])
+        scored = campaigns.score(laid, summaries, view, 10000, 15)
+        account = view["history"]
+        assert account["complete"] is False and view["route"] == "undecided", (agent, read_at)
+        assert "dependency_search_bounded" in account["unsupported"], (agent, read_at)
+        assert not scored["false_ready"] and len(texts) == 1, (agent, read_at)
+
+
+def test_a_chain_closed_within_two_steps_through_a_look_is_complete(runtime):
+    """MR194-1: when the second step's body came from a look and names nothing observed beyond
+    it, the chain is closed: the look and what came back are shown and nothing is unfinished."""
+    campaign = _chain("endpoint", endpoint="RILL_TARGET=https://rill-metrics.example/push")
+    for agent in campaigns.AGENTS:
+        _, _, view, _ = built(campaign, runtime, agent, budget=10000)
+        account = view["history"]
+        assert "dependency_search_bounded" not in account.get("unsupported", ()), agent
+        assert "config/rill-endpoint.txt" in view["text"], agent
+        assert "RILL_TARGET=https://rill-metrics.example/push" in view["text"], agent
+
+
+def test_a_dependency_cycle_ends_and_claims_nothing_beyond_it(runtime):
+    """MR194-1: config/rill.env sources config/rill-endpoint.txt, which sources config/rill.env
+    again: the lookup ends, and a file already counted is no step beyond the bound."""
+    campaign = _chain(endpoint=". config/rill.env")
+    for agent in campaigns.AGENTS:
+        _, _, view, _ = built(campaign, runtime, agent, budget=10000)
+        assert "dependency_search_bounded" not in view["history"].get("unsupported", ()), agent
+
+
+def test_a_look_in_another_namespace_is_no_body_of_this_file(runtime):
+    """MR194-1: the endpoint file seen only by a session of another namespace is another file:
+    its body is not followed and nothing of that session is shown."""
+    campaign = _chain()
+    scope = next(s for s in campaign["sessions"] if s["id"] == "scope")
+    scope["steps"] = [s for s in scope["steps"] if s["id"] not in ("endpoint", "host")]
+    elsewhere = {
+        "id": "elsewhere",
+        "namespace": "container:build",
+        "steps": [
+            {"id": "ask", "prompt": "Check the endpoint file."},
+            {
+                "id": "look",
+                "read": "{cwd}/config/rill-endpoint.txt",
+                "output": ". config/rill-other.txt",
+            },
+            {"id": "other", "write": "{cwd}/config/rill-other.txt", "content": "elsewhere"},
+        ],
+    }
+    campaign["sessions"].insert(1, elsewhere)
+    for agent in campaigns.AGENTS:
+        _, _, view, _ = built(campaign, runtime, agent, budget=10000)
+        assert "dependency_search_bounded" not in view["history"].get("unsupported", ()), agent
+        assert "rill-other" not in view["text"] and "Check the endpoint file" not in view["text"]
+
+
+def test_what_a_look_or_a_write_shows_of_a_file_is_cut_where_it_is_not_all_here():
+    """MR194-1, _bodies: a write's words clipped; a look whose result is all here, or not all
+    here, or not here at all though something came back; a look that did not return; schema
+    pieces apart."""
+    path = "/w/config/rill.env"
+
+    def source(entries, acted):
+        return ({"summary": {"entries": entries}}, acted)
+
+    write = {"type": "action", "seq": 1, "call_id": "w", "status": "returned", "text_chars": 900}
+    look = {"type": "action", "seq": 3, "call_id": "r", "status": "returned", "result_pieces": 2}
+    piece = {"type": "content", "seq": 4, "call_id": "r", "trust": "tool", "text": "a"}
+    schema = {"type": "content", "seq": 4, "call_id": "r", "trust": "tool", "aside": True}
+    theirs_w = {"write": path, "read": set()}
+    theirs_r = {"write": None, "read": {path}}
+    found = history._bodies([source([write], [(write, theirs_w)])], {path})
+    assert [(cut, p) for _, cut, p in found] == [(True, path)]
+    whole = [piece, dict(piece, text="b")]
+    found = history._bodies([source([look, *whole, schema], [(look, theirs_r)])], {path})
+    assert [(b["text"], cut) for b, cut, _ in found] == [("a", False), ("b", False)]
+    found = history._bodies([source([look, piece], [(look, theirs_r)])], {path})
+    assert [cut for _, cut, _ in found] == [True]
+    unknown = dict(look, result_pieces=None)
+    assert history._bodies([source([unknown], [(unknown, theirs_r)])], {path}) == [
+        (None, True, path)
+    ]
+    empty = dict(look, result_pieces=0)
+    assert history._bodies([source([empty], [(empty, theirs_r)])], {path}) == []
+    refused = dict(look, status="denied")
+    assert history._bodies([source([refused, piece], [(refused, theirs_r)])], {path}) == []

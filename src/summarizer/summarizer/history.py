@@ -978,27 +978,32 @@ def select(mine, call_id, others, home):
                 cut = cut or len(body.get("iocs") or ()) >= ENTRY_IOCS
             if cut and "program_text_cut" not in unsupported:
                 unsupported.append("program_text_cut")
-    # A second step, and no third (MR192-1). A file that program text names may be program text
-    # too: a script the helper sources, a configuration it reads. What an earlier session wrote
-    # into such a file names files and places in turn, and they are counted as well. What a
-    # file of that second step names is not followed: where it names a file that a searched
-    # session wrote and that is not already counted, the search is said to be unfinished.
-    written = {theirs["write"] for _, acted in sources for _, theirs in acted if theirs["write"]}
+    # A second step, and no third (MR192-1, MR194-1). A file that program text names may be
+    # program text too: a script the helper sources, a configuration it reads. What was observed
+    # of such a file (the text of a write of it, or what came back for a look at it: _bodies)
+    # names files and places in turn, and they are counted as well. What a file of that second
+    # step names is not followed: where it names a file that a searched session wrote or looked
+    # at, and that is not already counted, the search is said to be unfinished, whichever way
+    # its body was seen. A body whose words were cut, or a look whose result is not all here,
+    # leaves what it names unknown, and that is said too. Named is no claim that it runs.
+    observed = set()
+    for _, acted in sources:
+        for entry, theirs in acted:
+            observed |= {theirs["write"]} if theirs["write"] else set()
+            observed |= set(theirs["read"]) if entry.get("status") == "returned" else set()
     for step in ("second", "third"):
         found_now, cut = set(), False
-        for _, acted in sources:
-            for entry, theirs in acted:
-                if theirs["write"] in stepped:
-                    found_now |= _said(entry, cwd, home) - mine_uses["named"] - {theirs["write"]}
-                    cut = cut or "text_chars" in entry
-                    if step == "second":
-                        places |= _places(entry)
+        for body, clipped, path in _bodies(sources, stepped):
+            cut = cut or clipped
+            if body is not None:
+                found_now |= _said(body, cwd, home) - mine_uses["named"] - {path}
+                places |= _places(body) if step == "second" else set()
+        if cut and "program_text_cut" not in unsupported:
+            unsupported.append("program_text_cut")
         if step == "second":
             mine_uses["named"] |= found_now
             stepped = found_now
-            if cut and "program_text_cut" not in unsupported:
-                unsupported.append("program_text_cut")
-        elif found_now & written and "dependency_search_bounded" not in unsupported:
+        elif found_now & observed and "dependency_search_bounded" not in unsupported:
             unsupported.append("dependency_search_bounded")
     # What the user said in this very session that states a bound the call can be held
     # against. It is in the session's own packet already; here it decides the route.
@@ -1167,6 +1172,36 @@ def select(mine, call_id, others, home):
         "route": route,
         "route_reason": reason,
     }
+
+
+def _bodies(sources, paths):
+    """[(body, cut, path)]: what the searched sessions observed of each file in paths (MR194-1).
+    A write's own entry, whatever became of it, its text being what was proposed for the file
+    (cut when its words were clipped); and each piece of what came back for a returned look at
+    it, cut unless the summary says how many pieces came back and every one is here. A returned
+    look of which nothing is here, though something came back, gives (None, True, path): it was
+    observed and its body is not known. A look that did not return observed nothing. A body is
+    a lead to what the file names, no proof that a program reads it."""
+    found = []
+    for other, acted in sources:
+        results = {}
+        for content in _lower(other["summary"]["entries"]):
+            results.setdefault(content.get("call_id"), []).append(content)
+        for entry, theirs in acted:
+            if theirs["write"] in paths:
+                found.append((entry, "text_chars" in entry, theirs["write"]))
+            if entry.get("status") != "returned":
+                continue
+            for path in (p for p in theirs["read"] if p in paths):
+                back = [
+                    e
+                    for e in results.get(entry.get("call_id"), ())
+                    if e["seq"] > entry["seq"] and not e.get("aside")
+                ]
+                cut = entry.get("result_pieces") != len(back)
+                cut = cut or any(len(e.get("iocs") or ()) >= ENTRY_IOCS for e in back)
+                found += [(e, cut, path) for e in back] or ([(None, True, path)] if cut else [])
+    return found
 
 
 def _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses, bearing):
