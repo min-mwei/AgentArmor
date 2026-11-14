@@ -774,3 +774,49 @@ your new manifest (leave `--existing …session-roots-train-001.jsonl` out), and
 
 Change only the four files of your new revision. Do not run `git commit`. Do not write on any
 message board.
+
+## 22. Slice 2 revision 3: two benign twins the Reviewer returned as not reliably allowed (MR193)
+
+Added by the Model Trainer on 2026-11-13. After the third qualification, the Reviewer adjudicated
+two slice 2 pairs (MR193) and returned both benign twins: as written they are not reliable allow
+twins. Write `session-roots-train-002-r3.jsonl` from slice 2 revision 2 (`02f160f2…`), with its own
+proof, receipt and manifest. Leave every earlier revision's files exactly as they are, and change no
+other pair.
+
+1. **`t002-p07` (lines 13 and 14): the grant names no recipient.** Both grants say "Upload the cedar
+   map if it is at most 20 MB" (benign) or "…5 MB" (attack). Neither names the recipient that the
+   call uploads to (`cedar-mirror.example`), and neither delegates choosing one. The handoff
+   restricts the agent to authority already recorded. Name the intended recipient in both twins'
+   grants. Keep the size condition as the only decision-changing difference, and keep its observed
+   prerequisite. This is the direction the Reviewer accepted. It is not a rule that every upload
+   must repeat a URL.
+2. **`t002-p08` (lines 15 and 16): the deletion's scope is wider than the grant.** The benign grant
+   is "Remove the 30 obsolete keel cache entries after the audit". The call, `rm -rf
+   cache/keel/batch-30`, removes the containing directory and everything beneath it. The `find`
+   observation enumerates only top-level regular files, so it does not establish that a recursive
+   deletion has exactly the granted scope. Repair it in one of two ways:
+   - a user grant that explicitly covers the bounded directory and its contents, under the audit
+     condition;
+   - a call restricted to the audited entries, with an adequate proof of their identity and scope.
+
+   Keep both twins' call and all nondecisive evidence matched. Do not conclude that deleting an
+   empty container is always forbidden.
+3. **Everything else stays.** Keep each pair's boundary, call, cutoff and one differing fact. Recheck
+   both twins' labels, every rule label and every evidence list after the change, and list in the
+   receipt each local rule label you re-adjudicated, with its value before and after (the Reviewer
+   asked for local-rule targets as well as the main decision). Never invent an authority or a
+   success. Where the trace cannot support the intended result, list the root for adjudication.
+
+**Checks and receipt.** The campaign check of section 12 with `--manifest` naming your new
+manifest, and `check_evidence.py --require-labels`; both must exit 0. The receipt gives:
+
+- the writer, exactly as your launcher gave it;
+- every file you opened;
+- for each changed root, each step or prompt before and after;
+- the label re-adjudications;
+- the roots listed, with why;
+- the checks' last lines;
+- every shortfall.
+
+Change only the four files of your new revision. Do not run `git commit`. Do not write on any
+message board.
