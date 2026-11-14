@@ -36,12 +36,14 @@ sessions are looked at.
 
 import hashlib
 import json
+import os
 import queue
 import threading
 import time
 from pathlib import Path
 
-from summarizer.store import EVENTS, list_sessions, load_summary, private_dir, session_dir
+from summarizer.index import Index
+from summarizer.store import AGENTS, EVENTS, home, load_summary, private_dir, session_dir
 
 from summarizer import history
 
@@ -68,76 +70,158 @@ def known(agent, name, held):
     return fields | {"agent": agent, "session_id": name}
 
 
-def cwd_of(directory):
-    """The working directory a session's first logged event names, or None when it says none."""
+def _listed(agent, name):
+    """(agent, name, its log's size, its log's mtime) of every other spooled session, newest first.
+
+    One stat for each session, which listing them takes anyway: no log is opened here."""
+    found = []
+    for a in AGENTS:
+        root = home() / "sessions" / a
+        try:
+            entries = list(os.scandir(root))
+        except OSError:
+            continue
+        for entry in entries:
+            if (a, entry.name) == (agent, name):
+                continue
+            try:
+                stat = os.stat(os.path.join(entry.path, EVENTS))
+            except OSError:
+                continue
+            found.append((a, entry.name, stat.st_size, stat.st_mtime))
+    return sorted(found, key=lambda item: -item[3])
+
+
+SHELL_TOOLS = ("Bash", "exec_command", "shell", "local_shell")
+
+
+def _proven_apart(listed, here, call_uses, cut, home_dir):
+    """The sessions the search index proves cannot bear on the call (MR171-1), or {}.
+
+    A session is set aside only when all of this holds: the index covers its whole log as it is
+    now; it ran in another working directory (the user's words in the call's own project bear on
+    the call, whatever they name); and nothing it logged before the call could reach what the
+    call uses. That last is decided conservatively over the index's pieces, which hold a file
+    tool's target and every piece's text: a session is not set aside if any piece targets a file
+    the call runs, reads, writes or names, or a path under the call's working directory or among
+    the home directory's hidden files; or if any piece's text mentions the call's working
+    directory, the name of a file the call uses, a hidden path of the home directory or "~/"; or
+    if it ran a shell command with a variable or a "../" in it, whose files cannot be told. The
+    call's own uses must be fully known: a pattern, a module found by name or an unsupported
+    command proves nothing. Without an index, or when it cannot be read, nothing is proven and
+    every session not read is unknown. One query; no log is opened."""
+    if call_uses["unsupported"] or call_uses["patterns"] or call_uses["by_name"] or not here:
+        return {}
+    exact = sorted(
+        {*call_uses["run"], *call_uses["read"], *call_uses["named"]}
+        | ({call_uses["write"]} if call_uses["write"] else set())
+    )
+    bases = sorted({os.path.basename(p) for p in exact if len(os.path.basename(p)) >= 3})
     try:
-        with open(Path(directory) / EVENTS, "rb") as handle:
-            first = json.loads(handle.readline() or b"null")
-        return str((first or {}).get("event", {}).get("cwd") or "") or None
-    except (OSError, ValueError, AttributeError):
-        return None
+        index = Index()
+    except Exception:
+        return {}
+
+    def like(text, before="%", after="%"):
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return before + escaped + after
+
+    hidden = home_dir.rstrip("/") + "/."
+    tests = ["u.origin = ?"] * len(exact) + ["u.origin LIKE ? ESCAPE '\\'"] * 2
+    given = [*exact, like(here.rstrip("/") + "/", ""), like(hidden, "")]
+    for text in (here, hidden, "~/", *bases):
+        tests.append("u.text LIKE ? ESCAPE '\\'")
+        given.append(like(text))
+    shells = ", ".join("?" * len(SHELL_TOOLS))
+    tests.append(f"(u.tool IN ({shells}) AND (u.text LIKE '%$%' OR u.text LIKE '%../%'))")
+    given.extend(SHELL_TOOLS)
+    query = (
+        "SELECT DISTINCT s.agent, s.name FROM units u JOIN sessions s ON s.id = u.session"
+        " WHERE u.ts < ? AND (" + " OR ".join(tests) + ")"
+    )
+    try:
+        rows = {(r["agent"], r["name"]): r for r in index.sessions()}
+        reach = {(r["agent"], r["name"]) for r in index.db.execute(query, [cut, *given]).fetchall()}
+    except Exception:
+        return {}
+    finally:
+        index.close()
+    proven = {}
+    for a, n, size, _ in listed:
+        row = rows.get((a, n))
+        if (
+            row
+            and row["log_bytes"] >= size
+            and row["cwd"]
+            and row["cwd"] != here
+            and (a, n) not in reach
+        ):
+            proven[(a, n)] = "index_shows_nothing_it_could_reach"
+    return proven
 
 
-def others_of(agent, name, summary, call_id, newest=NEWEST):
+def scope(agent, name, summary, call_id, home_dir, budget=None):
     """(the other sessions as the lookup takes them, oldest first, each cut at the call's time;
-    counts of how far they could be read). Shared by the shadow count and the "on" mode.
+    coverage counts). The one rule for both the routing of a call and whether its packet is
+    complete, in the shadow count and in the "on" mode (MR169-1, MR171).
 
-    Besides the counts over every session listed, "unread_in_project" and
-    "beyond_the_cap_in_project" count the sessions of the call's own project (the same working
-    directory, or one their log does not name) that could not be read up to date or were not
-    looked at (MR169-1): what such a session holds may bear on the call, while a session of
-    another project that cannot be read is no veto on every call."""
+    Every other session is in exactly one of: read (its summary is up to date and searched);
+    proven apart by the search index (_proven_apart); or unknown: no summary or one that cannot
+    be read, a summary behind its log (searched as far as it goes, and still unknown beyond
+    it), or beyond the work budget. Sessions not proven apart are taken newest first, at most
+    `budget` summaries (NEWEST unless given): a decision opens no more than that, and never a
+    log. "unknown" is how many sessions might hold something that bears on the call and could
+    not be read: coverage is known only when it is 0."""
+    budget = NEWEST if budget is None else budget
     call = next(
         e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
     )
     cut = float(call.get("ts") or 0.0)
     here = str(summary["session"].get("cwd") or "")
-    listed = [(a, n, d) for a, n, d, _ in list_sessions() if (a, n) != (agent, name)]
-    sessions = {"listed": len(listed), "read": 0, "no_summary_or_unreadable": 0}
-    sessions |= {"summary_behind_its_log": 0, "nothing_before_the_call": 0}
-    sessions["beyond_the_cap"] = len(listed[newest:])
-    sessions["unread_in_project"] = 0
-    sessions["beyond_the_cap_in_project"] = sum(
-        cwd_of(d) in (here, None) for _, _, d in listed[newest:]
-    )
+    listed = _listed(agent, name)
+    proven = _proven_apart(listed, here, history.uses(call, here, home_dir), cut, home_dir)
+    open_to = [item for item in listed if (item[0], item[1]) not in proven]
+    counts = {"listed": len(listed), "read": 0, "proven_apart": len(proven)}
+    counts |= {"no_summary_or_unreadable": 0, "summary_behind_its_log": 0}
+    counts |= {"nothing_before_the_call": 0, "beyond_the_budget": len(open_to[budget:])}
     others = []
-    for a, n, directory in listed[:newest]:
+    for a, n, _, _ in open_to[:budget]:
         try:
             held = load_summary(a, n)
             entries = held["entries"] if held is not None else None
         except Exception:
             entries = None
         if entries is None:
-            sessions["no_summary_or_unreadable"] += 1
-            sessions["unread_in_project"] += cwd_of(directory) in (here, None)
+            counts["no_summary_or_unreadable"] += 1
             continue
         before = [e for e in entries if float(e.get("ts") or 0.0) <= cut]
         if not held.get("fresh"):
             # What its log holds beyond the summary is not known, before the call or
             # after: it is searched as far as it goes and counted as behind.
-            sessions["summary_behind_its_log"] += 1
-            there = str(held["session"].get("cwd") or "") or cwd_of(directory)
-            sessions["unread_in_project"] += there in (here, None)
+            counts["summary_behind_its_log"] += 1
         elif not before:
-            sessions["nothing_before_the_call"] += 1
+            counts["nothing_before_the_call"] += 1
         else:
-            sessions["read"] += 1
+            counts["read"] += 1
         if before:
             first = min(float(e.get("ts") or 0.0) for e in before)
             others.append((first, known(a, n, held | {"entries": before})))
-    return [other for _, other in sorted(others, key=lambda pair: pair[0])], sessions
+    counts["unknown"] = (
+        counts["no_summary_or_unreadable"]
+        + counts["summary_behind_its_log"]
+        + counts["beyond_the_budget"]
+    )
+    return [other for _, other in sorted(others, key=lambda pair: pair[0])], counts
+
+
+def others_of(agent, name, summary, call_id, newest=NEWEST):
+    """scope() with this machine's home directory: kept for the shadow count's callers."""
+    return scope(agent, name, summary, call_id, str(Path.home()), newest)
 
 
 def coverage_known(sessions):
-    """Whether every other session listed could be read up to date (MR159-2)."""
-    unread = sessions["no_summary_or_unreadable"] + sessions["summary_behind_its_log"]
-    return unread + sessions["beyond_the_cap"] == 0
-
-
-def project_coverage_known(sessions):
-    """Whether every other session of the call's own project could be read up to date (MR169-1)."""
-    unread = sessions.get("unread_in_project", 1) + sessions.get("beyond_the_cap_in_project", 0)
-    return unread == 0 and "error" not in sessions
+    """Whether every other session that might bear on the call could be read up to date (MR171)."""
+    return sessions.get("unknown", 1) == 0 and "error" not in sessions
 
 
 def observed(agent, name, call_id, summary, max_chars, identity=None, newest=NEWEST):

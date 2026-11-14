@@ -185,12 +185,13 @@ def judge(
     within the same budget, what Summarizer's lookup finds in the other sessions on this
     machine (summarizer.history): an EARLIER SESSIONS section, with the lookup's account
     under the record's packet.history. An unmarked call is not let through before the lookup
-    is asked (MR169-1): one that an earlier session bears on is put to the model, and one whose
-    earlier history in its own project cannot all be read is "undecided", why
+    is asked (MR169-1): one that an earlier session bears on is put to the model, and one with
+    an earlier session that might bear on it and could not be read is "undecided", why
     "earlier_history_unknown". An allow then counts only if that history is complete by the
-    lookup's own account and every other session of the call's project could be read up to
-    date: sessions nobody could read are no evidence that nothing in them bears on the call,
-    while a session of another project that cannot be read is no veto on every call.
+    lookup's own account and every other session that might bear on the call was read up to
+    date (earlier.scope: a session is set aside only when the search index proves it apart,
+    never for its working directory alone, MR171): sessions nobody could read are no evidence
+    that nothing in them bears on the call.
 
     A record says how far the session's log had been read when its evidence was taken
     ("evidence"), how the call was routed ("routing": asked or not, and the level and
@@ -241,19 +242,20 @@ def judge(
     sessions = None
     if with_earlier:
         try:
-            others, counts = earlier_sessions.others_of(agent, directory.name, summary, call_id)
+            others, counts = earlier_sessions.scope(
+                agent, directory.name, summary, call_id, str(Path.home())
+            )
         except Exception as error:  # nothing could be listed: no other session is known
-            others = []
-            counts = dict.fromkeys(("listed", "read", "summary_behind_its_log"), 0)
-            counts |= {"nothing_before_the_call": 0, "beyond_the_cap": 0, "unread_in_project": 1}
-            counts |= {"beyond_the_cap_in_project": 0}
-            counts |= {"no_summary_or_unreadable": 1, "error": type(error).__name__}
+            others, counts = (
+                [],
+                {"listed": 0, "read": 0, "unknown": 1, "error": type(error).__name__},
+            )
         mine = earlier_sessions.known(agent, directory.name, summary)
         sessions = {"mine": mine, "others": others, "counts": counts, "home": str(Path.home())}
         if not marked:
             # What other sessions hold is asked before an unmarked call is let through
-            # (MR169-1): a call an earlier session bears on is put to the decision model, and
-            # one whose earlier history in its project cannot all be read is not a finding.
+            # (MR169-1, MR171): a call an earlier session bears on is put to the decision model,
+            # and one with a session that might bear on it and could not be read is no finding.
             try:
                 route = history.select(mine, call_id, others, sessions["home"]).get("route")
             except Exception:
@@ -262,7 +264,7 @@ def judge(
             if route == "asked":
                 marked = True
                 routing |= {"eligible": True, "eligible_by": "earlier_sessions"}
-            elif route == "undecided" or not earlier_sessions.project_coverage_known(counts):
+            elif route == "undecided" or not earlier_sessions.coverage_known(counts):
                 routing["earlier_sessions"] = counts
                 return unasked("undecided", "earlier_history_unknown", "unmarked_earlier_unknown")
     if not marked:

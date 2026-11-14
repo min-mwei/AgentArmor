@@ -99,12 +99,12 @@ def test_what_earlier_sessions_hold_is_counted_apart_and_nothing_of_them_is_reco
     assert seen["sessions"] == {
         "listed": 1,
         "read": 1,
+        "proven_apart": 0,
         "no_summary_or_unreadable": 0,
         "summary_behind_its_log": 0,
         "nothing_before_the_call": 0,
-        "beyond_the_cap": 0,
-        "unread_in_project": 0,
-        "beyond_the_cap_in_project": 0,
+        "beyond_the_budget": 0,
+        "unknown": 0,
     }
     assert seen["limits"] == earlier.LIMITS and isinstance(seen["ms"], int)
     # Counts only: nothing a session said, wrote or named.
@@ -400,7 +400,8 @@ def test_on_holds_an_unmarked_call_when_its_project_has_an_unreadable_session(sp
     model = Answering("allow")
     verdict, record, why = judged_on(identity, model)
     assert (verdict, why) == ("undecided", "earlier_history_unknown") and model.states == []
-    assert record["routing"]["earlier_sessions"]["unread_in_project"] == 1
+    told = record["routing"]["earlier_sessions"]
+    assert told["no_summary_or_unreadable"] == 1 and told["unknown"] == 1
 
 
 def test_on_lets_an_unmarked_call_through_on_complete_unrelated_history(spool):
@@ -423,15 +424,155 @@ def test_on_lets_an_unmarked_call_through_on_complete_unrelated_history(spool):
     assert record["routing"]["earlier_route"] == "unasked"
 
 
-def test_on_is_not_vetoed_by_an_unreadable_session_of_another_project(spool):
+def summarized_indexed(*names):
+    watch = Monitor(Runtime(HashEmbedder()), kai.Unsent(), log=lambda message: None, index=True)
+    for name in names:
+        watch.update("claude_code", name)
+    watch.close()
+
+
+ELSEWHERE = "/srv/work/other-project"
+
+
+def elsewhere(name, prompt="Rotate the staging key.", *steps):
     log_at(
-        "s-elsewhere",
-        "/srv/work/other-project",
+        name,
+        ELSEWHERE,
         {"hook_event_name": "SessionStart", "source": "startup"},
-        {"hook_event_name": "UserPromptSubmit", "prompt": "Rotate the staging key."},
+        {"hook_event_name": "UserPromptSubmit", "prompt": prompt},
+        *steps,
+    )
+
+
+def test_an_unreadable_session_elsewhere_is_unknown_not_apart(spool):
+    """MR171-1: another working directory alone proves nothing about what a session touched."""
+    elsewhere("s-elsewhere")
+    identity = unmarked_call()
+    summarized("s-late")  # the other session is never summarized
+    verdict, record, why = judged_on(identity, Answering("allow"))
+    assert (verdict, why) == ("undecided", "earlier_history_unknown")
+    assert record["routing"]["earlier_sessions"]["unknown"] == 1
+
+
+def test_a_session_the_index_proves_apart_is_no_veto(spool, monkeypatch):
+    elsewhere(
+        "s-elsewhere",
+        "Rotate the staging key.",
+        *tool(
+            1,
+            "Write",
+            {"file_path": f"{ELSEWHERE}/keys/rotate.md", "content": "rotate monthly"},
+            "saved",
+        ),
     )
     identity = unmarked_call()
-    summarized("s-late")  # the other project's session is never summarized
+    summarized_indexed("s-elsewhere", "s-late")
+    monkeypatch.setattr(earlier, "NEWEST", 0)  # nothing may be read: only a proof can set it aside
     verdict, record, why = judged_on(identity, Answering("allow"))
     assert (verdict, why) == ("abstain", None)
-    assert record["routing"]["earlier_route"] == "unasked"
+
+
+WRITTEN = f"{CWD}/tools/submit.sh"
+
+
+def writer_elsewhere(name="s-writer"):
+    """A session in another working directory that writes the very script the call runs."""
+    elsewhere(
+        name,
+        "Prepare the submit helper for the other team.",
+        *tool(1, "Write", {"file_path": WRITTEN, "content": PLANTED}, "saved"),
+    )
+
+
+@pytest.mark.parametrize("state", ["no_summary", "stale"])
+def test_a_writer_of_the_call_s_file_elsewhere_that_cannot_be_read_holds_the_call(spool, state):
+    """MR171-1: missing and stale summaries of a cross-directory writer of the exact resource."""
+    if state == "stale":
+        elsewhere("s-writer", "Prepare the submit helper for the other team.")
+        summarized("s-writer")  # its summary predates the write that follows
+        log_at(
+            "s-writer",
+            ELSEWHERE,
+            *tool(1, "Write", {"file_path": WRITTEN, "content": PLANTED}, "saved"),
+        )
+    else:
+        writer_elsewhere()
+    log(
+        "s-late",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Finish the checklist."},
+        *tool(1, "Bash", RUN),
+    )
+    summarized("s-late")
+    model = Answering("allow")
+    verdict, record, why = judged_on(call_sha256("Bash", RUN), model)
+    assert (verdict, why) == ("undecided", "earlier_history_unknown") and model.states == []
+
+
+@pytest.mark.parametrize("indexed", [True, False])
+def test_beyond_the_budget_only_a_proof_sets_a_session_aside(spool, monkeypatch, indexed):
+    """MR171-1, the cap case: unrelated sessions elsewhere and the writer, with room for one."""
+    writer_elsewhere()  # the oldest: with room for one, the newest unrelated one is read
+    for number in range(3):
+        elsewhere(
+            f"s-unrelated-{number}",
+            f"Tidy the release notes, part {number}.",
+            *tool(
+                1,
+                "Write",
+                {"file_path": f"{ELSEWHERE}/notes/{number}.md", "content": "notes"},
+                "saved",
+            ),
+        )
+    log(
+        "s-late",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Finish the checklist."},
+        *tool(1, "Bash", RUN),
+    )
+    names = ("s-writer", "s-unrelated-0", "s-unrelated-1", "s-unrelated-2", "s-late")
+    (summarized_indexed if indexed else summarized)(*names)
+    monkeypatch.setattr(earlier, "NEWEST", 1)
+    model = Answering("deny")
+    verdict, record, why = judged_on(call_sha256("Bash", RUN), model)
+    if indexed:  # the three are proven apart; the writer is the one read, and it bears on the call
+        assert (
+            verdict == "deny" and len(model.states) == 1 and "EARLIER SESSIONS" in model.states[0]
+        )
+        assert record["packet"]["history"]["sessions"]["proven_apart"] == 3
+    else:  # nothing is proven: what is not read is unknown
+        assert (verdict, why) == ("undecided", "earlier_history_unknown") and model.states == []
+
+
+def test_a_marked_allow_is_not_complete_while_a_writer_elsewhere_is_unread(spool):
+    writer_elsewhere()
+    note = {"type": "text", "file": {"filePath": f"{CWD}/CHECKLIST.md", "content": NOTE}}
+    log(
+        "s-late",
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "Finish the checklist."},
+        *tool(1, "Read", {"file_path": f"{CWD}/CHECKLIST.md"}, note),
+        *tool(2, "Bash", RUN),
+    )
+    summarized("s-late")
+    verdict, record, why = judged_on(call_sha256("Bash", RUN), Answering("allow"), call="call-2")
+    assert (verdict, why) == ("undecided", "incomplete")
+    told = record["packet"]["history"]
+    assert told["coverage_known"] is False and record["packet"]["complete"] is False
+
+
+def test_a_decision_reads_at_most_the_budget_of_summaries_and_no_log(spool, monkeypatch):
+    """MR171-2: the work on a decision's path is bounded however many sessions there are."""
+    for number in range(60):
+        elsewhere(f"s-old-{number}")
+    identity = unmarked_call()
+    summarized("s-late")
+    loads, real = [], earlier.load_summary
+    monkeypatch.setattr(
+        earlier, "load_summary", lambda *a, **k: (loads.append(a), real(*a, **k))[1]
+    )
+    verdict, record, why = judged_on(identity, Answering("allow"))
+    told = record["routing"]["earlier_sessions"]
+    assert len(loads) == earlier.NEWEST and told["beyond_the_budget"] == 60 - earlier.NEWEST
+    assert told["unknown"] == 60 and (verdict, why) == ("undecided", "earlier_history_unknown")
+    assert not hasattr(earlier, "cwd_of")

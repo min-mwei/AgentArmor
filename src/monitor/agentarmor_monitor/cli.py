@@ -208,7 +208,11 @@ def _serve(args):
             print("kai: the decision model does not answer yet", file=sys.stderr, flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    monitor = Monitor(runtime, asks, args.level, args.max_chars)
+    # The search index is what proves a session apart from a call (earlier.scope): it is
+    # written whenever earlier sessions are counted or sent.
+    monitor = Monitor(
+        runtime, asks, args.level, args.max_chars, index=args.earlier_sessions != "off"
+    )
     monitor.rules = rules
     decider = Decider(
         asks,

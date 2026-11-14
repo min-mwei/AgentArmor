@@ -90,9 +90,9 @@ def packet(summary, entry, max_chars, sessions=None):
     them. The packet is then Summarizer's lookup (summarizer.history.packet): this session's
     digest and, in the same budget, an EARLIER SESSIONS section, with the lookup's own account
     under "history". Such a packet is ready only if the history is complete by that account
-    and every other session of the call's own project could be read up to date: a section that
-    left something out, or sessions of the project nobody could read, are no evidence that
-    nothing more bears on the call.
+    and every other session that might bear on the call was read up to date (earlier.scope): a
+    section that left something out, or sessions nobody could read, are no evidence that nothing
+    more bears on the call.
     """
     focus = entry.get("call_id") or None
     if sessions is None:
@@ -115,11 +115,11 @@ def packet(summary, entry, max_chars, sessions=None):
     if sessions is not None:
         account = shown.get("history") or {}
         counts = sessions["counts"]
-        unread = counts.get("unread_in_project", 1) + counts.get("beyond_the_cap_in_project", 0)
         lookup = {"complete": account.get("complete", True), "why": account.get("why", [])}
-        # Coverage of the call's own project (MR169-1): a session of another project that
-        # cannot be read is counted, and is no veto on every call.
-        lookup |= {"coverage_known": unread == 0 and "error" not in counts, "sessions": counts}
+        # The one coverage rule of routing and readiness (earlier.scope, MR171): a session is
+        # set aside only when the search index proves it cannot bear on the call.
+        known = counts.get("unknown", 1) == 0 and "error" not in counts
+        lookup |= {"coverage_known": known, "sessions": counts}
         lookup |= {
             "sources": len(account.get("sources", ())),
             "lines": len(account.get("items", ())),
