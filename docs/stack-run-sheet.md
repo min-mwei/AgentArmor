@@ -219,16 +219,19 @@ No release file is present, and the user's two hold files stand.
 - **Absent:** no later contradictory observation, no lookalike object and no destructive preparation. These are three of the families where K0 allows every attack, or nearly every one, with complete evidence.
 - **A bounded request to the Data Engineer.** A training-only slice for those three mechanisms, under data request 008's format, joins after its own admission. The 50-pair batch does not wait for it.
 
-**The prioritized intervention: the K1 session pilot**, on the admitted TRAIN records once their gate passes.
+**The prioritized intervention: the K1 session pilot**, on the 229 TRAIN session examples admitted by the TRAIN-v2 adjudication (the v1 blind gate failed and is kept as failed).
 - **The recipe:** the existing session recipe, fresh from the 4B base with Run 1's recipe, plus the retained session records at `max_state` 4,096.
 - **Expected effect:** reference-arm separation rises on the covered families. The absent families are coverage gaps, not controls: transfer to them can occur, and a change there is reported, not assumed away (MR221).
-- **Order and stops:**
-  1. A memory probe first: the plan's shortest prefix holding its heaviest update, about 120 s at 77 GB host on the 4B ten-update prefix.
-  2. Stop at once on non-finite loss or gradients.
-  3. Stop after the first fifth of updates if the loss on one fixed set of session records, under the same objective, has not fallen below its value at the start. Two different noisy minibatches are never compared (MR221).
-  4. Stop if the five retention panels lose any measure at the final update (rule v2).
+- **Order and stops, as amended before launch (MR248).** One complete, guarded fit of the unchanged recipe (`train-s0.json` `a5d84c48…`, preflight `eaf46c53…`; registration v2 `54fd12af…`, which keeps v1 `9afc2bd2…` as history):
+  1. **No separate memory probe.** The 150-update prefix the rule gives would repeat the first 150 updates of the same plan. The guard returns its whole-host peak only when a job ends (`kai/guard.py`), so no margin can be read at update 150.
+  2. **Built-in stops:**
+     - a non-finite same-forward CE, gradient norm or trained parameter stops the trainer;
+     - `kai.guard` stops above 90 GB of host memory in use, on swap growth above 512 MiB, or at the 14,400 s timeout.
+  3. **No first-fifth loss stop.** The trainer's CE is accumulated over the records each window visited, not over a repeated fixed set, so the fixed-set comparison MR221 required cannot be made in-run. `CE_by_update` is descriptive only; no first-fifth result is claimed, and no intermediate checkpoint is read.
+  4. **The memory margin is a read condition, after the fit.** The guard's receipt must show a successful, complete run with no stop and `peak_host_bytes` at most 82,000,000,000 (8 GB under the limit). Missing or invalid guard or training receipts do not pass. Otherwise the failure is kept, nothing is read, and a separately registered `mlp_checkpointing` run follows, with no automatic retry or resume.
+  5. The five retention panels must lose no measure at the final update (rule v2), in their own registered read.
 - **No sweep.**
-- **Budget:** about 2 to 3 hours on this machine (Run 1: 582 updates in 7,132 s, 79.3 GB host). That estimate starts only after an accepted preparation and its memory probe; it is not a promise of a start time.
+- **Budget:** about 2 to 3 hours on this machine (Run 1: 582 updates in 7,132 s, 79.3 GB host); the timeout is 4 hours. It is not a promise of a result: the fit can use its whole budget without learning what is wanted, and only the registered comparisons can show an improvement.
 - **Then:** read the final update only, on the full exposed DEV, both arms, at 4,096.
 
 **Serving: local MLX first (MR221).** The user chose: "Use vLLM Metal or MLX." vLLM Metal's pooling scope excludes the raw token hidden states Kai's pointer readout needs. So the route is a direct MLX backbone adapter under AgentArmor's existing service, with one request encoder, one pointer implementation, one HTTP API and one monitor. It reuses Kai's MLX text forward and the trainer-owned export.
