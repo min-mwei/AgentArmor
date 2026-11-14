@@ -107,9 +107,15 @@ class MlxBackbone:
 
             lm = load_model(model)[0]  # this directory's config and safetensors; no hub access
             lm.eval()
-            # Weights as stored, as in Kai's loader (backbone.py:105); never float16.
-            if any(p.dtype != mx.bfloat16 for _, p in tree_flatten(lm.parameters())):
-                raise ValueError("MLX backbone requires bfloat16 weights")
+            # Weights as stored, as in Kai's loader (backbone.py:105): the merged export is BF16
+            # except the DeltaNet tensors it keeps in FP32 (linear_attn.A_log, linear_attn.norm).
+            # Any other number type, float16 above all, is refused.
+            if any(
+                p.dtype not in (mx.bfloat16, mx.float32) for _, p in tree_flatten(lm.parameters())
+            ):
+                raise ValueError(
+                    "MLX backbone requires bfloat16 weights (float32 where the export keeps it)"
+                )
             text = lm.language_model.model
         self.text, self.mx = text, mx
 

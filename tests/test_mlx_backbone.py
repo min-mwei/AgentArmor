@@ -103,9 +103,19 @@ def test_row_beyond_the_checkpoint_limit_is_refused_before_a_forward():
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "float16", "float32", "uint32", "model_file", "text_model_file", "quantization"]
+    "fault",
+    [
+        None,
+        "float16",
+        "float32_deltanet",
+        "uint32",
+        "model_file",
+        "text_model_file",
+        "quantization",
+    ],
 )
 def test_mlx_loads_the_local_export_in_bf16_only(monkeypatch, tmp_path, fault):
+    # The merged export keeps DeltaNet's A_log and norm in FP32: accepted. Never float16.
     config = {"model_type": "qwen3_5", "text_config": {"model_type": "qwen3_5_text"}}
     if fault == "model_file":
         config["model_file"] = "model.py"
@@ -116,8 +126,10 @@ def test_mlx_loads_the_local_export_in_bf16_only(monkeypatch, tmp_path, fault):
     (tmp_path / "model").mkdir()
     (tmp_path / "model/config.json").write_text(json.dumps(config))
     weights = {"embed_tokens.weight": "bfloat16", "norm.weight": "bfloat16"}
-    if fault in ("float16", "float32", "uint32"):
+    if fault in ("float16", "uint32"):
         weights["layers.0.mlp.down_proj.weight"] = fault
+    elif fault == "float32_deltanet":
+        weights["layers.0.linear_attn.A_log"] = np.float32  # the stand-in core's float32
     body, steps = Body(), []
 
     class LM:
@@ -147,7 +159,7 @@ def test_mlx_loads_the_local_export_in_bf16_only(monkeypatch, tmp_path, fault):
         assert not steps  # refused before mlx-lm reads or imports anything
         return
     loaded = [("load", tmp_path / "model", {}), "eval"]
-    if fault:
+    if fault in ("float16", "uint32"):
         with pytest.raises(ValueError, match="bfloat16"):
             MlxBackbone(package)
         assert steps == loaded
