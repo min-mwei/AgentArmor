@@ -468,6 +468,33 @@ def gate_command(hooks, agent, event, url):
     return ["/bin/sh", "-c", line], deadline, hooked
 
 
+SESSION_PATH = "/session"  # where a second checkpoint answers (agentarmor_vllm.server.SESSION)
+MODEL_PATHS = ("/v1/systemone", SESSION_PATH + "/v1/systemone")
+
+
+def handoff_of(last, exchanges, session_package):
+    """For a call two checkpoints answered (route.Routed): each answer's package, the request it
+    names, the path that package answers on, and what the proxy saw of exactly that request on
+    exactly that path. exact is True only when every answer's own request was seen there and
+    answered 200. None when the issued record has no routed account."""
+    routed = ((last or {}).get("kai") or {}).get("routed")
+    if not isinstance(routed, dict):
+        return None
+    told = {"policy": routed.get("policy"), "session_route": routed.get("session_route")}
+    told["answers"] = {}
+    for question, answer in (routed.get("answers") or {}).items():
+        package, key = answer.get("package_sha256"), answer.get("request_sha256")
+        path = MODEL_PATHS[1] if package == session_package else MODEL_PATHS[0]
+        seen = [e["status"] for e in exchanges if key and e["sha256"] == key and e["path"] == path]
+        told["answers"][question] = {"package_sha256": package, "request_sha256": key}
+        told["answers"][question] |= {"path": path, "seen": seen}
+    split = [a for a in told["answers"].values() if a["request_sha256"]]
+    told["exact"] = bool(split) and all(a["seen"] and a["seen"][-1] == 200 for a in split)
+    if not split:  # one request with every question: the issued request itself, matched as ever
+        told["exact"] = None
+    return told
+
+
 class Server:
     """`agentarmor-monitor serve` in shadow with earlier sessions on, as a process."""
 
@@ -477,6 +504,11 @@ class Server:
         command = [exe, "serve", "--shadow", "--earlier-sessions", "on"]
         command += ["--max-chars", str(args.budget), "--embedder", args.embedder]
         command += ["--kai-url", kai_url, "--kai-package-sha256", package]
+        if getattr(args, "kai_session_package_sha256", None):
+            # A second checkpoint under the Kai service's /session path (agentarmor_vllm.server),
+            # through the same recording proxy: research, shadow (agentarmor_monitor.route).
+            command += ["--kai-session-url", kai_url + SESSION_PATH]
+            command += ["--kai-session-package-sha256", args.kai_session_package_sha256]
         command += ["--kai-timeout", str(args.kai_timeout), "--wait", str(args.wait)]
         command += ["--port", str(self.port)]
         if args.policy:
@@ -1058,10 +1090,14 @@ def run_one(campaign, agent, args, stack):
     last = record["issued"][-1] if record["issued"] else None
     sent = bool(last and (last.get("last_request") or {}).get("transport_attempts"))
     key = (last.get("packet") or {}).get("request_sha256") if sent else None
-    posts = [e for e in seen["exchanges"] if e["path"] == "/v1/systemone"]
+    posts = [e for e in seen["exchanges"] if e["path"] in MODEL_PATHS]
     window = seen["window"]
     inside = [e for e in posts if window and window[0] <= e["t0"] <= window[1]]
     named = [e for e in posts if key and e["sha256"] == key]
+    handoff = handoff_of(last, posts, stack.get("session_package"))
+    if handoff and handoff["exact"] is not None:  # two requests, each its checkpoint's own
+        own = {a["request_sha256"] for a in handoff["answers"].values()}
+        named = [e for e in posts if e["sha256"] in own]
     named = [e for e in named if e in inside] or named
 
     def bare(account):
@@ -1082,6 +1118,8 @@ def run_one(campaign, agent, args, stack):
         "request": bare(named[-1]) if named else None,
         "window": [bare(e) for e in inside],
         "halvings": halvings(last) if last else 0,
+        "by_path": dict(Counter(e["path"] for e in posts)),
+        "handoff": handoff,
     }
     answer = record["answered"][-1] if record["answered"] else {}
     route, reason = route_of(last)
@@ -1223,6 +1261,18 @@ def summarize(records, args):
         "request_seen_by_proxy": sum(1 for r in records if r["kai"]["request"]),
         "with_observed": sum(1 for r in records if r["observed"]),
         "outcome_fed": sum(1 for r in records if r["events"]["outcome"]["fed"]),
+    }
+    # Two checkpoints (route.Routed): how many deciding calls each decided, and for those the
+    # session checkpoint decided, whether each answer's own request was seen on its own path.
+    handoffs = [r["kai"].get("handoff") for r in records]
+    told["route"] = {
+        "deciding_with_a_routed_account": sum(1 for h in handoffs if h),
+        "decided_by_the_session_checkpoint": sum(1 for h in handoffs if h and h["session_route"]),
+        "handoff_exact": sum(1 for h in handoffs if h and h["exact"] is True),
+        "handoff_not_exact": sum(1 for h in handoffs if h and h["exact"] is False),
+        "requests_by_path": dict(
+            sum((Counter(r["kai"].get("by_path") or {}) for r in records), Counter())
+        ),
     }
     told["kai_requests"] = {
         "total": sum(posts.values()),
@@ -1440,6 +1490,11 @@ def run(args, stand_in=None):
         upstream, package = args.kai_url, args.kai_package_sha256
     exe = launcher(out)
     stack = {"out": out, "home": home, "exe": exe, "upstream": upstream, "package": package}
+    stack["session_package"] = getattr(args, "kai_session_package_sha256", None)
+    if stack["session_package"]:  # what answers there, by its own report, before anything is sent
+        said = get_json(upstream + SESSION_PATH + "/health")
+        if said.get("package_sha256") != stack["session_package"]:
+            raise SystemExit("run: what answers under /session is not the session package")
     stack["rules"] = load_rules(args.policy)  # the server's, for the recomputation at the cutoff
     # Printing a configuration reads no spool: the one named here is never made.
     stack["hooks"] = generated_hooks(exe, environment(out / "no-spool", home, args))
@@ -1482,6 +1537,11 @@ def parse(argv=None):
     kai.add_argument("--kai-url", help="a Kai service on this machine (a tunnel is one)")
     kai.add_argument("--kai-standin", action="store_true", help="a stand-in Kai, CPU only")
     go.add_argument("--kai-package-sha256", help="the package the Kai at --kai-url must be")
+    go.add_argument(
+        "--kai-session-package-sha256",
+        help="research: the second package the Kai at --kai-url answers under /session; the "
+        "server then routes the decision of calls an earlier session bears on to it",
+    )
     go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body")
     go.add_argument(
         "--standin-refuse-status", type=int, choices=(400, 413), help="its refusal: 413 (default)"
@@ -1518,6 +1578,8 @@ def parse(argv=None):
             parser.error("the --standin options are for --kai-standin")
     elif args.kai_package_sha256:
         parser.error("--kai-package-sha256 is for --kai-url: the stand-in names its own")
+    if args.kai_session_package_sha256 and not args.kai_url:
+        parser.error("--kai-session-package-sha256 is for --kai-url: the stand-in is one model")
     if args.embedder == "embeddinggemma" and os.environ.get(MODEL_JOBS) is not None:
         parser.error(
             f"--embedder embeddinggemma is a model job, and {MODEL_JOBS} refuses them here"
