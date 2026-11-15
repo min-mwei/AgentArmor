@@ -168,6 +168,38 @@ def _judge(args):
     return Absent(), "none", None
 
 
+def _with_session(args, asks, place):
+    """asks, or asks and a second checkpoint for calls an earlier session bears on (route.py).
+
+    Research, in shadow only: the second checkpoint is at its own address, named by its own
+    package, and both must be given. Which checkpoint answers is this server's choice from its
+    own packet; nothing a caller sends selects one."""
+    from .route import Routed
+    from .server import Front, InProcess, Relay
+
+    url, named = args.kai_session_url, args.kai_session_package_sha256
+    if not url and not named:
+        return asks
+    if not (url and named):
+        raise SystemExit("kai: a session model is an address and its package, both")
+    if place != "remote" or mode_of(args) != "shadow":
+        raise SystemExit("kai: a session model is for --shadow, beside a --kai-url model")
+    try:
+        expected = kai_profile(named)
+        token = bearer(args.kai_token_file, environment=not loopback(url))
+        client = KaiClient(url, args.kai_timeout, args.allow_remote, token, expected)
+        both = Routed(asks, InProcess(Front(Relay(client), "remote", None, expected)))
+    except ValueError as error:
+        raise SystemExit(f"kai: {error}") from None
+    try:
+        both.session.identify()
+    except KaiMismatch as error:
+        raise SystemExit(f"kai: what answers is not the session model ({error})") from None
+    except KaiUnavailable:
+        print("kai: the session model does not answer yet", file=sys.stderr, flush=True)
+    return both
+
+
 def mode_of(args):
     return "shadow" if getattr(args, "shadow", False) else "enforce"
 
@@ -206,6 +238,7 @@ def _serve(args):
             raise SystemExit(f"kai: what answers is not the configured model ({error})") from None
         except KaiUnavailable:  # it may come up later: watching and marking do not wait for it
             print("kai: the decision model does not answer yet", file=sys.stderr, flush=True)
+    asks = _with_session(args, asks, place)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     # The search index is what proves a session apart from a call (earlier.scope): it is
@@ -643,6 +676,14 @@ def main(argv=None):
     )
     # Where the decision model is. With none of these the server watches and marks only.
     kai(serve, url=None)
+    serve.add_argument(
+        "--kai-session-url",
+        help="research, with --shadow and --kai-url: a second Kai checkpoint that answers the "
+        "decision of calls an earlier session bears on",
+    )
+    serve.add_argument(
+        "--kai-session-package-sha256", help="the package the model at --kai-session-url must be"
+    )
     serve.add_argument("--kai-package", help="load Kai in this server from a local export")
     serve.add_argument(
         "--kai-revision", help="load Kai in this server from a full commit of its HF repository"

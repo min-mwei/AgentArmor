@@ -15,7 +15,22 @@ DENIAL = {
 }
 
 
-def handler(service):
+SESSION = "/session"  # the path prefix of a second, separately identified package (see main)
+
+
+def handler(service, session=None):
+    """One handler, one thread: requests are answered one at a time, whichever package they
+    are for. session, when given, is a second Service with its own package identity, reached
+    under the SESSION prefix. A caller chooses a path, never a model inside a request, and
+    each path answers with its own package's identity for the caller to check."""
+    resident = {"": service} | ({SESSION: session} if session is not None else {})
+
+    def resolve(path, tail):
+        for prefix, found in resident.items():
+            if path == prefix + tail:
+                return found
+        return None
+
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -34,14 +49,16 @@ def handler(service):
             self.wfile.write(data)
 
         def do_GET(self):
-            if self.path == "/health":
-                self.reply(200, service.metadata())
+            found = resolve(self.path, "/health")
+            if found is not None:
+                self.reply(200, found.metadata())
             else:
                 self.reply(404, DENIAL)
 
         def do_POST(self):
             try:
-                if self.path != "/v1/systemone":
+                found = resolve(self.path, "/v1/systemone")
+                if found is None:
                     self.reply(404, DENIAL)
                     return
                 lengths = self.headers.get_all("Content-Length", [])
@@ -58,7 +75,7 @@ def handler(service):
                 data = self.rfile.read(size)
                 if len(data) != size:
                     raise ValueError("incomplete body")
-                result = service.evaluate(read_json(data))
+                result = found.evaluate(read_json(data))
                 # Validate response serialization before sending any success headers.
                 json.dumps(result, allow_nan=False)
             except (ValueError, KeyError, TypeError, RecursionError, TimeoutError):
@@ -89,6 +106,11 @@ def parse_args(argv=None):
         help="hidden-state backbone: vllm (default) or mlx, the local Apple-silicon backend; "
         "MLX is qualified separately from vLLM",
     )
+    parser.add_argument(
+        "--session-package",
+        help="a second local Kai export, answered under the /session path prefix with its own "
+        "package identity; research only, with --package",
+    )
     parser.add_argument("--port", type=int, default=8009)
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -97,6 +119,8 @@ def parse_args(argv=None):
         parser.error("Kai requires either --kai-revision SHA or --package DIR")
     if args.kai_revision and not re.fullmatch(r"[0-9a-f]{40}", args.kai_revision):
         parser.error("--kai-revision must be a full 40-character HF commit")
+    if args.session_package and not args.package:
+        parser.error("--session-package goes with a local --package")
     if args.package and (args.cache_dir or args.local_files_only):
         parser.error("HF cache options do not apply to a local Kai package")
     return args
@@ -121,7 +145,14 @@ def load_kai_service(args):
 def main(argv=None):
     args = parse_args(argv)
     service = load_kai_service(args)
-    with HTTPServer(("127.0.0.1", args.port), handler(service)) as server:
+    session = None
+    if args.session_package:
+        from .engine import load_service
+
+        session = load_service(args.session_package, backend=args.backend)
+        if session.package.identity == service.package.identity:
+            raise SystemExit("the session package is the default package: two identities needed")
+    with HTTPServer(("127.0.0.1", args.port), handler(service, session)) as server:
         try:
             server.serve_forever()
         except KeyboardInterrupt:

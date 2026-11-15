@@ -54,6 +54,7 @@ from .kai import (
     wire_bytes,
 )
 from .policy import LAYOUT, load_rules, state, writable
+from .route import session_adapter
 
 SCHEMA = "agentarmor-detection/v1"
 DETECTIONS = "detections.jsonl"
@@ -430,7 +431,8 @@ def detect(
         earlier = asked.get(key) if asked is not None else refused_here.get(key)
         try:
             if earlier is None:
-                reply = put(client, body, questions, counts, record["last_request"])
+                chosen = session_adapter(record["packet"])  # this server's, from the packet
+                reply = put(client, body, questions, counts, record["last_request"], chosen)
             elif earlier["reply"] is None:  # refused before, and how: nothing is sent again
                 retries["repeats_not_sent"] += 1
                 raise (KaiUnsent if earlier.get("unsent") else KaiRejected)("refused before")
@@ -483,23 +485,30 @@ COUNTED = ("built", "refused_before_transport", "transport_attempts", "responses
 COUNTED += ("answers_admitted",)
 
 
-def put(client, body, questions, counts, last):
+def put(client, body, questions, counts, last, session_route=False):
     """client.ask, with what became of the request counted where it is known: at the
     client, which alone can tell a request it refused from one it sent. counts adds up
-    every request of a trigger; last is this one request's own."""
+    every request of a trigger; last is this one request's own.
+
+    A client of two checkpoints (route.Routed) is told this server's own choice for the
+    packet (session_route) and may hand the transport more than one request for the reply."""
     counts["built"] += 1
     try:
-        reply = client.ask(body, questions)
+        if getattr(client, "routed", False):
+            reply = client.ask(body, questions, session_route=session_route)
+        else:
+            reply = client.ask(body, questions)
     except (KaiRejected, KaiUnavailable, KaiMismatch) as error:
         counts["refused_before_transport"] += isinstance(error, KaiUnsent)
         counts["transport_attempts"] += error.attempts
         counts["responses"] += bool(error.responded)
         last |= {"transport_attempts": error.attempts, "responded": bool(error.responded)}
         raise
-    counts["transport_attempts"] += 1
-    counts["responses"] += 1
+    made = reply.get("attempts", 1)
+    counts["transport_attempts"] += made
+    counts["responses"] += made
     counts["answers_admitted"] += 1
-    last |= {"transport_attempts": 1, "responded": True, "admitted": True}
+    last |= {"transport_attempts": made, "responded": True, "admitted": True}
     return reply
 
 
