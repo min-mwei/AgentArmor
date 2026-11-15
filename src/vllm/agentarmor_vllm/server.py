@@ -111,6 +111,17 @@ def parse_args(argv=None):
         help="a second local Kai export, answered under the /session path prefix with its own "
         "package identity; research only, with --package",
     )
+    parser.add_argument(
+        "--base-dir",
+        help="for an unmerged package (schema agentarmor-qwen-lora/v1, MLX only): the directory "
+        "of the registered base it is served beside; default, the local Hugging Face cache",
+    )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="verify the package(s), tokenizer and pointer, print their identities and exit "
+        "without loading a weight or listening",
+    )
     parser.add_argument("--port", type=int, default=8009)
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -123,14 +134,22 @@ def parse_args(argv=None):
         parser.error("--session-package goes with a local --package")
     if args.package and (args.cache_dir or args.local_files_only):
         parser.error("HF cache options do not apply to a local Kai package")
+    if args.base_dir and not args.package:
+        parser.error("--base-dir goes with a local --package")
     return args
+
+
+def unmerged_options(args):
+    """What only an unmerged package or a verification needs; nothing when neither was asked."""
+    options = {"base_dir": args.base_dir} if args.base_dir else {}
+    return options | ({"allocate": False} if args.verify_only else {})
 
 
 def load_kai_service(args):
     from .engine import load_service
 
     if args.package:
-        return load_service(args.package, backend=args.backend)
+        return load_service(args.package, backend=args.backend, **unmerged_options(args))
     from .cache import KAI_REPO, kai_snapshot
 
     package, blobs = kai_snapshot(args.kai_revision, args.cache_dir, args.local_files_only)
@@ -139,6 +158,7 @@ def load_kai_service(args):
         hf_blobs=blobs,
         source={"hf_repo": KAI_REPO, "revision": args.kai_revision},
         backend=args.backend,
+        **unmerged_options(args),
     )
 
 
@@ -149,9 +169,21 @@ def main(argv=None):
     if args.session_package:
         from .engine import load_service
 
-        session = load_service(args.session_package, backend=args.backend)
+        session = load_service(args.session_package, backend=args.backend, **unmerged_options(args))
         if session.package.identity == service.package.identity:
             raise SystemExit("the session package is the default package: two identities needed")
+    if args.verify_only:
+        verified = {"default": service} | ({"session": session} if session else {})
+        for role, found in verified.items():
+            about = {
+                "role": role,
+                "schema": found.package.meta["schema"],
+                "weights": found.package.meta["weights"],
+                "package_sha256": found.package.identity,
+                "verified": "package, tokenizer and pointer; no weight loaded",
+            }
+            print(json.dumps(about))
+        return
     with HTTPServer(("127.0.0.1", args.port), handler(service, session)) as server:
         try:
             server.serve_forever()

@@ -1,6 +1,7 @@
 """Raw causal hidden states from vLLM or MLX, followed by Kai's FP32 pointer head."""
 
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -146,6 +147,131 @@ class MlxBackbone:
         return h[0]
 
 
+def wire_lora(lm, package, mx):
+    """The package's adapter on a loaded base: mlx-lm's LoRALinear (no dropout, scale alpha over
+    rank) around every dense projection of a decoder layer that carries a target name, with the
+    PEFT factors A [rank, inputs] and B [outputs, rank] as lora_a = A^T and lora_b = B^T in FP32.
+
+    Strict in both directions, and decided before a factor is read: the projections found are
+    exactly the adapter's (package.adapter, from the file's header), each with the adapter's
+    dimensions. Returns the number of projections adapted."""
+    import mlx.nn as nn
+    from mlx.utils import tree_unflatten
+    from mlx_lm.tuner.lora import LoRALinear
+
+    from .package import ADAPTER, MLX_PREFIX, PEFT_PREFIX
+
+    lora, found = package.meta["lora"], {}
+    for name, module in lm.named_modules():
+        if name.startswith(MLX_PREFIX + "layers.") and name.rsplit(".", 1)[-1] in lora["targets"]:
+            if type(module) is not nn.Linear:
+                raise ValueError("a module under a LoRA target name is not a dense projection")
+            found[name] = module
+    if set(found) != set(package.adapter):
+        raise ValueError("the adapter's projections are not the base's target projections")
+    for name, module in found.items():
+        if tuple(module.weight.shape) != package.adapter[name][::-1]:
+            raise ValueError("an adapter factor does not fit its projection")
+    factors = mx.load(str(package.root / ADAPTER))
+    swaps = []
+    for name, module in found.items():
+        stem = PEFT_PREFIX + name.removeprefix(MLX_PREFIX)
+        wrapped = LoRALinear.from_base(
+            module, r=lora["rank"], dropout=0.0, scale=lora["alpha"] / lora["rank"]
+        )
+        a = factors.pop(stem + ".lora_A.weight").astype(mx.float32).T
+        b = factors.pop(stem + ".lora_B.weight").astype(mx.float32).T
+        if a.shape != wrapped.lora_a.shape or b.shape != wrapped.lora_b.shape:
+            raise ValueError("an adapter factor does not fit its projection")
+        wrapped.lora_a, wrapped.lora_b = a, b
+        swaps.append((name, wrapped))
+    if factors:
+        raise ValueError("adapter tensors without a projection")
+    lm.update_modules(tree_unflatten(swaps))
+    return len(swaps)
+
+
+def delta_update(package):
+    """(mlx-lm's qwen3_5 module, this package's gated-delta update), once it is certain that
+    putting the second into the first gives the program the package pins. Refused when a module
+    in use was imported from another file than the one whose hash the package verified, or when
+    the text body's update is already something other than mlx-lm's own or this one: another
+    substitution is never stacked on, replaced or left half in place."""
+    from mlx_lm.models import gated_delta as reference
+    from mlx_lm.models import qwen3_5
+
+    from . import delta
+
+    def read_from(module, path):
+        return path is not None and Path(module.__file__).resolve() == Path(path).resolve()
+
+    pinned = package.runtime
+    if not (
+        read_from(qwen3_5, pinned["sources"]["qwen3_5.py"])
+        and read_from(reference, pinned["sources"]["gated_delta.py"])
+        and read_from(delta, pinned["delta"])
+    ):
+        raise ValueError("the imported runtime is not the one the package's hashes were taken of")
+    current = qwen3_5.gated_delta_update
+    if current is not delta.gated_delta_update and current is not reference.gated_delta_update:
+        raise ValueError("another gated-delta update is installed in this process")
+    return qwen3_5, delta.gated_delta_update
+
+
+class MlxLoraBackbone(MlxBackbone):
+    """The same whole-row forward over an unmerged package (package.LoraPackage): the base as
+    stored, the run's LoRA beside it, the text body in training mode and this package's chunked
+    DeltaNet update in mlx-lm's place: the numerical program Kai's training scorer ran.
+
+    The update is put in place for the life of the process, by one assignment, after everything
+    else has succeeded. It serves only a text body in training mode (delta.gated_delta_update):
+    a merged package in the same process, whose body is in eval mode, is answered as before.
+    Every forward first checks that the update and the mode are still in place.
+
+    CPU tests pass ``text`` and ``mx`` as for MlxBackbone.
+    """
+
+    name = "mlx-lora"
+
+    def __init__(self, package, *, text=None, mx=None):
+        self.width, self.max_row = package.hidden_size, package.meta["max_row"]
+        self.in_place = None
+        if text is None:
+            from .package import refuse_model_code
+
+            refuse_model_code(read_json((package.model_dir / "config.json").read_bytes()))
+            import mlx.core as mx
+            from mlx.utils import tree_flatten
+            from mlx_lm.utils import load_model
+
+            delta_update(package)  # refuse a runtime that cannot be made the pinned one, first
+            mx.set_cache_limit(MLX_CACHE_BYTES)  # before the first allocation
+            lm = load_model(package.model_dir)[0]  # the verified directory only; no hub access
+            lm.freeze()
+            wire_lora(lm, package, mx)
+            # The base as stored (BF16, FP32 where it keeps it) and the adapter in FP32, as it
+            # was trained. Any other number type, float16 above all, is refused.
+            if any(
+                p.dtype not in (mx.bfloat16, mx.float32) for _, p in tree_flatten(lm.parameters())
+            ):
+                raise ValueError(
+                    "MLX backbone requires bfloat16 weights (float32 where the base keeps it)"
+                )
+            mx.eval(lm.parameters())
+            text = lm.language_model.model
+            text.train()  # mlx-lm's text body then calls the update without its kernel
+            qwen3_5, update = delta_update(package)
+            qwen3_5.gated_delta_update = update
+            self.in_place = lambda: qwen3_5.gated_delta_update is update and text.training
+        self.text, self.mx = text, mx
+
+    def hidden(self, row):
+        if self.in_place is not None and not self.in_place():
+            # Not a caller's fault: the process no longer runs the package's program.
+            raise RuntimeError("the package's runtime is no longer in place")
+        return super().hidden(row)
+
+
 class Service:
     def __init__(self, package, tokenizer, pointer, backbone, source=None):
         self.package, self.tok, self.pointer, self.backbone = package, tokenizer, pointer, backbone
@@ -171,6 +297,8 @@ class Service:
             "evidence_available": False,
             "package_sha256": self.package.identity,
             "diagnostic": True,
+            # Said only by a package that is not a merged export (LoraPackage: "lora-unmerged").
+            **({"weights": w} if (w := getattr(self.package, "weights", None)) else {}),
         }
 
     def evaluate(self, value):
@@ -213,20 +341,35 @@ class Service:
         }
 
 
-def load_service(directory, *, hf_blobs=None, source=None, backend="vllm"):
+def load_service(
+    directory, *, hf_blobs=None, source=None, backend="vllm", base_dir=None, allocate=True
+):
+    """A Service for a package directory of either schema (package.py). The package, then its
+    tokenizer and pointer, are verified before a backbone is built.
+
+    base_dir is where an unmerged package's base is (default: the local Hugging Face cache); a
+    merged export carries its own weights and does not use it. allocate=False stops after the
+    verification: the returned service has no backbone and cannot answer."""
     if backend not in ("vllm", "mlx"):
         raise ValueError("unknown serving backend")
     from safetensors.numpy import load_file
     from transformers import AutoTokenizer
 
-    from .package import Package
+    from .package import LORA_SCHEMA, LoraPackage, Package, schema_of
 
-    package = Package(directory, hf_blobs=hf_blobs)
+    if schema_of(directory) == LORA_SCHEMA:
+        if backend != "mlx" or hf_blobs is not None:
+            raise ValueError("an unmerged package is a local one, answered by the MLX backend")
+        package, build = LoraPackage(directory, base_dir=base_dir), MlxLoraBackbone
+    else:
+        package = Package(directory, hf_blobs=hf_blobs)
+        build = MlxBackbone if backend == "mlx" else VllmBackbone
     tokenizer = AutoTokenizer.from_pretrained(
-        package.root / "model", local_files_only=True, trust_remote_code=False
+        package.model_dir, local_files_only=True, trust_remote_code=False
     )
     pointer = Pointer(load_file(package.root / "pointer.safetensors"), package.hidden_size)
-    # Validate tokenizer/head before allocating either backbone.
+    # Validate tokenizer/head before allocating any backbone.
     service = Service(package, tokenizer, pointer, None, source=source)
-    service.backbone = (MlxBackbone if backend == "mlx" else VllmBackbone)(package)
+    if allocate:
+        service.backbone = build(package)
     return service
