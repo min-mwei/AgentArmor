@@ -9,6 +9,16 @@ native C++ stack or substitute a generative/vocabulary readout to obtain Metal s
 The bounded implementation and qualification path is in
 [docs/stack-qualification-plan.md](docs/stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run).
 
+On 2026-11-15 the user chose **one current MLX version set** for Kai training, reads,
+export and AgentArmor serving: `mlx==0.32.4`, `mlx-metal==0.32.4` and
+`mlx-lm==0.32.2`, the latest stable releases verified that day. Pin these exact versions;
+do not maintain an older active stack or a floating `latest` dependency. Trainer owns
+the migration of Kai's environment, recipes and numerical profile. Historical locks,
+recipes and results retain their original identities for reproduction from Git; they
+are not an alternative active runtime. Version alignment still requires numerical
+parity and model/regression qualification. Do not change an environment beneath a
+running job or relabel old measurements as results from the new stack.
+
 - Work on `dev`: commit and push there. `main` receives a change only when the user
   asks for it. The user set this on 2026-11-10, when the monitor's commit was moved
   from `main` to `dev`; it replaces the 2026-11-09 arrangement in which `main` was

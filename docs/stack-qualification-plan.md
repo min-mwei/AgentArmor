@@ -302,6 +302,24 @@ pooling route is not a drop-in Kai backend. This is a compatibility inference fr
 and documentation, not a hardware failure. Do not replace Kai's readout with the standard
 embedding or vocabulary-reranking API, or build a general plugin on this critical path.
 
+**One active MLX stack, user decision 2026-11-15.** Use the same exact versions for Kai
+training, reads and export, and for AgentArmor serving: [MLX 0.32.4](https://pypi.org/project/mlx/0.32.4/),
+[MLX Metal 0.32.4](https://pypi.org/project/mlx-metal/0.32.4/) and
+[MLX-LM 0.32.2](https://pypi.org/project/mlx-lm/0.32.2/), verified as the latest stable
+releases that day. Separate purpose-specific environments may use these same pins;
+an older library stack is not an active fallback. Trainer migrates the active dependency
+locks, environment checks and new recipes after any in-flight job finishes. Keep old
+recipes, locks and outputs as historical records, reproducible from their Git revision.
+
+This supersedes MR272's proposed additional old-environment diagnostic. Register a new
+numerical profile before reading it, use the existing eight diagnostic tuples first,
+then the original 320 parity comparisons on the unified stack with the same tolerance.
+Record any change from saved old-stack answers separately; a new reference is versioned
+and does not turn a failed historical comparison into a pass. Preserve the pointer,
+question isolation, temperature, escaping and span offsets, then complete ToolCall/XPIA
+retention and the existing whole-stack shadow replay. Identical library versions alone
+do not establish identical kernels, merge numerics, model quality or release readiness.
+
 Trainer owns a local loader that uses Kai's text backbone with independent complete causal
 rows and the existing FP32 pointer. Reuse the shared request validation, encoder and API;
 preserve recurrent-state isolation, checkpoint temperature, escaping and span offsets.
