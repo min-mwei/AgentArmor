@@ -4530,3 +4530,55 @@ def test_marks_that_rest_on_a_later_call_are_as_they_stood():
     assert at["entries"][1]["indicators"] == [] and at["entries"][1]["level"] == "none"
     assert at["as_of"]["unknown"] == ["marks"]
     assert history.as_of(_timed([access, send]), _at(10))["entries"][1] is send
+
+
+# MR280 P1-2: mail addresses are taken out of a call's whole words in one pass.
+_OLD_ADDRESS = __import__("re").compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def test_addresses_are_removed_exactly_as_the_pattern_removed_them():
+    """The one-pass reader against the expression it replaces: every text of up to seven
+    characters over the characters that matter to it, and seeded longer ones."""
+    import itertools
+    import random
+
+    for length in range(8):
+        for letters in itertools.product("a.@-+ ", repeat=length):
+            text = "".join(letters)
+            assert history._without_addresses(text) == _OLD_ADDRESS.sub(" ", text), text
+    seeded = random.Random(280)
+    for _ in range(20000):
+        text = "".join(seeded.choice("ab1_.+-@@. /é\n") for _ in range(seeded.randint(0, 40)))
+        assert history._without_addresses(text) == _OLD_ADDRESS.sub(" ", text), text
+    whole = "mail auditor@x.example and a.b+c@h-1.example.org, not a@b or @x.example or a@.b"
+    assert history._without_addresses(whole) == "mail   and  , not a@b or @x.example or a@.b"
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        lambda n: "a" * n,  # the reviewer's case: a long word and no "@" anywhere
+        lambda n: "a" * n + "@",  # a long name before an "@" with no host
+        lambda n: "@" + "a" * n,  # a long host with no dot
+        lambda n: "a@" * (n // 2),  # many candidates, none with a host
+        lambda n: "a@b. " * (n // 5),  # many candidates whose host ends at a dot
+        lambda n: "a-" * (n // 2) + "@" + "b-" * (n // 2),  # long name, long host, no dot
+        lambda n: "a." * (n // 2) + "@b",
+        lambda n: "# " + "x" * n + " auditor@x.example ./tools/submit.sh",
+    ],
+)
+def test_a_long_call_is_read_whole_in_bounded_time(shape):
+    """At the size the monitor's own full-input fixture uses (170,000 characters), the words of
+    a call are read whole, nothing clipped, in well under the two seconds at which the old
+    expression had not finished 32,000."""
+    import time
+
+    text = shape(170_000)
+    start = time.perf_counter()
+    plain = history._without_addresses(text)
+    named = history.named_by_call({"tool": "Bash", "target": text}, "/home/dev/app", "/home/dev")
+    assert time.perf_counter() - start < 2.0
+    # Complete: only the one real address goes (the old expression cannot be asked at this size).
+    assert plain == text.replace("auditor@x.example", " ")
+    if "submit.sh" in text:  # the address's host is no file; the script still is
+        assert named == {"/home/dev/app/tools/submit.sh"}

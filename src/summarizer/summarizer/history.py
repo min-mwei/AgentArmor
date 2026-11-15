@@ -1615,7 +1615,25 @@ OBSERVES = frozenset(
 NAMING_ONLY = frozenset({"echo", "printf", "test", "["})  # calls that only print or test a name
 
 
-_ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_LOCAL, _DOMAIN = re.compile(r"[\w.+-]+"), re.compile(r"[\w-]+(?:\.[\w-]+)+")
+
+
+def _without_addresses(text):
+    r"""The text with each mail address (auditor@x.example) replaced by a space, whole and
+    unclipped. They are the pieces the pattern [\w.+-]+@[\w-]+(?:\.[\w-]+)+ finds, found in one
+    pass: that pattern tries every position of a long word that no "@" follows, or that an "@"
+    with no host follows, in a time that grows with the square of its length (MR280 P1-2). Here
+    each longest run of name characters is read once, and a host is looked for only after a run
+    that an "@" ends."""
+    if "@" not in text:
+        return text
+    kept, at, done = [], 0, 0  # at: where the search goes on; done: the text kept so far
+    while (name := _LOCAL.search(text, at)) is not None:
+        at = name.end()
+        if text.startswith("@", at) and (host := _DOMAIN.match(text, at + 1)) is not None:
+            kept += [text[done : name.start()], " "]
+            at = done = host.end()
+    return "".join(kept) + text[done:]
 
 
 def whole_call(entry):
@@ -1637,7 +1655,7 @@ def named_by_call(call, cwd, home):
     is added to what its whole target and its recorded writes name, and never stands in for them,
     so a file the recorded effects know is never left out (MR201-1)."""
     call = whole_call(call)
-    words = {k: _ADDRESS.sub(" ", v) if isinstance(v, str) else v for k, v in call.items()}
+    words = {k: _without_addresses(v) if isinstance(v, str) else v for k, v in call.items()}
     named = set(uses(words, cwd, home)["named"])  # an address's host is no file (auditor@x.example)
     if isinstance(call.get("named"), list):
         return named | set(call["named"])
