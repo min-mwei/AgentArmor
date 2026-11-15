@@ -1,0 +1,29 @@
+{
+ "schema": "agentarmor-shadow-registration/v1.1",
+ "id": "agentarmor-shadow-dev003-8pairs-v1.1",
+ "status": "agreed in MR257 (2026-11-14 17:08 PST): one corrected replay, no further review round",
+ "supersedes": {
+  "path": "training/summarizer/shadow-registration-dev003-8pairs-v1.json",
+  "sha256": "dfbec33974bcbfe69428c36e1141ad720e1fb7cbd0e2f995c352d1b90519c3db",
+  "kept": "unchanged; everything it pins stays frozen except the amendments below"
+ },
+ "first_attempt": "v1 ran 2026-11-15T00:53Z and measured nothing: all 16 monitor servers failed at start (ModuleNotFoundError: sentence_transformers in the registered .venv); 0 gates, 0 Kai requests. Its outputs are kept in private/shadow-campaigns/dev003-8pairs-v1. The launcher's stop step signalled the guard instead of the service, which then ran idle and unguarded for about three minutes until stopped by hand; no guard result exists for it.",
+ "amendments": {
+  "runner_interpreter": "the main checkout's .venv-train (sentence-transformers 6.2.0), instead of .venv; the runner hands it to the monitor server and the gates",
+  "guard_interpreter": "Kai's train/.venv-qwen, as actually used, instead of the root .venv named in v1",
+  "launcher": {
+   "name": "launch-shadow-v11.sh (Trainer scratch)",
+   "sha256": "a282658285ccf15ede13f0f45f9c9f552a1bcf5f81e33cac72e221278b327d07",
+   "lifecycle": "one idempotent cleanup on normal end, failure and interruption: stops the guard's own child process group (verified by parent and group leadership, never by pattern), waits for the guard and keeps its JSON result, checks the port and the GPU lock are free, spends only the release it verified by scope and hash; replay success is read from runs_failed, not the exit status",
+   "tested": "CPU stand-ins: normal end, runner failure, interruption, setup failure; no leftover process in any"
+  },
+  "names": {
+   "out": "private/shadow-campaigns/dev003-8pairs-v11",
+   "kai_run": "train/runs/agentarmor-shadow-dev003-8pairs-v11",
+   "release_scope": "agentarmor-shadow-dev003-8pairs-v1.1:<sha256 of this file>:service"
+  }
+ },
+ "unchanged": "run commit 5b9a9ee, the 16 campaigns, one layout, the published 2,048 export and its package hash, EmbeddingGemma 2 on CPU float32 with default-v3 probes, every setting, measures (a)-(e), and MR254's reading of kai_rejected as refused at the floor, cause unclassified",
+ "encoder_smoke": "one campaign with the real encoder on CPU and a stand-in Kai passed (1 run, 50 gates, 0 violations); summary sha256 5847f8f851cbf97f3541be37eedc60d02cc020ae44d0e272352d9b78b644fd39",
+ "policy_ready": false
+}
