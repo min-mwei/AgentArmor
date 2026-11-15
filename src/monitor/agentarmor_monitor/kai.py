@@ -202,6 +202,37 @@ def transport_failure(error):
     return type(reason if isinstance(reason, BaseException) else error).__name__
 
 
+SUM_TOLERANCE = 1e-4  # float32 probabilities, summed after their trip through JSON
+
+
+def _probability(value):
+    """A probability as the service writes one: a float, finite, in [0, 1]."""
+    if not isinstance(value, float) or not 0.0 <= value <= 1.0:  # NaN fails the comparison
+        raise KaiUnavailable("probability missing or out of range")
+    return value
+
+
+def _decision(answer):
+    """{"choice", "p_deny"} from a decision answer that says one thing, or KaiUnavailable.
+
+    The answer must give a probability for exactly the options that were asked (allow and
+    deny), each in range and together summing to one, and name as its choice the option the
+    service's own rule picks from them: the more probable, and on an exact tie the first in
+    sorted key order (agentarmor_vllm: encode.canonical sorts the options, api.to_answers
+    takes the first largest), which is allow. A choice that its own probabilities do not
+    support is not corrected here: the reply is refused whole.
+    """
+    odds, options = answer.get("probabilities"), sorted(QUESTIONS[DECISION]["criteria"])
+    if not isinstance(odds, dict) or sorted(odds) != options:
+        raise KaiUnavailable("decision without its options")
+    p = [_probability(odds[option]) for option in options]
+    if abs(sum(p) - 1.0) > SUM_TOLERANCE:
+        raise KaiUnavailable("decision probabilities do not sum to one")
+    if answer.get("choice") != options[max(range(len(p)), key=p.__getitem__)]:
+        raise KaiUnavailable("decision contradicts its probabilities")
+    return {"choice": answer["choice"], "p_deny": odds["deny"]}
+
+
 class KaiClient:
     """A client for one Kai service. Session text leaves this process only to that service.
 
@@ -279,7 +310,10 @@ class KaiClient:
 
         Returns {"answers": {XPIA: p(true), DECISION: {"choice", "p_deny"}}, "service"}. A reply
         counts only if the service says it processed the whole input and answers every
-        question that was asked, with probabilities in range.
+        question that was asked, each with the answer type that was asked for and
+        probabilities in range. A decision counts only if it is one consistent statement
+        (_decision); one that is not is no answer, and nothing here works out a verdict
+        the service did not give.
         """
         reply = self._call("/v1/systemone", request(state, questions))
         try:
@@ -297,17 +331,12 @@ class KaiClient:
             answer = given.get(question) if isinstance(given, dict) else None
             if not isinstance(answer, dict):
                 raise KaiUnavailable("unanswered question")
+            if answer.get("type") != QUESTIONS[question]["type"]:
+                raise KaiUnavailable("answer of another type")
             if question == XPIA:
-                value = answer.get("noul")
-                answers[question] = value
+                answers[question] = _probability(answer.get("noul"))
             else:
-                odds = answer.get("probabilities") or {}
-                value = odds.get("deny") if isinstance(odds, dict) else None
-                if answer.get("choice") not in ("allow", "deny"):
-                    raise KaiUnavailable("no decision")
-                answers[question] = {"choice": answer["choice"], "p_deny": value}
-            if not isinstance(value, float) or not 0.0 <= value <= 1.0:
-                raise KaiUnavailable("probability missing or out of range")
+                answers[question] = _decision(answer)
         # What the service says of itself, kept for the record. Its word that it is ready to
         # be a policy is its own claim and is filed as one: nothing here is made ready by it.
         apart = ("answers", "coverage", "policy_ready")
