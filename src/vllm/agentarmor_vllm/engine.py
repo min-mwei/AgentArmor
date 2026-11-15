@@ -83,6 +83,13 @@ class VllmBackbone:
         return output.outputs.data.detach().float().cpu().numpy()
 
 
+# MLX keeps freed buffers for reuse and by default never returns them. Rows differ in length, so
+# each forward's buffers fit no earlier ones: measured on 164 forwards of 609 to 1,983 tokens, the
+# cache grew to 85.7 GB while live memory stayed at 8.4 GB (peak 9.3 GB). The bound is on reusable
+# buffers only; it changes no value.
+MLX_CACHE_BYTES = 2 * 1024**3
+
+
 class MlxBackbone:
     """The same raw causal hidden states through MLX, the local Apple-silicon backend.
 
@@ -105,6 +112,7 @@ class MlxBackbone:
             from mlx.utils import tree_flatten
             from mlx_lm.utils import load_model
 
+            mx.set_cache_limit(MLX_CACHE_BYTES)  # before the first allocation
             lm = load_model(model)[0]  # this directory's config and safetensors; no hub access
             lm.eval()
             # Weights as stored, as in Kai's loader (backbone.py:105): the merged export is BF16

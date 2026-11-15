@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from agentarmor_vllm.encode import tokenizer_sha256
-from agentarmor_vllm.engine import MlxBackbone, VllmBackbone
+from agentarmor_vllm.engine import MLX_CACHE_BYTES, MlxBackbone, VllmBackbone
 from agentarmor_vllm.server import handler
 from test_vllm_baseline import Backbone, Tokenizer, request, service
 
@@ -145,7 +145,11 @@ def test_mlx_loads_the_local_export_in_bf16_only(monkeypatch, tmp_path, fault):
         steps.append(("load", path, kwargs))
         return LM(), config
 
-    core = SimpleNamespace(**vars(ARRAYS), bfloat16="bfloat16")
+    core = SimpleNamespace(
+        **vars(ARRAYS),
+        bfloat16="bfloat16",
+        set_cache_limit=lambda size: steps.append(("cache_limit", size)),
+    )
     utils = SimpleNamespace(tree_flatten=lambda tree: list(tree.items()))
     monkeypatch.setitem(sys.modules, "mlx", SimpleNamespace(core=core, utils=utils))
     monkeypatch.setitem(sys.modules, "mlx.core", core)
@@ -158,7 +162,10 @@ def test_mlx_loads_the_local_export_in_bf16_only(monkeypatch, tmp_path, fault):
             MlxBackbone(package)
         assert not steps  # refused before mlx-lm reads or imports anything
         return
-    loaded = [("load", tmp_path / "model", {}), "eval"]
+    # The reusable-buffer cache is bounded before the weights are read (it otherwise grows with
+    # every new row length until the host runs out).
+    assert 0 < MLX_CACHE_BYTES <= 4 * 1024**3
+    loaded = [("cache_limit", MLX_CACHE_BYTES), ("load", tmp_path / "model", {}), "eval"]
     if fault in ("float16", "uint32"):
         with pytest.raises(ValueError, match="bfloat16"):
             MlxBackbone(package)
