@@ -379,7 +379,10 @@ class Service:
             raise ValueError("request exceeds total row-token budget")
         probs, marked, offsets = [], [], None
         if self.evidence is not None:
-            offsets = state_offsets(self.tok, rec["state"], state[1:])
+            try:
+                offsets = state_offsets(self.tok, rec["state"], state[1:])
+            except ValueError:  # no places for this state: its evidence is an error, said so
+                offsets = ()
         for r in branches:
             row = {
                 "ids": state + r["ids"],
@@ -414,7 +417,7 @@ class Service:
         intervals are not intervals of this state, is an error for this question alone;
         the answer beside it was already computed and stands."""
         try:
-            found = self.evidence.spans(hidden, row, offsets, text)
+            found = self.evidence.spans(hidden, row, offsets, text) if offsets else None
         except Exception:  # noqa: BLE001 - whatever a head raises, the answer is not its to lose
             found = None
         spans = checked_spans(found, len(text))

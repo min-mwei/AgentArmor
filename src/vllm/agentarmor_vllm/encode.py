@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import re
+import unicodedata
 
 # Reused rarely-used Qwen special tokens as delimiters (state, q, opt, /opt, decide); no embedding
 # rows are added.
@@ -46,6 +47,11 @@ def state_offsets(tok, text, ids):
     told = tok(_escaped(text), add_special_tokens=False, return_offsets_mapping=True)
     if list(told.input_ids) != list(ids):
         raise ValueError("token places are not of the encoded state")
+    # The tokenizer composes characters (NFC) before it counts, and then its places are not
+    # places in the caller's text: a combining mark would belong to no token. Such a state
+    # has no places here until that alignment is carried through; it is never approximated.
+    if not unicodedata.is_normalized("NFC", text):
+        raise ValueError("the state is not in composed form: token places would be off")
     return [(0, 0), *((int(a), int(b)) for a, b in told.offset_mapping)]
 
 

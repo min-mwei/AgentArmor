@@ -478,3 +478,83 @@ def test_the_server_takes_either_schema_and_can_verify_without_serving(
     with pytest.raises(ValueError, match="base file hash mismatch"):
         server.main(["--package", str(made.root), *common])
     assert capsys.readouterr().out == ""
+
+
+# --- a package with an evidence head -------------------------------------------------------------
+
+
+class Readout:
+    """A stand-in evidence readout: it is made from the head file and marks nothing."""
+
+    def __init__(self, tensors, package):
+        self.tensors = tensors
+
+    def spans(self, hidden, row, offsets, state):
+        return []
+
+
+def with_head(made, **evidence):
+    save_file({"w": np.zeros((2, 2), dtype=np.float32)}, made.root / "evidence_head.safetensors")
+    made.meta["files"]["evidence_head.safetensors"] = sha256(
+        made.root / "evidence_head.safetensors"
+    )
+    made.meta["evidence"] = {"readout": "standin", "impl_sha256": sha256(Path(__file__))} | evidence
+    made.write()
+
+
+def test_a_bound_head_is_loaded_by_the_readout_the_package_pins(made, monkeypatch):
+    stub_tokenizer(monkeypatch, made.base)
+    monkeypatch.setitem(engine.EVIDENCE, "standin", Readout)
+    with_head(made)
+    service = engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)
+    assert isinstance(service.evidence, Readout) and set(service.evidence.tensors) == {"w"}
+    assert service.head_sha256 == made.meta["files"]["evidence_head.safetensors"]
+
+
+def unregistered(made, monkeypatch):
+    monkeypatch.delitem(engine.EVIDENCE, "standin")
+
+
+def other_source(made, monkeypatch):
+    with_head(made, impl_sha256="0" * 64)
+
+
+def unbound_head(made, monkeypatch):
+    del made.meta["files"]["evidence_head.safetensors"]
+    made.write()
+
+
+def changed_head(made, monkeypatch):
+    append(made.root / "evidence_head.safetensors")
+
+
+def head_without_a_readout(made, monkeypatch):
+    made.meta["evidence"] = "unavailable"
+    made.write()
+
+
+def unknown_words(made, monkeypatch):
+    with_head(made, qualified=True)
+
+
+def too_long_a_state(made, monkeypatch):
+    made.meta |= {"max_state": 4097, "max_row": 6000, "max_packed": 8000}
+    made.write()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [unregistered, other_source, unbound_head, changed_head, head_without_a_readout, unknown_words]
+    + [too_long_a_state],
+)
+def test_a_head_that_is_unbound_changed_or_without_its_readout_is_refused(made, monkeypatch, fault):
+    stub_tokenizer(monkeypatch, made.base)
+    monkeypatch.setitem(engine.EVIDENCE, "standin", Readout)
+    with_head(made)
+    fault(made, monkeypatch)
+    with pytest.raises(ValueError):
+        engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)
+
+
+def test_no_readout_is_registered_in_this_build():
+    assert engine.EVIDENCE == {}

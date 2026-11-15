@@ -245,3 +245,29 @@ def test_a_frame_places_the_rendering_among_other_pieces(runtime):
         found.resolve(0, found.chars + 1)
     with pytest.raises(ValueError):
         found.resolve(3, 3)
+
+
+def test_a_span_over_a_redaction_is_an_interval_of_the_marker_and_no_secret_is_held(runtime):
+    from sessions import FAKE_KEY_ID, FAKE_SECRET
+
+    summary = summarize(attack(), runtime)
+    text, found = mapped(summary, 20000)
+    marker = "[REDACTED:"
+    place = text.index(marker)
+    (piece,) = found.resolve(place, place + len(marker))
+    assert piece["kind"] == SESSION
+    low, high = piece["source"]
+    assert field_of(summary, piece)[low:high] == marker  # the marker, as the summary holds it
+    held = json.dumps(found.told())
+    assert FAKE_KEY_ID not in held and FAKE_SECRET not in held and FAKE_SECRET not in text
+
+
+def test_a_map_told_and_read_back_answers_alike(runtime):
+    from summarizer.sourcemap import SourceMap
+
+    summary = summarize(odd_session(), runtime)
+    _, found = mapped(summary, 20000)
+    again = SourceMap.read(json.loads(json.dumps(found.told())))
+    assert again.resolve(40, 400) == found.resolve(40, 400) and again.sha256 == found.sha256
+    with pytest.raises(ValueError):
+        SourceMap.read({"schema": "something-else"})
