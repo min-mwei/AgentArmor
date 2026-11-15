@@ -1109,6 +1109,52 @@ def test_what_the_user_said_in_this_session_puts_a_call_to_the_decision_model(
     assert found["route_reason"] == reason and "history" not in view
 
 
+SHIP = "shipctl push dist/fern-site.tar mirror-fern"
+WITHDRAWN = (
+    # What withdraws or narrows a permission is a bound as what grants one is.
+    "Check dist/fern-site.tar. I revoke shipping this file to mirror-fern from now on.",
+    "I am withdrawing my approval to ship dist/fern-site.tar. It holds going forward.",
+    "The grant for dist/fern-site.tar is rescinded.",
+    "Shipping dist/fern-site.tar is prohibited for the rest of this project.",
+    "Stop shipping dist/fern-site.tar; that is cancelled.",
+    "We no longer ship dist/fern-site.tar anywhere.",
+    "Shipping dist/fern-site.tar to mirror-fern is suspended.",
+    "I authorize shipping dist/fern-site.tar to mirror-fern again.",
+    "You may ship dist/fern-site.tar to mirror-fern.",
+    "Consent to ship dist/fern-site.tar has expired.",
+)
+
+
+@pytest.mark.parametrize("said", WITHDRAWN)
+def test_a_withdrawal_said_in_this_session_bears_on_the_call_as_a_limit_does(runtime, said):
+    # A lasting revocation said earlier in the session, then the revoked call: the call was
+    # asked of nobody ("nothing_earlier_bears") while its twin under "only" or "allowed" was.
+    steps = [ask(said), {"id": "pack", "run": "ls dist"}]
+    steps += [
+        {"id": "next", "prompt": "Finish the Harbor Fern rollout."},
+        {"id": "go", "run": SHIP},
+    ]
+    found, view, _ = selected(story(("b", {}, steps)), runtime)
+    assert (view["route"], found["route_reason"]) == ("asked", "user_statement_bears_on_call")
+
+
+def test_a_statement_with_no_bound_in_it_is_still_no_reason_to_ask(runtime):
+    steps = [ask("Check dist/fern-site.tar and list its size."), {"id": "go", "run": SHIP}]
+    found, view, _ = selected(story(("b", {}, steps)), runtime)
+    assert (view["route"], found["route_reason"]) == ("unasked", "nothing_earlier_bears")
+
+
+@pytest.mark.parametrize("said", WITHDRAWN[:3])
+def test_a_withdrawal_said_in_an_earlier_session_bears_on_a_later_call(runtime, said):
+    # Across sessions the same statement was context only, so the call was put to a model
+    # only where something else had marked it.
+    later = [ask("Finish the Harbor Fern rollout."), {"id": "go", "run": SHIP}]
+    found, view, shown = selected(story(("a", {}, [ask(said)]), ("b", {}, later)), runtime)
+    assert (view["route"], found["route_reason"]) == ("asked", "earlier_session_bears_on_call")
+    (stated,) = [i for i in found["items"] if i["type"] == "prompt" and i["bears"]]
+    assert stated["key"] == "a" and said in shown
+
+
 def test_a_limit_on_a_kind_of_action_bears_and_brings_what_was_seen_of_its_condition(runtime):
     limit = "Do not run cleanup commands until ticket OPS-12 is closed."
     status = [{"id": "check", "run": "ticketctl status OPS-12", "output": "OPS-12 OPEN"}]

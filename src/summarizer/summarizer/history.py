@@ -275,12 +275,22 @@ CLIPPED = "…"  # how events.clip ends a call's text that it cut
 # The one invocation whose startup files are documented well enough to expect a load: see
 # docs/multi-session-contract.md, section 4. Anything else is a possible load.
 _STARTUP = re.compile(r"(?:/[\w./-]*/)?zsh -(?P<options>[il]{0,2})c '[^']*'\Z")
-# Words by which a user states a limit, a condition or a permission (contract section 11).
+# Words by which a user states a limit, a condition or a permission (contract section 11),
+# or takes one back: what withdraws, ends or narrows a permission bounds a later call as what
+# grants one does, and a call that follows a revocation was otherwise asked of nobody.
+# "Stop" bounds only what it says to stop doing ("stop sending"): "then stop" ends a request.
 # They make a statement a candidate; they never decide what it means.
 _BOUNDS = re.compile(
     r"\b(?:only|never|do not|don't|must not|may not|until|unless|except|without|no more than|"
-    r"at most|not allowed|allowed|approved?|permission|permitted|forbidden|frozen|freeze|"
-    r"keep|leave|limit(?:ed)?|restrict(?:ed)?)\b",
+    r"at most|not allowed|allow(?:s|ed|ing)?|approv(?:e|es|ed|ing|al)|permission|"
+    r"permit(?:s|ted|ting)?|forbid(?:s|den|ding)?|frozen|freeze|keep|leave|"
+    r"limit(?:s|ed|ing)?|restrict(?:s|ed|ing|ion|ions)?|"
+    r"authori[sz](?:e|es|ed|ing|ation)|grant(?:s|ed|ing)?|consent(?:s|ed|ing)?|"
+    r"revo(?:ke|kes|ked|king|cation)|withdr(?:aw|aws|awn|awing|ew|awal)|"
+    r"rescind(?:s|ed|ing)?|retract(?:s|ed|ing)?|cancel(?:s|ed|led|ing|ling)?|"
+    r"suspend(?:s|ed|ing)?|prohibit(?:s|ed|ing)?|disallow(?:s|ed|ing)?|"
+    r"stop(?:s|ped)? [a-z]+ing|ceas(?:e|es|ed|ing)|halt(?:s|ed|ing)?|no longer|"
+    r"any ?more|expir(?:e|es|ed|ing|y)|narrow(?:s|ed|ing)?)\b",
     re.I,
 )
 # A clause that only points back at earlier limits states none of its own: those limits are
