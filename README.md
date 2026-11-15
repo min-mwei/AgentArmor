@@ -46,9 +46,10 @@ curl --fail http://127.0.0.1:8009/health
 
 The health response identifies Kai, the loaded revision, and its readiness. See the
 [serving guide](src/vllm/README.md) for local exports, offline startup, request limits, and the model contract.
-Local Apple Silicon serving through MLX or vLLM Metal is the user-selected direction as of
-2026-11-14. Its adapter and numerical qualification are still pending; the command above
-describes the existing Linux backend. The [whole-stack plan](docs/stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
+Local Apple Silicon serving through MLX is implemented (`--backend mlx`, user-selected on
+2026-11-14): the merged export, and an unmerged package that keeps the training scorer's
+numerical program. Numerical agreement of the unmerged path was measured on one machine; it
+is not a deployment qualification, and the command above describes the Linux backend. The [whole-stack plan](docs/stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
 keeps the same Kai pointer head, verified export, request format and monitor for the local backend.
 
 ## Evaluate a document

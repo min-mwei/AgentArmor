@@ -58,8 +58,9 @@ for it: its own `probes.jsonl`, or the file given with `--probes`. The built-in 
 numbers fit the pinned base model only, so a model directory without probes is refused
 unless `--uncalibrated` is given; it then ranks and links and gives none of the three
 probe labels, and `/health` says `calibrated: false`. To load Kai in
-the server, install `./src/vllm` with its `serve` extra as well, on a host its engine
-supports ([serving guide](../vllm/README.md): a Linux GPU host today). A server that reaches
+the server, install `./src/vllm` with its `serve` extra as well (`serve-mlx` on Apple
+silicon), on a host its engine supports ([serving guide](../vllm/README.md): a Linux GPU
+host with vLLM, or Apple silicon with MLX). A server that reaches
 Kai at another address, or runs Summarizer alone, needs nothing of `src/vllm`.
 
 ## Run
@@ -90,7 +91,7 @@ in all three, and never waits for Kai.
 
 | | Summarizer only | Kai loaded by the server | Kai at another address |
 |---|---|---|---|
-| Start with | no Kai option | `--kai-package DIR` or `--kai-revision SHA` | `--kai-url URL --kai-package-sha256 HASH` |
+| Start with | no Kai option | `--kai-package DIR` or `--kai-revision SHA`, optionally `--kai-backend mlx` and `--kai-base-dir DIR` | `--kai-url URL --kai-package-sha256 HASH` |
 | It starts when | the port is free and the rules load | and Kai's own loader accepts the package | and the address is one it may use (below). If that address answers, it must be the named package |
 | It refuses to start when | the port is taken, the rules do not load | the package is not the one `--kai-package-sha256` names, if given | no package is named; something else answers there |
 | It starts all the same when | | | the address does not answer yet: it says so, and asks again later |
@@ -102,7 +103,17 @@ in all three, and never waits for Kai.
 
 A server that loads Kai itself does not have to keep it in its own process: that is how it is
 built today, and a supervised worker behind the same port would serve as well. Kai's engine
-runs on a supported Linux GPU host; on other hosts use the first or the third column.
+is vLLM on a supported Linux GPU host by default. `--kai-backend mlx` loads it with the
+Apple-silicon backbone instead, and `--kai-base-dir DIR` names the registered base an
+unmerged package is served beside ([serving guide](../vllm/README.md#unmerged-package-mlx-only)).
+Both are the operator's start-up options and go with a Kai loaded here only: no gate, caller
+or request names an engine or a model. On other hosts use the first or the third column.
+
+The shadow replays recorded so far used the third column: a separate loopback Kai service
+(`agentarmor-vllm --backend mlx --package DIR`, with `--session-package DIR` for a second
+checkpoint) and this server started with `--kai-url http://127.0.0.1:8009
+--kai-package-sha256 HASH`. Loading the MLX backbone inside this server is covered by CPU
+tests with stand-ins and has not been exercised with a real model.
 
 **The decision model is the one configured, or its answer is not used.** An answer is read
 as Kai's only when the reply names the model, the readout and the package the operator

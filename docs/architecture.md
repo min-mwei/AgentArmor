@@ -54,8 +54,10 @@ superseding the earlier vLLM-only restriction. This changes the serving backend,
 component boundaries. Add the local backbone behind the existing verified export loader,
 request encoder, trained pointer head and API; do not create another hook, session store
 or decision format. Preserve independent question rows, recurrent-state isolation,
-temperature, escaping, evidence offsets and whole-input admission. The local adapter and
-its numerical qualification are pending; [the qualification plan](stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
+temperature, escaping, evidence offsets and whole-input admission. The local MLX adapter
+exists (`--backend mlx`, merged and unmerged packages); numerical agreement of the unmerged
+path with the training scorer was measured on one machine, and deployment qualification is
+pending; [the qualification plan](stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
 sets the bounded implementation and actual-model checks.
 
 ## 2. Rules the design is held to

@@ -244,6 +244,10 @@ every base file, the installed versions, the installed mlx-lm sources and this m
 one. The base comes from `--base-dir` or the local Hugging Face cache snapshot of the
 registered revision; the network is never used. Use `--verify-only` to run these checks alone.
 
+The monitor's own server can load either package kind itself (`agentarmor-monitor serve
+--kai-package DIR --kai-backend mlx [--kai-base-dir DIR]`); the measurements below were
+taken with this service running apart on loopback and the monitor reaching it by address.
+
 The CPU tests cover the manifest, the refusals and the wiring with stand-ins. On 2026-11-15
 this loader, in the serving environment alone, answered 320 registered comparisons from two
 unmerged packages at a 4,096-token state limit against the training scorer's saved answers on

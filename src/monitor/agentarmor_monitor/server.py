@@ -381,13 +381,25 @@ def free(port):
     return True
 
 
-def load_kai(package=None, revision=None, cache_dir=None, local_files_only=False):
+def load_kai(
+    package=None,
+    revision=None,
+    cache_dir=None,
+    local_files_only=False,
+    backend=None,
+    base_dir=None,
+):
     """Kai-4B loaded by this server from a local export or a pinned revision.
 
     The options are checked and the model is loaded by the Kai service's own code (src/vllm):
     the same refusals, the same verification of the export, the same engine. It needs that
     package with its serving extra, on a host the engine supports. A wrong option ends in
     that service's own message.
+
+    backend (vllm or mlx) and base_dir (the registered base an unmerged package is served
+    beside) are the operator's, given when this server is started and to nothing else: no
+    gate, caller or request names an engine or a model. Left out, they are that service's
+    defaults.
     """
     try:
         from agentarmor_vllm.server import load_kai_service, parse_args
@@ -398,4 +410,6 @@ def load_kai(package=None, revision=None, cache_dir=None, local_files_only=False
     options = ["--package", package] if package else ["--kai-revision", revision]
     options += ["--cache-dir", cache_dir] if cache_dir else []
     options += ["--local-files-only"] if local_files_only else []
+    options += ["--backend", backend] if backend else []
+    options += ["--base-dir", base_dir] if base_dir else []
     return load_kai_service(parse_args(options))

@@ -145,9 +145,16 @@ def _judge(args):
         raise SystemExit(f"kai: {error}") from None
     if here and args.kai_url:
         raise SystemExit("kai: give a Kai to load here or a Kai address, not both")
+    if not here and (getattr(args, "kai_backend", None) or getattr(args, "kai_base_dir", None)):
+        raise SystemExit("kai: --kai-backend and --kai-base-dir are for a Kai loaded here")
     if here:
         found = load_kai(
-            args.kai_package, args.kai_revision, args.kai_cache_dir, args.kai_local_files_only
+            args.kai_package,
+            args.kai_revision,
+            args.kai_cache_dir,
+            args.kai_local_files_only,
+            getattr(args, "kai_backend", None),
+            getattr(args, "kai_base_dir", None),
         )
         try:
             loaded = kai_profile(found.metadata().get("package_sha256"))
@@ -690,6 +697,16 @@ def main(argv=None):
     )
     serve.add_argument("--kai-cache-dir", help="Hugging Face cache for --kai-revision")
     serve.add_argument("--kai-local-files-only", action="store_true")
+    serve.add_argument(
+        "--kai-backend",
+        choices=("vllm", "mlx"),
+        help="the engine for a Kai loaded in this server; default, the Kai service's own (vllm)",
+    )
+    serve.add_argument(
+        "--kai-base-dir",
+        help="for an unmerged package loaded here with --kai-backend mlx: the registered base "
+        "directory it is served beside; default, the local Hugging Face cache",
+    )
     serve.add_argument(
         "--port", type=int, default=PORT, help="the loopback port this server answers on"
     )

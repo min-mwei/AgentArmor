@@ -195,3 +195,41 @@ def test_backend_option_reaches_the_loader_for_either_source(monkeypatch, option
         ("synthetic", {"backend": backend}),
         ("export", {"hf_blobs": "blobs", "source": source, "backend": backend}),
     ]
+
+
+def test_the_monitor_server_loads_kai_with_the_engine_its_operator_names(monkeypatch):
+    # MR280 P2-4: the engine and the base of a model loaded in the monitor's own server are
+    # the operator's start-up options, handed to the Kai service's own loader unchanged.
+    import argparse
+
+    import agentarmor_vllm.server as kai_server
+    from agentarmor_monitor import cli
+    from agentarmor_monitor import server as monitor
+
+    seen = []
+    monkeypatch.setattr(kai_server, "load_kai_service", lambda args: seen.append(args) or "kai")
+    assert monitor.load_kai(package="unmerged", backend="mlx", base_dir="base") == "kai"
+    assert (seen[-1].package, seen[-1].backend, seen[-1].base_dir) == ("unmerged", "mlx", "base")
+    monitor.load_kai(package="merged")  # left out: the service's own defaults
+    assert (seen[-1].backend, seen[-1].base_dir) == ("vllm", None)
+    # The service's own refusals are the monitor's: an unknown engine, a base without a package.
+    with pytest.raises(SystemExit):
+        monitor.load_kai(package="x", backend="other")
+    with pytest.raises(SystemExit):
+        monitor.load_kai(revision="0" * 40, base_dir="base")
+
+    class Loaded:
+        def metadata(self):
+            return {"package_sha256": "a" * 64}
+
+    monkeypatch.setattr(kai_server, "load_kai_service", lambda args: seen.append(args) or Loaded())
+    given = {"kai_package": "unmerged", "kai_revision": None, "kai_url": None}
+    given |= {"kai_cache_dir": None, "kai_local_files_only": False, "kai_package_sha256": None}
+    here = argparse.Namespace(**given, kai_backend="mlx", kai_base_dir="base")
+    assert cli._judge(here)[1] == "local" and seen[-1].backend == "mlx"
+    assert seen[-1].base_dir == "base"
+    # They are for a model loaded here: beside an address, or with no model, they are refused.
+    for elsewhere in ({"kai_url": "http://127.0.0.1:8009", "kai_package_sha256": "a" * 64}, {}):
+        there = argparse.Namespace(**given | {"kai_package": None} | elsewhere, kai_backend="mlx")
+        with pytest.raises(SystemExit, match="for a Kai loaded here"):
+            cli._judge(there)
