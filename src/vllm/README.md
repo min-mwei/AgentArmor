@@ -111,7 +111,8 @@ See the upstream [token embedding API](https://docs.vllm.ai/en/v0.33.0/models/po
 and [pooler configuration](https://docs.vllm.ai/en/v0.33.0/api/vllm/config/pooler/).
 CPU tests check the encoding, export, pointer readout and HTTP behavior. Actual
 hybrid pooling startup, numerical agreement and latency need a supported GPU host.
-The frozen evidence head is not qualified, so the service returns no evidence spans.
+No trained evidence head exists, so a published package returns no evidence spans; the
+path for them is described under [Evidence spans](#evidence-spans).
 
 ## Qualification
 
@@ -256,3 +257,40 @@ within 0.05 (largest difference 0.038), and no answer on the other side of 0.5 e
 whose reference was itself within 0.05 of 0.5. Median request time was 0.83 s and peak device
 memory 10.2 GB on Apple silicon. This is numerical agreement on one machine, not an accuracy
 or deployment qualification, and it says nothing for vLLM. `policy_ready` stays `false`.
+
+### Evidence spans
+
+No trained evidence head exists and none is published. What exists is the path a head's spans
+take, tested with a stand-in readout: it is unqualified, and `policy_ready` stays `false`.
+
+An unmerged package may carry a head. Its `evidence` field is then
+`{"readout": NAME, "impl_sha256": SHA256}` instead of `"unavailable"`, and
+`evidence_head.safetensors` is a third bound file. NAME must be a readout this build has
+(`agentarmor_vllm.engine.EVIDENCE`, empty in this tree) whose source file has that hash; a
+package that names another is refused at load, never served without its head. A head reads
+at most 4,096 state tokens.
+
+With a head loaded, `/health` and every reply say `evidence_available: true`, a reply names
+what its evidence is of, and each answer carries its own:
+
+```json
+{
+  "evidence": {"state_sha256": "…", "state_chars": 2699, "head_sha256": "…",
+               "readout": "NAME", "qualified": false},
+  "answers": {"decision": {"type": "choice", "choice": "deny", "probabilities": {"…": 0.0},
+                           "evidence": {"status": "spans", "spans": [[1204, 1260]]}}}
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `spans` | Half-open intervals of Unicode code points in the exact state that was sent, in order, none overlapping, at most 32 |
+| `empty` | The head marked nothing for this question |
+| `error` | The head failed, returned something that is not such a list, or the state has no trustworthy token places |
+| (no `evidence`) | The service has no head: `evidence_available` is `false` |
+
+Evidence is computed from the same forward pass as the answer and never changes it: an
+answer whose evidence is an error is the answer it would have been. Token places come from
+the tokenizer's own offsets. The tokenizer composes characters (NFC) before it counts, so a
+state that is not already composed gets `error` for every question instead of shifted
+offsets; reserved token spellings are escaped one character for one and do not move anything.

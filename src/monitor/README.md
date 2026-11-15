@@ -649,6 +649,7 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `decision` | Kai's answer for a tool call, `allow` or `deny`; null for other entries |
 | `kai` | `p_deny`, `p_xpia` and what the service says of itself (model, readout, revision, package hash). `identity_checked` says whether that was checked against a configured model before the answer was used: true on the local server, false for a `scan` run without `--kai-package-sha256`. `claims_policy_ready` is the service's own word about its readiness, kept as its claim: the record's `policy_ready` is false whatever it says |
 | `flagged` | `decision` is `deny`, or `p_xpia` is at least 0.5 (not a qualified cutoff) |
+| `spans` | Present when the reply said anything about evidence: for each question its `status` (`unavailable`, `empty`, `spans`, `error` with `why`), the package and head that marked it, and for `spans` each interval `at` in the state with the `sources` it resolves to. No text is kept. See [Evidence spans](#evidence-spans) |
 | `disagreement` | Summarizer marked the entry medium or higher and Kai cleared it. Kept apart from "nothing found"; list them with `detections --disagreements` |
 | `packet` | Size and SHA-256 of the packet; `state_chars`; whether the call was verified; Summarizer's own account (`ready`, `dropped` (lines that found no room, by section), `key_dropped`, `cut` (lines that quote less of their entry than there is, by kind: `prompt`, `action`, `message`), `key_clipped` (those among them that are key evidence, which keep a packet from being ready), `unresolved_conditions`, `scanned_all_captured`, `later_events`); `request_sha256`, the identifier of the final request (canonical JSON, not wire bytes); the call's `call_source`, `call_chars`, `call_chars_not_shown` and `call_redactions` (the last two are null for a `representation`: unknown); and `complete`: the packet was ready and the call's own arguments were shown whole |
 | `review` | `pre_action` when the hooks delivered the call's proposal, nothing has been reported to have become of it, and the summary held nothing from after it; otherwise `retrospective`. A call first seen at its result or failure is always retrospective (`packet.proposal_observed` is false): its outcome is already in the packet. Only pre-action records are evidence about what could be known in time. This is a separate property from `packet.complete`, which is about how much was shown |
@@ -668,6 +669,45 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 The packet text is not copied into the record; it can be rebuilt from the summary. When a gate
 and the daemon both ask about one call, the answer stands: a later note that Kai could not be
 reached does not replace it.
+
+## Evidence spans
+
+No trained evidence head exists. This is the path a head's spans take, tested with a stand-in:
+unqualified, and it changes no verdict.
+
+A span is an interval of the exact state sent to Kai. The client keeps one only if the reply
+names that state (SHA-256 and length) and the head that marked it, and the interval is a pair
+of integers inside the state, in order and not overlapping. Anything else makes that
+question's evidence an `error` with its reason. An error is not an empty answer, and neither
+touches the decision, which stands or falls by its own admission rules. With two checkpoints
+each question's evidence is its own checkpoint's, of its own request.
+
+The server then says what each kept interval is, from a map it makes of the state
+(`summarizer.sourcemap`, through `escalate.source_map`). The map is made while rendering, not
+by searching the text: the packet is rendered once more with every quoted session string
+replaced by a same-length stand-in that names its origin, and the result must equal the state
+that was sent or there is no map. Each resolved piece is one of:
+
+| `kind` | What it is | What is recorded |
+|---|---|---|
+| `session` | Characters of one field of one event | `session`, `seq`, `type`, `field`, `trust`, `source` (the interval in the field's own text, after redaction), and `ref` for a piece of a tool result |
+| `policy` | A rule or the interpretation | `rule` |
+| `host_fact` | What this server worked out for the call | |
+| `call` | The proposed call | `field` (`tool` or `arguments`) and, for arguments, `source` |
+| `synthesized` | Headings, counts, marks, quotation marks (`role: quote`), the cut sign (`role: cut`), and short plain words printed without quotes | |
+| `unmapped` | Session text whose origin the renderer was not told | makes the question an `error` (`unmapped_source`) |
+
+A span that reaches an event after the call under decision in its own session is an `error`
+(`evidence_after_the_call`), and so is any span when the state has no map (`no_source_map`).
+The map holds offsets and identities and no text, stays on this machine and is never sent to
+a model. It is provenance only: that an interval is the words of a tool result says who wrote
+them and with what trust, never that what they claim is true, authorized or happened.
+
+Not mapped today: strings the earlier-sessions section writes itself (for example the path in
+an `object` line), observables, indicator bases, notes and the working directory. They are
+`unmapped`, never guessed. Source intervals count the summary's entry text; only a piece of a
+tool result also says where in its event's field it sits (`ref`). Whether an earlier
+session's event came before the call is the lookup's own account and is not checked again.
 
 ## Limits
 

@@ -54,7 +54,11 @@ superseding the earlier vLLM-only restriction. This changes the serving backend,
 component boundaries. Add the local backbone behind the existing verified export loader,
 request encoder, trained pointer head and API; do not create another hook, session store
 or decision format. Preserve independent question rows, recurrent-state isolation,
-temperature, escaping, evidence offsets and whole-input admission. The local MLX adapter
+temperature, escaping, evidence offsets and whole-input admission. Evidence spans have a
+tested path and no trained head: a package may bind a head, the service returns per-question
+spans of the exact state, the client admits only checked intervals, and the server resolves
+them through a source map made while rendering (`summarizer.sourcemap`) to session, event,
+field and trust. A map is provenance, not verification; see the monitor and service READMEs. The local MLX adapter
 exists (`--backend mlx`, merged and unmerged packages); numerical agreement of the unmerged
 path with the training scorer was measured on one machine, and deployment qualification is
 pending; [the qualification plan](stack-qualification-plan.md#7-agentarmor-measure-the-path-users-actually-run)
