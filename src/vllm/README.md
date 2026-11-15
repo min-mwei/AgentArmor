@@ -33,6 +33,9 @@ model or an unmerged training checkpoint cannot replace this export.
 | `--local-files-only` | Require the HF export to be cached; no download |
 | `--cache-dir DIR` | Override the Hugging Face hub cache location |
 | `--backend NAME` | `vllm` (default) or `mlx`, the local Apple-silicon backbone; see [Local MLX backbone](#local-mlx-backbone) |
+| `--session-package DIR` | A second local package, answered under the `/session` path prefix with its own identity; research and shadow only |
+| `--base-dir DIR` | For an unmerged package with `--package` (MLX only): the registered base directory it is served beside; default, the local Hugging Face cache |
+| `--verify-only` | Verify the package(s), tokenizer and pointer, print their identities and exit without loading a weight or listening |
 | `--port PORT` | Loopback HTTP port; default 8009 |
 
 HF cache options apply only to `--kai-revision`. Otherwise Hugging Face uses
@@ -206,3 +209,46 @@ measure numerical agreement with Kai's MLX reference: logits, probabilities and
 decisions on identical tokens and isolated rows, with tolerances set before the read.
 The CPU tests check this backbone's contract with stand-ins; they load neither MLX
 nor weights.
+
+### Unmerged package (MLX only)
+
+A merged BF16 export does not reproduce Kai's training scorer closely enough on borderline
+answers: with the merged export, some probabilities differed from the scorer's by more than
+0.05. The second package kind keeps the scorer's numerical program instead. The adapter stays
+beside the BF16 base, the text body runs in training mode, and the recurrent update is the
+chunked Gated DeltaNet routine in `agentarmor_vllm/delta.py`, published from the Kai project.
+`--backend mlx` chooses this path when `kai.json` has schema `agentarmor-qwen-lora/v1`; health
+and every answer then report `backend: "mlx-lora"` and `weights: "lora-unmerged"`.
+
+```text
+DIR/
+  kai.json
+  adapter_model.safetensors     # the run's LoRA factors, PEFT names
+  pointer.safetensors           # as for a merged export
+```
+
+`kai.json` has exactly the merged manifest's `schema`, `base`, `base_revision`, `weights`
+(`"lora-unmerged"`), `dtype`, `temperature`, the three limits, `pauses`, `pause_id`,
+`tokenizer_sha256`, `evidence` (`"unavailable"`) and `files` (the two files above), and three
+more fields:
+
+| Field | Meaning |
+|---|---|
+| `base_files` | SHA-256 of every file of the registered base used: config, tokenizer, index and each weight shard |
+| `lora` | `rank`, `alpha` and the list of `targets` (projection names); every adapter tensor must be a paired factor of a listed target at that rank |
+| `runtime` | Exact `mlx`, `mlx-metal` and `mlx-lm` versions, `text_body: "train"`, `delta` (`impl: "agentarmor_vllm.delta"` and that file's SHA-256) and `mlx_lm_sources` (SHA-256 of mlx-lm's `qwen3_5.py` and `gated_delta.py`) |
+
+Everything is checked before a tokenizer, a pointer or a weight is read: the package files,
+every base file, the installed versions, the installed mlx-lm sources and this module's own
+`delta.py`. A package made for another runtime is refused, never answered by the installed
+one. The base comes from `--base-dir` or the local Hugging Face cache snapshot of the
+registered revision; the network is never used. Use `--verify-only` to run these checks alone.
+
+The CPU tests cover the manifest, the refusals and the wiring with stand-ins. On 2026-11-15
+this loader, in the serving environment alone, answered 320 registered comparisons from two
+unmerged packages at a 4,096-token state limit against the training scorer's saved answers on
+the same version set. All 320 met the rule registered beforehand: every option probability
+within 0.05 (largest difference 0.038), and no answer on the other side of 0.5 except one
+whose reference was itself within 0.05 of 0.5. Median request time was 0.83 s and peak device
+memory 10.2 GB on Apple silicon. This is numerical agreement on one machine, not an accuracy
+or deployment qualification, and it says nothing for vLLM. `policy_ready` stays `false`.
