@@ -25,9 +25,28 @@ class ContextOverflow(ValueError):
         self.state_tokens, self.max_state = state_tokens, max_state
 
 
+def _escaped(text):
+    """text with every reserved token spelling changed, one character for one."""
+    return _SPECIAL_RE.sub(r"<¦\1¦>", text)
+
+
 def user_tokens(tok, text):
     """Escape reserved token spellings before tokenizing caller text."""
-    return tok(_SPECIAL_RE.sub(r"<¦\1¦>", text), add_special_tokens=False).input_ids
+    return tok(_escaped(text), add_special_tokens=False).input_ids
+
+
+def state_offsets(tok, text, ids):
+    """[(start, end)] for a state's rows: where in text each token stands, as half-open
+    intervals of code points, after the one state marker, which stands nowhere: (0, 0).
+
+    The reserved spellings are escaped one character for one, so a place in the escaped text
+    is the same place in the caller's. ids are the state tokens encode() made; a tokenizer
+    that gives other tokens when asked for places has no places to give.
+    """
+    told = tok(_escaped(text), add_special_tokens=False, return_offsets_mapping=True)
+    if list(told.input_ids) != list(ids):
+        raise ValueError("token places are not of the encoded state")
+    return [(0, 0), *((int(a), int(b)) for a, b in told.offset_mapping)]
 
 
 def pause_token(tok):

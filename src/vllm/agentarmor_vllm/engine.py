@@ -1,12 +1,13 @@
 """Raw causal hidden states from vLLM or MLX, followed by Kai's FP32 pointer head."""
 
+import hashlib
 import math
 from pathlib import Path
 
 import numpy as np
 
 from .api import to_answers, to_record
-from .encode import SPECIAL, encode, pause_token, rows_of, tokenizer_sha256
+from .encode import SPECIAL, encode, pause_token, rows_of, state_offsets, tokenizer_sha256
 from .requests import MAX_TOTAL_TOKENS, validate_request
 from .wire import read_json
 
@@ -272,10 +273,64 @@ class MlxLoraBackbone(MlxBackbone):
         return super().hidden(row)
 
 
+# The evidence readouts this build can run: {name: class}. A class is made with (tensors,
+# package) from the package's evidence head file and has spans(hidden, row, offsets, state):
+# hidden is the whole row's raw states, row its layout ("ids", "decide", "opts"), offsets the
+# state rows' places in state (encode.state_offsets), and the result a list of [start, end]
+# code-point intervals of state. None is registered here: no trained head is published, and
+# a package that names a readout this build does not have is refused, not answered without.
+EVIDENCE = {}
+MAX_SPANS, MAX_EVIDENCE_STATE = 32, 4096
+
+
+def evidence_head(package):
+    """(the package's evidence readout made from its head file, the head's SHA-256), or
+    (None, None) for a package without one. The readout's source must be the one the
+    package pins, as the DeltaNet update's must."""
+    told = getattr(package, "evidence", None)
+    if told is None:
+        return None, None
+    import inspect
+
+    from safetensors.numpy import load_file
+
+    from .package import EVIDENCE_HEAD, sha256
+
+    readout = EVIDENCE.get(told["readout"])
+    if readout is None:
+        raise ValueError(f"no evidence readout {told['readout']!r} in this build")
+    if sha256(Path(inspect.getsourcefile(readout))) != told["impl_sha256"]:
+        raise ValueError("this evidence readout is not the source the package pins")
+    if package.meta["max_state"] > MAX_EVIDENCE_STATE:
+        raise ValueError("an evidence head reads at most 4,096 state tokens")
+    head = package.root / EVIDENCE_HEAD
+    return readout(load_file(head), package), package.meta["files"][EVIDENCE_HEAD]
+
+
+def checked_spans(spans, length):
+    """spans as an answer may carry them, or None: integer pairs inside the state, in order,
+    none overlapping the one before, at most MAX_SPANS."""
+    if not isinstance(spans, list) or len(spans) > MAX_SPANS:
+        return None
+    out, end = [], 0
+    for span in spans:
+        pair = isinstance(span, (list, tuple)) and len(span) == 2
+        if (
+            not pair
+            or any(type(x) is not int for x in span)
+            or not end <= span[0] < span[1] <= length
+        ):
+            return None
+        out.append([span[0], span[1]])
+        end = span[1]
+    return out
+
+
 class Service:
     def __init__(self, package, tokenizer, pointer, backbone, source=None):
         self.package, self.tok, self.pointer, self.backbone = package, tokenizer, pointer, backbone
         self.source = source or {}
+        self.evidence, self.head_sha256 = None, None  # set by load_service for a package's head
         m = package.meta
         if tokenizer_sha256(tokenizer) != m["tokenizer_sha256"]:
             raise ValueError("tokenizer identity mismatch")
@@ -294,7 +349,9 @@ class Service:
             "model": "kai-4b",
             "readout": "pointer",
             "policy_ready": False,
-            "evidence_available": False,
+            # True only with a head loaded. It says spans are computed, not that they are
+            # right: no evidence head is qualified.
+            "evidence_available": self.evidence is not None,
             "package_sha256": self.package.identity,
             "diagnostic": True,
             # Said only by a package that is not a merged export (LoraPackage: "lora-unmerged").
@@ -320,25 +377,50 @@ class Service:
         # Admission precedes every forward; bound duplicated state work as well as packed input.
         if sum(len(state) + len(r["ids"]) for r in branches) > MAX_TOTAL_TOKENS:
             raise ValueError("request exceeds total row-token budget")
-        probs = []
+        probs, marked, offsets = [], [], None
+        if self.evidence is not None:
+            offsets = state_offsets(self.tok, rec["state"], state[1:])
         for r in branches:
             row = {
                 "ids": state + r["ids"],
                 "decide": len(state) + r["decide"],
                 "opts": [len(state) + p for p in r["opts"]],
             }
-            logits = self.pointer.logits(self.backbone.hidden(row), row).astype(np.float64)
+            hidden = self.backbone.hidden(row)
+            logits = self.pointer.logits(hidden, row).astype(np.float64)
+            if offsets is not None:
+                marked.append(self._spans(hidden, row, offsets, rec["state"]))
             logits = (logits - logits.max()) / m["temperature"]
             p = np.exp(logits)
             p /= p.sum()
             if not np.isfinite(p).all():
                 raise ValueError("nonfinite probabilities")
             probs.append(p.tolist())
-        return {
-            **self.metadata(),
-            "answers": to_answers(probs, meta),
-            "coverage": "complete",
-        }
+        answers = to_answers(probs, meta)
+        if offsets is None:
+            return {**self.metadata(), "answers": answers, "coverage": "complete"}
+        # Evidence rides beside each answer and changes none: which state it is of, which
+        # head marked it, and for each question spans, none, or that marking failed.
+        for item, found in zip(meta, marked, strict=True):
+            answers[item["id"]]["evidence"] = found
+        text = rec["state"]
+        about = {"state_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+        about |= {"state_chars": len(text), "head_sha256": self.head_sha256}
+        about |= {"readout": self.package.evidence["readout"], "qualified": False}
+        return {**self.metadata(), "answers": answers, "evidence": about, "coverage": "complete"}
+
+    def _spans(self, hidden, row, offsets, text):
+        """One question's evidence: {"status", "spans"}. A head that fails, or whose
+        intervals are not intervals of this state, is an error for this question alone;
+        the answer beside it was already computed and stands."""
+        try:
+            found = self.evidence.spans(hidden, row, offsets, text)
+        except Exception:  # noqa: BLE001 - whatever a head raises, the answer is not its to lose
+            found = None
+        spans = checked_spans(found, len(text))
+        if spans is None:
+            return {"status": "error", "spans": []}
+        return {"status": "spans" if spans else "empty", "spans": spans}
 
 
 def load_service(
@@ -370,6 +452,7 @@ def load_service(
     pointer = Pointer(load_file(package.root / "pointer.safetensors"), package.hidden_size)
     # Validate tokenizer/head before allocating any backbone.
     service = Service(package, tokenizer, pointer, None, source=source)
+    service.evidence, service.head_sha256 = evidence_head(package)
     if allocate:
         service.backbone = build(package)
     return service

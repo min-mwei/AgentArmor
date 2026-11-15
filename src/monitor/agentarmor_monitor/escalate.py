@@ -53,7 +53,7 @@ from .kai import (
     request,
     wire_bytes,
 )
-from .policy import LAYOUT, load_rules, state, writable
+from .policy import LAYOUT, layout, load_rules, state, writable
 from .route import session_adapter
 
 SCHEMA = "agentarmor-detection/v1"
@@ -153,6 +153,65 @@ def packet(summary, entry, max_chars, sessions=None):
     if lookup is not None:
         about["history"] = lookup
     return text, about, shown["shown"]
+
+
+def source_map(rules, summary, entry, max_chars, sessions, call, body):
+    """The map of one state to its sources (summarizer.sourcemap), or None.
+
+    For the state `body` as detect() built it from these same arguments: which characters
+    are a session's (and whose, with the trust Summarizer gave them), which a rule's, a host
+    fact's, the call's, and which this server wrote. The packet is rendered once more under
+    trace; a map is returned only if that gives the very state that was sent. It is local:
+    it holds no text, it is not sent to any model, and it says who wrote an interval, never
+    that what the interval claims is so.
+    """
+    from summarizer import sourcemap
+
+    text = packet(summary, entry, max_chars, sessions)[0]
+    found = sourcemap.map_of(
+        lambda: packet(summary, entry, max_chars, sessions)[0],
+        plain=text,
+        cutoff={"session": summary["session"].get("session_id"), "seq": entry["seq"]},
+        frame=lambda shown: layout(rules, shown, call),
+    )
+    same = found is not None and found.sha256 == hashlib.sha256(body.encode()).hexdigest()
+    return found if same else None
+
+
+def spans_record(told, mapped):
+    """What a record keeps of a reply's evidence, question by question (kai.evidence()).
+
+    A question answered with spans has each resolved through the state's own map: the
+    interval, and what it is an interval of (session, event, field, trust and source
+    interval; a rule; a host fact; the call; this server's own words). No text is kept. An
+    interval is evidence only if every character of it has a known source from before the
+    call: one that touches unmapped session text, or an event after the call under decision
+    in its own session, or a state that has no map, makes the whole question an "error" with
+    its reason, and none of its spans is kept. An error is not an empty answer, and neither
+    changes the decision.
+    """
+    out, found = {}, []
+    for question, given in told.items():
+        kept = {key: value for key, value in given.items() if key != "spans" and value is not None}
+        if given["status"] == "spans":
+            if not found:
+                found.append(mapped())
+            source, spans, why = found[0], [], None if found[0] else "no_source_map"
+            for start, end in given["spans"] if source else ():
+                pieces = source.resolve(start, end)
+                if any(piece["kind"] == "unmapped" for piece in pieces):
+                    why = "unmapped_source"
+                elif any(_later(piece, source.cutoff) for piece in pieces):
+                    why = "evidence_after_the_call"
+                spans.append({"at": [start, end], "sources": pieces})
+            kept |= {"status": "error", "why": why} if why else {"spans": spans}
+        out[question] = kept
+    return out
+
+
+def _later(piece, cutoff):
+    mine = piece.get("session") == cutoff["session"] and isinstance(piece.get("seq"), int)
+    return mine and piece["seq"] > cutoff["seq"]
 
 
 def entries_shown(summary, emitted):
@@ -329,8 +388,14 @@ def detect(
     asked=None,
     explain=False,
     sessions=None,
+    maps=None,
 ):
     """Send one trigger's packet to Kai and return the detection record.
+
+    maps, when given, receives source_map() for each request made up, under its
+    request_sha256, before anything is sent: for a caller that needs to know where a
+    source's characters stand in the state (projecting span targets). It never enters a
+    record. Without it a map is made only if an answer comes back with spans to resolve.
 
     An action is put to Kai for a decision (allow or deny under the rules) and for whether
     untrusted content is redirecting the agent; other triggers only for the second. The call is
@@ -424,6 +489,14 @@ def detect(
         body = state(rules, text, call)
         key = request_sha256(body, questions)
         record["packet"] |= {"state_chars": len(body), "request_sha256": key}
+
+        room = max(size, MIN_CHARS)
+
+        def mapped(body=body, room=room):
+            return source_map(rules, summary, entry, room, sessions, call, body)
+
+        if maps is not None:
+            maps[key] = mapped()
         # What became of this request, and of no other: an earlier, larger request that was
         # answered with a refusal says nothing about whether this one reached anything.
         last = {"request_sha256": key, "transport_attempts": 0, "responded": False}
@@ -473,6 +546,8 @@ def detect(
         if DECISION in answers:
             record["kai"]["p_deny"] = answers[DECISION]["p_deny"]
             record["decision"] = answers[DECISION]["choice"]  # Kai's answer: allow or deny
+        if reply.get("evidence"):  # spans, or why there are none; never part of the verdict
+            record["spans"] = spans_record(reply["evidence"], mapped)
         record["flagged"] = record["decision"] == "deny" or answers[XPIA] >= FLAG_AT
         # Summarizer marked it and Kai cleared it: kept apart from "nothing was found".
         marked = LEVELS.get(entry.get("level"), 0) >= LEVELS["medium"]

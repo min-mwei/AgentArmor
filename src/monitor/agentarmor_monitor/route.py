@@ -93,7 +93,7 @@ class Routed:
             attempts = 1
         else:
             others = tuple(q for q in questions if q != DECISION)
-            reply = {"answers": {}, "service": None}
+            reply = {"answers": {}, "service": None, "evidence": {}}
             attempts, sent = 0, {}
             for client, asked in ((self.default, others), (self.session, (DECISION,))):
                 if not asked:
@@ -106,6 +106,8 @@ class Routed:
                     raise marked(error, counted, error.responded or bool(attempts)) from None
                 attempts += 1
                 reply["answers"] |= part["answers"]
+                # Each question's evidence is its own checkpoint's, of its own request.
+                reply["evidence"] |= part.get("evidence") or {}
                 if client is self.default:
                     reply["service"] = part["service"]
                 else:

@@ -123,6 +123,7 @@ RUNTIME_PACKAGES = ("mlx", "mlx-metal", "mlx-lm")
 MLX_LM_SOURCES = ("qwen3_5.py", "gated_delta.py")  # in mlx_lm/models: the text body and its update
 DELTA = "agentarmor_vllm.delta"
 ADAPTER, POINTER = "adapter_model.safetensors", "pointer.safetensors"
+EVIDENCE_HEAD = "evidence_head.safetensors"
 PEFT_PREFIX, MLX_PREFIX = "base_model.model.", "language_model.model."
 _HEX = re.compile(r"[0-9a-f]{64}")
 _LEAF = re.compile(r"[a-z][a-z0-9_]*")
@@ -261,18 +262,15 @@ class LoraPackage:
             raise ValueError("package must identify the registered Qwen3.5-4B base")
         if m["weights"] != self.weights or m["dtype"] != "bfloat16":
             raise ValueError("an unmerged LoRA beside the BF16 base is required")
-        if m["evidence"] != "unavailable":
-            raise ValueError("unknown evidence qualification")
+        self.evidence = self._check_evidence(m["evidence"])
         check_context(m)
         self._check_lora(m["lora"])
         self.runtime = self._check_runtime(m["runtime"])
-        # The package's own files: the adapter and the pointer, both inside it, nothing else.
+        # The package's own files: the adapter and the pointer, with the evidence head when
+        # the package has one, all inside it, nothing else.
+        own = {ADAPTER, POINTER} | ({EVIDENCE_HEAD} if self.evidence else set())
         actual = {p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file()}
-        if (
-            not _digests(m["files"])
-            or set(m["files"]) != {ADAPTER, POINTER}
-            or actual != {ADAPTER, POINTER, "kai.json"}
-        ):
+        if not _digests(m["files"]) or set(m["files"]) != own or actual != own | {"kai.json"}:
             raise ValueError("manifest must bind every package file")
         for name, digest in m["files"].items():
             path = (self.root / name).resolve(strict=True)
@@ -282,6 +280,23 @@ class LoraPackage:
         self.model_dir = self._check_base(m["base_files"], base_dir, cache_dir)
         self.hidden_size = 2560
         self.identity = sha256(self.root / "kai.json")
+
+    @staticmethod
+    def _check_evidence(evidence):
+        """None for a package without an evidence head ("unavailable"), else what it says of
+        its head: the readout that runs it and the SHA-256 of that readout's source. The head
+        file is one of the package's bound files. Naming a head qualifies nothing."""
+        if evidence == "unavailable":
+            return None
+        named = isinstance(evidence, dict) and set(evidence) == {"readout", "impl_sha256"}
+        if (
+            not named
+            or not isinstance(evidence["readout"], str)
+            or not _LEAF.fullmatch(evidence["readout"])
+            or not _digests({"impl": evidence["impl_sha256"]})
+        ):
+            raise ValueError("unknown evidence qualification")
+        return dict(evidence)
 
     @staticmethod
     def _check_lora(lora):

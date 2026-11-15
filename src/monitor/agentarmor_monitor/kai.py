@@ -10,6 +10,7 @@ Kai's answer is diagnostic. The service reports policy_ready false, and nothing 
 probability into a permission.
 """
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -233,6 +234,60 @@ def _decision(answer):
     return {"choice": answer["choice"], "p_deny": odds["deny"]}
 
 
+MAX_SPANS = 32  # the most intervals one question's evidence may hold
+_SHA256 = re.compile("[0-9a-f]{64}")
+
+
+def evidence(reply, question, state):
+    """One question's evidence as it may be kept: {"status", "spans", ...}.
+
+    status is "unavailable" (the service has no evidence head, and says so), "empty" (it
+    has one, and it marks nothing for this question), "spans" (intervals of the state) or
+    "error". Spans are half-open intervals of Unicode code points in the exact state that
+    was sent. They are kept only if the reply names that state (its SHA-256 and length) and
+    the head that marked it, and every interval is a pair of integers inside the state, in
+    order, none overlapping the one before, at most MAX_SPANS of them. Anything else is an
+    "error" with its reason, and no interval of that question is kept: evidence that cannot
+    be checked is not evidence, and it is not an empty answer either. Nothing here touches
+    the answer itself; a decision stands or falls by _decision() alone.
+    """
+    answer = reply["answers"][question]
+    given, about = answer.get("evidence"), reply.get("evidence")
+    if reply.get("evidence_available") is not True:
+        ok = given is None and about is None
+        return {"status": "unavailable" if ok else "error", "spans": []} | (
+            {} if ok else {"why": "evidence_from_a_service_that_has_none"}
+        )
+
+    def error(why):
+        return {"status": "error", "spans": [], "why": why}
+
+    if not isinstance(about, dict) or not isinstance(given, dict):
+        return error("evidence_missing")
+    head = about.get("head_sha256")
+    if not isinstance(head, str) or not _SHA256.fullmatch(head):
+        return error("head_not_named")
+    digest = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    if about.get("state_sha256") != digest or about.get("state_chars") != len(state):
+        return error("evidence_of_another_state")
+    status, spans = given.get("status"), given.get("spans")
+    if set(given) != {"status", "spans"} or not isinstance(spans, list):
+        return error("evidence_malformed")
+    if status in ("unavailable", "error"):
+        return {"status": status, "spans": []} | ({"why": "service"} if status == "error" else {})
+    if status not in ("empty", "spans") or (status == "empty") != (not spans):
+        return error("evidence_malformed")
+    if len(spans) > MAX_SPANS:
+        return error("too_many_spans")
+    end = 0
+    for span in spans:
+        whole = isinstance(span, list) and len(span) == 2 and all(type(x) is int for x in span)
+        if not whole or not end <= span[0] < span[1] <= len(state):
+            return error("span_outside_the_state_or_out_of_order")
+        end = span[1]
+    return {"status": status, "spans": [list(span) for span in spans], "head_sha256": head}
+
+
 class KaiClient:
     """A client for one Kai service. Session text leaves this process only to that service.
 
@@ -308,7 +363,8 @@ class KaiClient:
     def ask(self, state, questions=(XPIA,)):
         """Kai's answers for a packet; raises KaiRejected or KaiUnavailable.
 
-        Returns {"answers": {XPIA: p(true), DECISION: {"choice", "p_deny"}}, "service"}. A reply
+        Returns {"answers": {XPIA: p(true), DECISION: {"choice", "p_deny"}}, "service",
+        "evidence": {question: evidence()}}. A reply
         counts only if the service says it processed the whole input and answers every
         question that was asked, each with the answer type that was asked for and
         probabilities in range. A decision counts only if it is one consistent statement
@@ -317,9 +373,13 @@ class KaiClient:
         """
         reply = self._call("/v1/systemone", request(state, questions))
         try:
-            return self._read(reply, questions)
+            read = self._read(reply, questions)
         except (KaiUnavailable, KaiMismatch) as error:  # a reply came, and it is no answer
             raise marked(error, 1, True) from None
+        # Evidence is read after the answers stand, and cannot make one fall or stand.
+        told = {question: evidence(reply, question, state) for question in questions}
+        package = (self.expected or {}).get("package_sha256")
+        return read | {"evidence": {q: e | {"package_sha256": package} for q, e in told.items()}}
 
     def _read(self, reply, questions):
         if self.expected is not None:  # before anything in the reply is used
