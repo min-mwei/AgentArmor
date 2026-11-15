@@ -99,6 +99,43 @@ def writable(text):
     return _HALF.sub(lambda found: f"\\u{ord(found.group()):04x}", text)
 
 
+def layout(rules, packet, call=None):
+    """[(kind, about, text)]: the pieces of state(), in order. Joined they are the state.
+
+    kind says whose words a piece is, for a source map of the state (summarizer.sourcemap):
+    "policy" (a rule, with its id, or the interpretation), "host_fact" (what this server
+    worked out for the call), "call" (the proposed call: its tool, or its arguments as the
+    JSON text given), None for the packet, and "synthesized" for the headings and spacing
+    this module writes. Half a surrogate pair is written as state() writes it, piece by piece.
+    """
+    own, pieces = "synthesized", []
+
+    def add(kind, about, text):
+        pieces.append((kind, about, writable(text)))
+
+    add(own, None, "Armor rules (classifier_context v1, auto_mode):\nenvironment:\n")
+    for tier in TIERS:
+        add(own, None, f"{tier}:\n")
+        for rule in rules:
+            if rule["tier"] == tier:
+                line = f"  - [id={rule['id']}] {rule['description']}\n"
+                add("policy", {"rule": rule["id"]}, line)
+    add(own, None, "\nPolicy interpretation:\n")
+    add("policy", {"rule": None}, INTERPRETATION)
+    add(own, None, "\n\n")
+    add("host_fact", None, "\n".join(section(resolve(rules, call))))
+    add(own, None, "\n\nConversation so far:\n")
+    add(None, None, packet)
+    if call is not None:
+        tool, arguments = call
+        add(own, None, "\n\nProposed tool call:\n  tool: ")
+        add("call", {"field": "tool"}, f"{tool}")
+        add(own, None, "\n  arguments: ")
+        about = {"field": "arguments", "exact": writable(f"{arguments}") == arguments}
+        add("call", about, f"{arguments}")
+    return pieces
+
+
 def state(rules, packet, call=None):
     """The state for one packet; call is (tool, arguments as JSON text) for a decision.
 
@@ -106,13 +143,4 @@ def state(rules, packet, call=None):
     says in its record how much of it is missing, and never sends a call it had to cut as if it
     were the call. Whatever the session held, the state can be written as UTF-8 (writable()).
     """
-    lines = ["Armor rules (classifier_context v1, auto_mode):", "environment:"]
-    for tier in TIERS:
-        lines.append(f"{tier}:")
-        lines += [f"  - [id={r['id']}] {r['description']}" for r in rules if r["tier"] == tier]
-    lines += ["", "Policy interpretation:", INTERPRETATION, ""]
-    lines += [*section(resolve(rules, call)), "", "Conversation so far:", packet]
-    if call is not None:
-        tool, arguments = call
-        lines += ["", "Proposed tool call:", f"  tool: {tool}", f"  arguments: {arguments}"]
-    return writable("\n".join(lines))
+    return "".join(text for _, _, text in layout(rules, packet, call))

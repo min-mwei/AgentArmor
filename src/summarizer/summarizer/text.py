@@ -10,6 +10,7 @@ characters spelled out, so quoted text cannot start a line, close a section or i
 What is left out is counted in the last line.
 """
 
+import contextvars
 import json
 import re
 from collections import Counter
@@ -34,12 +35,26 @@ _TIER = {"high": 3, "medium": 4, "low": 6}  # when a marked line gets room; lowe
 _OUTCOMES = (COMPLETED, "failed", "denied")  # what a later event said became of a call
 
 
-def quote(text, limit):
-    """A session string as a single-line JSON literal, cut to limit characters."""
-    text = visible(str(text))
+# A rendering being traced for its source map (sourcemap.tracing()); None otherwise, and then
+# nothing below differs from a module without it.
+TRACE = contextvars.ContextVar("summarizer_text_trace", default=None)
+
+
+def quote(text, limit, of=None):
+    """A session string as a single-line JSON literal, cut to limit characters.
+
+    of says where the string came from, for a source map: (entry, field) for an entry's own
+    field, (entry, field, index) for one item of a list field, (entry, field, None, start)
+    for the field from its character start on. It changes nothing in the literal. A string
+    quoted without it is still session data; a map calls it unmapped.
+    """
+    source = str(text)
+    text = visible(source)
     if len(text) > limit:
         text = text[: limit - 1] + "…"
-    return json.dumps(text, ensure_ascii=False)
+    literal = json.dumps(text, ensure_ascii=False)
+    trace = TRACE.get()
+    return literal if trace is None else trace.stand_in(literal, source, limit, of)
 
 
 def _word(text):
@@ -92,13 +107,16 @@ def _what(entry, limit=200):
     if entry["type"] == "action":
         text = call_words(entry["tool"], entry["text"])
         actor = f" by {_word(entry['actor'])}" if entry.get("actor") else ""
-        return f"action {_word(entry['tool'])} {_status(entry)}{actor}", quote(text, limit)
+        # The call's words are the end of the entry's text (events.call_words takes the
+        # tool's name off its start): a map counts their characters from where they begin.
+        of = (entry, "text", None, len(entry["text"]) - len(text))
+        return f"action {_word(entry['tool'])} {_status(entry)}{actor}", quote(text, limit, of)
     if entry["type"] == "content":
-        head = f"content {entry['source']} {quote(entry['origin'], 80)}"
+        head = f"content {entry['source']} {quote(entry['origin'], 80, (entry, 'origin'))}"
         # The label stays against the text, after any marks, so the two are read together.
         field = entry.get("ref", {}).get("field", "")
-        return head, labelled(field, entry["text"], _content_limit(entry))
-    return entry["type"], quote(entry["text"], 240)
+        return head, labelled(field, entry["text"], _content_limit(entry), (entry, "text"))
+    return entry["type"], quote(entry["text"], 240, (entry, "text"))
 
 
 _CHANNELS = {"stdout", "stderr", "output", "content", "text", "result", "error", "file"}
@@ -176,10 +194,10 @@ def read_content_line(line):
     return None
 
 
-def labelled(field, text, limit=CONTENT_SHOWN):
+def labelled(field, text, limit=CONTENT_SHOWN, of=None):
     """A piece of a result as displayed: its quoted text, after its label when it has one."""
     label = member_label(field)
-    return f"{label}: {quote(text, limit)}" if label else quote(text, limit)
+    return f"{label}: {quote(text, limit, of)}" if label else quote(text, limit, of)
 
 
 def _mark(subject):
@@ -262,13 +280,19 @@ def _cut(entry, limit):
 def _prompt_line(entry, limit):
     channel = ""
     if entry.get("channel") == "question_answer":
-        channel = f" (answer to the agent's question {quote(entry.get('question', ''), 240)})"
+        asked = quote(entry.get("question", ""), 240, (entry, "question"))
+        channel = f" (answer to the agent's question {asked})"
     notes = f" [{', '.join(entry['notes'])}]" if entry.get("notes") else ""
     mark = f" {_mark(entry)}" if entry["level"] != "none" else ""
-    line = f"#{entry['seq']}{channel} {quote(entry['text'], limit)}{notes}{mark}"
+    line = f"#{entry['seq']}{channel} {quote(entry['text'], limit, (entry, 'text'))}{notes}{mark}"
     if _cut(entry, limit) and entry.get("noted"):  # the noted words may lie past the cut
-        line += " noted: " + "; ".join(quote(sentence, 240) for sentence in entry["noted"])
+        line += " noted: " + "; ".join(_noted(entry))
     return line
+
+
+def _noted(entry):
+    """An entry's noted excerpts, each quoted as the item of the list it is."""
+    return [quote(piece, 240, (entry, "noted", i)) for i, piece in enumerate(entry["noted"])]
 
 
 def _ioc_line(ioc):
@@ -358,6 +382,8 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
     characters: program text another session's call runs (history.packet(), MR236 P1).
     """
     session, entries = summary["session"], summary["entries"]
+    if TRACE.get() is not None:  # whose entries the quotes below are of
+        TRACE.get().entering(summary)
     coverage, counts = session["coverage"], session["marked"]
     head = f"SESSION SUMMARY {session['schema']} agent={_word(session['agent'])}"
     marks = ", ".join(f"{name} {counts[name]}" for name in ("high", "medium", "low"))
@@ -499,9 +525,9 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
         marked = entry["level"] != "none"
         line = f"#{entry['seq']} agent said"
         line += f" {_mark(entry)}" if marked else ""
-        line += f" {quote(entry['text'], MESSAGE_SHOWN)}"
+        line += f" {quote(entry['text'], MESSAGE_SHOWN, (entry, 'text'))}"
         if entry.get("noted"):  # where in a long message the wording that marked it sits
-            line += " noted: " + " | ".join(quote(piece, 240) for piece in entry["noted"])
+            line += " noted: " + " | ".join(_noted(entry))
         told = _account(entry, MESSAGE_SHOWN)
         short = told["shown"] < told["of"]
         if short:  # said as it is counted: the limit is not what the line shows
