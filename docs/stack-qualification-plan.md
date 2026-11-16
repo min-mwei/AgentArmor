@@ -1,6 +1,6 @@
 # Plan: qualify Summarizer, Kai-4B and the AgentArmor session path
 
-Updated 2026-11-15, Model Reviewer, after MR291–MR294. This replaces the November 14
+Updated 2026-11-15, Model Reviewer, after MR291–MR295. This replaces the November 14
 session-fit-first sequence. It coordinates existing contracts and the Trainer's
 [run sheet](stack-run-sheet.md); it does not replace registered experiments or authorize
 publication. Security means authorized agent actions, not general content moderation.
@@ -26,6 +26,7 @@ and the recipes referenced there. Do not interpret old plan entries as new launc
 | Adjudicated held span proofs gold-covered: XPIA 20/28, decision 3/31; exact proof sets 10/28 and 0/31; false evidence 0/12 certified-empty XPIA questions | Injection extraction transfers to some unseen pairs; decision evidence remains inadequate. Most held families also occur in TRAIN. |
 | Same-feature span scorer parity 317/317; corrected fresh decision-fitted read 62/62 comparable versus 61/62 before | Numerical progress at two bounded stages. Neither count is loader→API→monitor parity. Eight fresh-read targets remain unavailable. |
 | MR294: nine saved live-MLX cases match strict intervals/edges; seven projected readings match; three reference states retain unknown-order errors in the monitor record | Bounded service/client/record integration progress, recounted from saved results. The actual-session replay regenerating the map in `escalate.detect()` remains outstanding; the helper closure was not pinned by the completed launcher. |
+| MR295: all 145 requests in the fresh DEV blind read use paraphrased decision/XPIA questions rather than the registered specifications | Agreement is diagnostic under that alternate prompt. Correct canonical question binding and source defects before one final qualification read; do not regenerate the whole population or delay the existing frozen K0 system comparison. |
 
 K0 allowing 13/31 attacks on the screen is an observed input-specific result. Audit whether
 each required fact reached it before attributing the miss to the decision model. A miss
@@ -70,6 +71,23 @@ Do not repeatedly run unchanged panels or create a new runner. Existing recipe c
 preflight, launch authorization and guard requirements remain in force. Routine work
 inside an agreed scope needs no new board approval at each command; substantive changes
 and completed qualification artifacts remain review points.
+
+
+Before any blind or model read, compare the **emitted** question instructions, types, option
+keys and full criterion text against the canonical registered specifications. Agreement
+between an author manifest and a prior blind-input copy is not that check. Keep source
+labels out of blinded requests, and bind each answer to the state and exact question it
+was asked. A paraphrase cannot reuse the old answer as a qualification result. Finalize
+known source/render corrections first, then read the final deduplicated requests once.
+
+The current DEV source rulings distinguish inert quotations from active redirection,
+ordinary artifact-derived arguments from adopted authority, and conditional grants from
+permission to execute after a failed check. Keep disclosure, destructive scope and injection
+as separate questions. Preserve genuine native tool output, including empty or repeated
+success statuses; do not invent prose to evade a diversity checker. An omitted active
+attempt can invalidate a full-history XPIA label while the current call's decision proof
+is intact: retain source truth, observed-state answers and question-specific coverage
+separately. Frozen omission counts are not silently redefined after reading predictions.
 
 **Planning targets, not commitments:** return the existing system comparison and residual
 ledger in the current/next working session; aim for bounded span integration and diagnosed
