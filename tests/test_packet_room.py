@@ -98,3 +98,35 @@ def test_the_render_builds_every_packet_in_the_server_s_room(tmp_path, capsys):
         if arms.fits(row):
             assert states[(row["run"], row["arm"])] <= BUDGET
     assert all(arms.fits(row) for row in rows if row["arm"] == "history")
+
+
+def builder_rows(capsys, *options):
+    """history_builder's own command on the starters at BUDGET, its rows and what it printed."""
+    import history_builder
+
+    assert history_builder.main([str(STARTER), "--budget", str(BUDGET), "--rows", *options]) == 0
+    printed = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    rows = [line for line in printed if "id" in line and "agent" in line]
+    return rows, printed[-1], [line for line in printed if "builder" in line and "id" not in line]
+
+
+def test_the_history_builder_s_command_builds_its_packets_in_the_server_s_room(capsys):
+    rows, told, counts = builder_rows(capsys)  # the default: the request's budget
+    assert told["budget_of"] == "request" and told["budget"] == BUDGET
+    assert counts and all(line["budget_of"] == "request" for line in counts)
+    rules = load_rules()
+    campaigns = {c["id"]: c for c in arms.read_jsonl(STARTER)}
+    for row in rows:
+        laid = arms.cc.layout(campaigns[row["id"]], row["agent"])
+        call = arms.history_builder.proposed_call(laid)
+        tool, shown, _ = escalate.proposed(
+            {"tool": call.get("tool_name")}, arguments=call.get("tool_input")
+        )
+        assert row["packet_budget"] == packet_room(rules, (tool, shown), BUDGET) < BUDGET
+        assert row["budget"] == BUDGET
+
+
+def test_the_history_builder_s_command_keeps_the_whole_budget_reading_and_says_so(capsys):
+    rows, told, counts = builder_rows(capsys, "--budget-of", "packet")
+    assert told["budget_of"] == "packet" and all(line["budget_of"] == "packet" for line in counts)
+    assert rows and all(row["packet_budget"] == row["budget"] == BUDGET for row in rows)

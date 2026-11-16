@@ -139,12 +139,7 @@ def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None, ro
         for agent in agents:
             laid = cc.layout(campaign, agent)
             part = laid["deciding"]
-            proposed = next(
-                event
-                for event in part["laid"]["events"]
-                if event.get("hook_event_name") == "PreToolUse"
-                and event.get("tool_use_id") == part["laid"]["call"]
-            )
+            proposed = history_builder.proposed_call(laid)
             # What the packet may take: the request's budget less the rules and the call, by the
             # server's own rule, so that a packet called ready here is ready there.
             fit = budget
@@ -202,20 +197,9 @@ def fits(row):
     return row["packet_chars"] <= row.get("packet_budget", row["budget"])
 
 
-def monitor_room(budget):
-    """room(tool, arguments) for packets(): what a request of budget characters leaves for the
-    packet, by the monitor's rule (agentarmor_monitor.policy.packet_room) with its rules and the
-    call shown as a gate and panels show it (escalate.proposed, panels.request_of)."""
-    from agentarmor_monitor.escalate import proposed
-    from agentarmor_monitor.policy import load_rules, packet_room
-
-    rules = load_rules()
-
-    def room(tool, arguments):
-        shown_tool, shown, _ = proposed({"tool": tool}, arguments=arguments)
-        return packet_room(rules, (shown_tool, shown), budget)
-
-    return room
+# What a request of budget leaves for the packet, by the monitor's rule: one function, shared
+# with history_builder's own command.
+monitor_room = history_builder.monitor_room
 
 
 def roster_of(rows, packets_sha256=None, source_sha256=None):

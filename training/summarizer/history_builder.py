@@ -7,6 +7,13 @@ lines of every session. This is the third: today's packet with what summarizer.h
 selects from the other sessions, written in the section the contract gives it. It is run
 on the same campaigns, through the same four replays, and scored by the same scorer.
 
+--budget is the size of the request a packet is put in, as a server's --max-chars is. The packet
+is built in what the rules, the host facts and the proposed call leave of it, by the monitor's
+own rule (agentarmor_monitor.policy.packet_room, which the server's requests use), so a packet
+ready here is ready in the request a server would build. "--budget-of packet" gives the whole
+budget to the packet instead, as before; such a packet is no measure of what a server would send.
+What was used is printed with the counts (budget_of), and each row has its packet_budget.
+
 The builder is given only what a server would have: for each session its agent, id, working
 directory, namespace, a display alias and whether it had happened, and the id and hash of
 the call under decision. It never reads a campaign's facts, bridges, limits, story, route or
@@ -60,21 +67,56 @@ def build(laid, summaries, budget=3000):
     return history.packet(known(deciding), call, others, cc.HOME, budget, identity)
 
 
-def evaluate(campaigns, runtime, budget=3000, agents=cc.AGENTS, rules=9):
+def monitor_room(budget):
+    """room(tool, arguments): what a request of budget characters leaves for the packet, by the
+    monitor's rule (agentarmor_monitor.policy.packet_room) with its rules and the call shown as a
+    gate and panels show it (escalate.proposed, panels.request_of)."""
+    from agentarmor_monitor.escalate import proposed
+    from agentarmor_monitor.policy import load_rules, packet_room
+
+    rules = load_rules()
+
+    def room(tool, arguments):
+        shown_tool, shown, _ = proposed({"tool": tool}, arguments=arguments)
+        return packet_room(rules, (shown_tool, shown), budget)
+
+    return room
+
+
+def proposed_call(laid):
+    """The deciding session's PreToolUse event for the call under decision."""
+    part = laid["deciding"]
+    return next(
+        event
+        for event in part["laid"]["events"]
+        if event.get("hook_event_name") == "PreToolUse"
+        and event.get("tool_use_id") == part["laid"]["call"]
+    )
+
+
+def evaluate(campaigns, runtime, budget=3000, agents=cc.AGENTS, rules=9, room=None):
     """One row per campaign and agent: this builder, run without the answer key, scored with
-    it under one version of the contract, over all four replays."""
+    it under one version of the contract, over all four replays.
+
+    room, when given, is room(tool, arguments): what a request of budget leaves for the packet
+    (monitor_room()). Without it the packet has all of budget."""
     rows = []
     for campaign in campaigns:
         for agent in agents:
             laid = cc.layout(campaign, agent)
+            fit = budget
+            if room is not None:
+                call = proposed_call(laid)
+                fit = room(call.get("tool_name"), call.get("tool_input"))
             replays = [cc.replay(laid, runtime, **variant) for variant in cc.VARIANTS]
-            views = [build(blind(laid), summaries, budget) for summaries, _ in replays]
+            views = [build(blind(laid), summaries, fit) for summaries, _ in replays]
             scores = [
-                cc.score(laid, replay[0], view, budget, rules)
+                cc.score(laid, replay[0], view, fit, rules)
                 for replay, view in zip(replays, views, strict=True)
             ]
             row = {"id": campaign["id"], "family": campaign["family"], "agent": agent}
             row |= {"expect": campaign["expect"], "builder": "history"} | scores[0]
+            row |= {"budget": budget, "packet_budget": fit}
             row["first_replay_passes"] = scores[0]["passes"]
             row["passes"] = all(one["passes"] for one in scores)
             told = [cc.stable(cc._told(view)) for view in views]
@@ -90,7 +132,16 @@ def evaluate(campaigns, runtime, budget=3000, agents=cc.AGENTS, rules=9):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("campaigns", help="a JSON Lines file of campaigns")
-    parser.add_argument("--budget", type=int, default=3000)
+    parser.add_argument(
+        "--budget", type=int, default=3000, help="the request's size, as --max-chars"
+    )
+    parser.add_argument(
+        "--budget-of",
+        choices=("request", "packet"),
+        default="request",
+        help="request: the packet has what the rules and the call leave of the budget, as in a "
+        "server's request (the default); packet: the packet has all of it",
+    )
     parser.add_argument("--embedder", choices=("hash", "embeddinggemma"), default="hash")
     parser.add_argument("--rows", action="store_true", help="print a line for every run as well")
     parser.add_argument(
@@ -105,12 +156,16 @@ def main(argv=None):
     if bad:
         print(json.dumps({"problems": len(bad), "ids": bad[:10]}))
         return 1
-    rows = evaluate(campaigns, Runtime(create(args.embedder)), args.budget, rules=args.scorer)
+    room = monitor_room(args.budget) if args.budget_of == "request" else None
+    runtime = Runtime(create(args.embedder))
+    rows = evaluate(campaigns, runtime, args.budget, rules=args.scorer, room=room)
     for row in rows if args.rows else ():
         print(json.dumps(row))
+    sized = {"budget": args.budget, "budget_of": args.budget_of}
     for name, counts in cc.report(rows).items():
-        print(json.dumps({"builder": name, "budget": args.budget} | counts))
+        print(json.dumps({"builder": name} | sized | counts))
     told = {"campaigns": len(campaigns), "runs": len(rows), "scorer": cc.SCORERS[args.scorer]}
+    told |= sized
     print(json.dumps(told | {"code": cc.code_version()}))
     return 0
 
