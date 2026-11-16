@@ -183,13 +183,17 @@ def spans_record(told, mapped):
 
     A question answered with spans has each resolved through the state's own map: the
     interval, and what it is an interval of (session, event, field, trust and source
-    interval; a rule; a host fact; the call; this server's own words). No text is kept. An
-    interval is evidence only if every character of it has a known source from before the
-    call: one that touches unmapped session text, or an event after the call under decision
-    in its own session, or a state that has no map, makes the whole question an "error" with
+    interval; a string Summarizer derived from an event, as that; a rule; a host fact; the
+    call; this server's own words). No text is kept. An interval is evidence only if every
+    character of it has a known source from before the call (sourcemap.order): one that
+    touches unmapped session text, an event after the call under decision in its own
+    session, an event of another session that is later than the call's time or cannot be
+    placed against it, or a state that has no map, makes the whole question an "error" with
     its reason, and none of its spans is kept. An error is not an empty answer, and neither
     changes the decision.
     """
+    from summarizer import sourcemap
+
     out, found = {}, []
     for question, given in told.items():
         kept = {key: value for key, value in given.items() if key != "spans" and value is not None}
@@ -199,19 +203,17 @@ def spans_record(told, mapped):
             source, spans, why = found[0], [], None if found[0] else "no_source_map"
             for start, end in given["spans"] if source else ():
                 pieces = source.resolve(start, end)
+                placed = {sourcemap.order(piece, source) for piece in pieces}
                 if any(piece["kind"] == "unmapped" for piece in pieces):
                     why = "unmapped_source"
-                elif any(_later(piece, source.cutoff) for piece in pieces):
+                elif "after" in placed:
                     why = "evidence_after_the_call"
+                elif "unknown" in placed:
+                    why = why or "evidence_order_unknown"
                 spans.append({"at": [start, end], "sources": pieces})
             kept |= {"status": "error", "why": why} if why else {"spans": spans}
         out[question] = kept
     return out
-
-
-def _later(piece, cutoff):
-    mine = piece.get("session") == cutoff["session"] and isinstance(piece.get("seq"), int)
-    return mine and piece["seq"] > cutoff["seq"]
 
 
 def entries_shown(summary, emitted):

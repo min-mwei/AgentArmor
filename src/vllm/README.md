@@ -325,4 +325,8 @@ Evidence is computed from the same forward pass as the answer and never changes 
 answer whose evidence is an error is the answer it would have been. Token places come from
 the tokenizer's own offsets. The tokenizer composes characters (NFC) before it counts, so a
 state that is not already composed gets `error` for every question instead of shifted
-offsets; reserved token spellings are escaped one character for one and do not move anything.
+offsets: a state holding a letter followed by a combining mark that composes with it (for
+example `e` and U+0301) is such a state, and its answers are unaffected. A caller that wants
+evidence sends composed text. Reserved token spellings are escaped one character for one and
+do not move anything. Spans count code points; a client whose strings count UTF-16 units
+converts with `summarizer.sourcemap.utf16()`.

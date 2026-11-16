@@ -20,13 +20,25 @@ half-open intervals of Unicode code points. Source offsets count the field as th
 holds it, which is after redaction: an interval over a redaction marker is an interval of
 the marker, and what the marker replaced is not here to be reconstructed.
 
-What a map cannot say it says: "unmapped" is session text whose origin was not given (a
-quote made without one, or a literal that did not reproduce), and resolve() returns it as
-that. "synthesized" is the renderer's own writing: titles, counts, marks, quotation marks,
-the cut sign, and short plain words (a tool's name, a status) that the renderer prints
-without quotes. The two quotation marks around a mapped string carry role "quote" and the
-cut sign role "cut": they are the serializer's delimiters, and a field's value ends where
-its closing mark begins (boundaries()).
+Three kinds of session-derived text are told apart. "session" is a field of an event as the
+session gave it: a prompt's or a result's text, a call's words, a tool's or an agent's name,
+the working directory (a field of the session itself, with no event). "derived" is a string
+Summarizer made from the session and keeps in its summary: an indicator's basis (a refusal's
+reason among them), a note, an observable's value. A derived piece names the summary field it
+is (and so the event it is about, or for an observable the events that named it) and that
+event's trust; where in the event's own text its words came from is not recorded, so it has
+no interval there and none is guessed. "unmapped" is session text whose origin was not given
+(a quote made without one, or a literal that did not reproduce), and resolve() returns it as
+that. "synthesized" is the renderer's own writing: titles, counts, marks, statuses, quotation
+marks, the cut sign, and plain words too short to carry a stand-in. The two quotation marks
+around a mapped string carry role "quote" and the cut sign role "cut": they are the
+serializer's delimiters, and a field's value ends where its closing mark begins
+(boundaries()).
+
+Order in time is kept beside identity. A map's cutoff is the call under decision in its own
+session; "sessions" holds, for every other session shown, the time it was cut at (the call's
+time by the host's clock) and whether that cut could be told, and every piece of an event
+carries the event's own time.
 
 A map is provenance and nothing more. That an interval is the words of a tool result says
 who wrote the words (its trust is on every resolved piece), never that what they claim is
@@ -44,10 +56,10 @@ from .text import TRACE
 
 OPEN, PAD, CLOSE = "\ue000", "\ue001", "\ue002"  # a stand-in: OPEN, its number, PADs, CLOSE
 _FIRST, _BASE = 0xE100, 0x1000  # digits of the number: U+E100 to U+F0FF
-_PRIVATE = re.compile("[\ue000-\uf8ff]")
+_PRIVATE = re.compile("[\ue000-\ue002\ue100-\uf0ff]")  # the characters stand-ins are made of
 _STAND_IN = re.compile(f"{OPEN}([\ue100-\uf0ff]+){PAD}*{CLOSE}")
 _LITERAL = re.compile(r'"(?:[^"\\\n]|\\.)*"')
-SESSION, UNMAPPED, SYNTHESIZED = "session", "unmapped", "synthesized"
+SESSION, DERIVED, UNMAPPED, SYNTHESIZED = "session", "derived", "unmapped", "synthesized"
 SCHEMA = "agentarmor-source-map/v1"
 
 
@@ -56,25 +68,68 @@ class Trace:
 
     def __init__(self):
         self.quotes, self.broken, self.session, self.own = [], False, None, {}
+        self.about, self.iocs, self.cuts = None, {}, {}
 
     def entering(self, summary):
         """The summary whose entries the next quotes are of (text._lines)."""
-        self.session = summary["session"].get("session_id")
+        self.about = summary["session"]
+        self.session = self.about.get("session_id")
         self.own = {id(entry): entry for entry in summary["entries"]}
+        self.iocs = {id(ioc): (n, ioc) for n, ioc in enumerate(summary.get("iocs", ()))}
+        if isinstance(summary.get("as_of"), dict):  # another session, cut at the call's time
+            self.cuts[self.session] = {
+                k: summary["as_of"].get(k) for k in ("until", "unknown", "tied")
+            }
 
     def _origin(self, source, of):
-        """Where a quoted string came from, or None when what was said of it does not hold."""
+        """Where a quoted string came from, or None when what was said of it does not hold.
+
+        of is what text.quote() was told: (entry, field), (entry, field, index),
+        (entry, field, None, start) for a field from its character start on, and
+        (entry, field, index, None, key) for one key of an item of a list field; or
+        ("session", session, field) for a field of the session itself,
+        ("session", session, field, index, key) for one key of an item of a list it keeps,
+        and ("ioc", item) for an observable's value. Each is believed only if the object
+        is this summary's own and holds exactly the string that was quoted.
+        """
         if of is None or self.session is None:
             return None
-        entry, field, index, start = (*of, None, None)[:4]
+        if of[0] == "session":
+            held, name, seq = of[1].get(of[2]) if of[1] is self.about else None, of[2], None
+            if len(of) > 3:  # one key of an item of a list the session keeps
+                item = held[of[3]] if isinstance(held, list) and of[3] < len(held) else None
+                held = item.get(of[4]) if isinstance(item, dict) else None
+                name = f"{of[2]}[{of[3]}].{of[4]}"
+                seq = item.get("seq") if isinstance(item, dict) else None
+            if not isinstance(held, str) or held != source:
+                return None
+            origin = {"session": self.session, "seq": seq if type(seq) is int else None}
+            return origin | {"type": "session", "field": name, "trust": None, "start": 0}
+        if of[0] == "ioc":
+            number, held = self.iocs.get(id(of[1]), (None, None))
+            if held is not of[1] or held.get("value") != source:
+                return None
+            named = [[m.get("by"), m.get("seq")] for m in held.get("mentions", ())]
+            origin = {"session": self.session, "seq": None, "type": "observable"}
+            origin |= {"field": f"iocs[{number}].value", "trust": None, "named": named}
+            return origin | {"start": 0, "kind": DERIVED}
+        entry, field, index, start, key = (*of, None, None, None)[:5]
         held = entry.get(field) if self.own.get(id(entry)) is entry else None
+        name = field
         if index is not None:
             held = held[index] if isinstance(held, list) and index < len(held) else None
+            name = f"{field}[{index}]"
+        if key is not None:
+            held = held.get(key) if isinstance(held, dict) else None
+            name = f"{name}.{key}"
         if not isinstance(held, str) or held[start or 0 :] != source:
             return None
         origin = {"session": self.session, "seq": entry["seq"], "type": entry["type"]}
-        origin |= {"field": field if index is None else f"{field}[{index}]"}
-        origin |= {"trust": entry.get("trust"), "start": start or 0}
+        origin |= {"field": name, "trust": entry.get("trust"), "start": start or 0}
+        if entry.get("ts") is not None:
+            origin["ts"] = entry["ts"]
+        if field in ("indicators", "notes"):  # Summarizer's own words about the event
+            origin["kind"] = DERIVED
         ref = entry.get("ref")  # a piece of content: where in its event's field it sits
         if field == "text" and isinstance(ref, dict):
             origin["ref"] = {key: ref.get(key) for key in ("field", "start", "end")}
@@ -95,6 +150,15 @@ class Trace:
             return literal  # too short to carry a number: left as it is, unmapped
         self.quotes.append((literal, source, limit, self._origin(source, of)))
         return OPEN + tag + PAD * (len(literal) - len(tag) - 2) + CLOSE
+
+    def word(self, text, of):
+        """What text._word() returns while tracing, for a plain word it prints without
+        quotation marks: a stand-in when the word is long enough to carry one and is what
+        was said of it; the word itself (the renderer's own, to a map) otherwise."""
+        origin = self._origin(text, of)
+        if origin is None:
+            return text
+        return self.stand_in(text, text, None, of)
 
     def restore(self, traced):
         """(the text with its literals back, [(start, quote)]) or None for a broken trace."""
@@ -142,22 +206,28 @@ def spelled(source, limit):
 def _literal_segments(at, quote):
     """The segments of one placed literal, or one unmapped segment."""
     literal, source, limit, origin = quote
+    if limit is None:  # a plain word, printed as it is: the whole of its field, no marks
+        if origin is None or literal != source:
+            return []
+        about = {key: value for key, value in origin.items() if key != "start"}
+        about = {"kind": SESSION} | about | {"at": [at, at + len(literal)]}
+        return [about | {"source": [0, len(source)], "exact": True}]
     pieces = spelled(source, limit)
     whole = [{"at": [at, at + len(literal)], "kind": UNMAPPED}]
     if origin is None or '"' + "".join(text for text, _ in pieces) + '"' != literal:
         return whole
     base = origin["start"]
-    about = {key: value for key, value in origin.items() if key != "start"} | {"kind": SESSION}
+    about = {"kind": SESSION} | {key: value for key, value in origin.items() if key != "start"}
     out, cursor = [{"at": [at, at + 1], "kind": SYNTHESIZED, "role": "quote"}], at + 1
     for text, index in pieces:
         end = cursor + len(text)
         last = out[-1]
         if index is None:
             out.append({"at": [cursor, end], "kind": SYNTHESIZED, "role": "cut"})
-        elif last["kind"] == SESSION and last["source"][1] - 1 == base + index:
+        elif last["kind"] == about["kind"] and last["source"][1] - 1 == base + index:
             last["at"][1], last["exact"] = end, False  # more of the same source character
         elif (
-            last["kind"] == SESSION
+            last["kind"] == about["kind"]
             and last["exact"]
             and len(text) == 1
             and last["source"][1] == base + index
@@ -191,9 +261,9 @@ def of_rendering(text, placed):
 class SourceMap:
     """The map of one exact text. Made by map_of(); a new text is a new map."""
 
-    def __init__(self, text, segments, cutoff=None):
+    def __init__(self, text, segments, cutoff=None, sessions=None):
         self.sha256 = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-        self.chars, self.cutoff = len(text), cutoff
+        self.chars, self.cutoff, self.sessions = len(text), cutoff, dict(sessions or {})
         filled, cursor = [], 0
         for segment in sorted(segments, key=lambda item: item["at"][0]):
             start, end = segment["at"]
@@ -253,6 +323,7 @@ class SourceMap:
             "sha256": self.sha256,
             "chars": self.chars,
             "cutoff": self.cutoff,
+            "sessions": self.sessions,
             "segments": self.segments,
         }
 
@@ -263,6 +334,7 @@ class SourceMap:
             raise ValueError("not a source map")
         found = cls.__new__(cls)
         found.sha256, found.chars, found.cutoff = told["sha256"], told["chars"], told["cutoff"]
+        found.sessions = dict(told.get("sessions") or {})
         found.segments = told["segments"]
         found._starts = [item["at"][0] for item in found.segments]
         return found
@@ -349,4 +421,72 @@ def map_of(render, plain=None, cutoff=None, frame=None):
             segments.append(about | {"at": [cursor, cursor + len(text)], "kind": kind})
         cursor += len(text)
         whole.append(text)
-    return SourceMap("".join(whole), segments, cutoff)
+    return SourceMap("".join(whole), segments, cutoff, trace.cuts)
+
+
+def order(piece, source):
+    """Whether a resolved piece is known to be from before the call a map is of: "before",
+    "after", or "unknown". The renderer's own words, a rule, a host fact and the call are of
+    the request itself ("before"). An event of the call's own session is placed by its number
+    against the call's. An event of another session is placed by its own time against the
+    time that session was cut at, the call's by the host's clock; without both, or at that
+    very time, or when the call's time was not known, the order is not known. A piece with
+    no event of its own (the working directory, an observable's value) is placed by the
+    session it is of: the call's own, or another's cut."""
+    if piece.get("kind") not in (SESSION, DERIVED):
+        return "before"
+    cutoff, session = source.cutoff or {}, piece.get("session")
+    if session == cutoff.get("session"):
+        seq = piece.get("seq")
+        if not isinstance(seq, int):
+            return "before"  # of the session as the packet shows it, which ends at the call
+        return "after" if seq > cutoff["seq"] else "before"
+    cut = source.sessions.get(session)
+    until = cut.get("until") if isinstance(cut, dict) else None
+    if isinstance(until, bool) or not isinstance(until, (int, float)) or until <= 0:
+        return "unknown"
+    if "call_time" in (cut.get("unknown") or ()):  # the call's time was not known: nothing was cut
+        return "unknown"
+    if piece.get("seq") is None:
+        return "before"  # the cut session's own account, made of what came by then
+    ts = piece.get("ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)) or ts == until:
+        return "unknown"
+    return "after" if ts > until else "before"
+
+
+def utf16(text, spans):
+    """Code-point intervals of text as intervals of UTF-16 code units, for a client whose
+    strings count that way (JavaScript, Java, .NET). A character beyond the basic plane is
+    two units there and one here; nothing else differs. Raises ValueError for an interval
+    that is not one of this text."""
+    units, total = [0], 0
+    for char in text:
+        total += 2 if ord(char) > 0xFFFF else 1
+        units.append(total)
+    out = []
+    for span in spans:
+        start, end = span
+        if type(start) is not int or type(end) is not int or not 0 <= start <= end <= len(text):
+            raise ValueError("no such interval of this text")
+        out.append([units[start], units[end]])
+    return out
+
+
+def from_utf16(text, spans):
+    """The inverse of utf16(): intervals of UTF-16 code units as code-point intervals.
+    Raises ValueError for an end that is not in the text or falls between the two units of
+    one character: half a character is not a place."""
+    place, total = {0: 0}, 0
+    for index, char in enumerate(text, start=1):
+        total += 2 if ord(char) > 0xFFFF else 1
+        place[total] = index
+    out = []
+    for span in spans:
+        start, end = span
+        if type(start) is not int or type(end) is not int or start > end:
+            raise ValueError("no such interval of this text")
+        if start not in place or end not in place:
+            raise ValueError("an end outside the text or inside one character")
+        out.append([place[start], place[end]])
+    return out

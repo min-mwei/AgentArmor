@@ -9,7 +9,19 @@ from conftest import summarize
 from sessions import Script, attack, benign
 
 from summarizer.facts import visible
-from summarizer.sourcemap import SESSION, SYNTHESIZED, UNMAPPED, map_of, spelled, tracing
+from summarizer.sourcemap import (
+    DERIVED,
+    SESSION,
+    SYNTHESIZED,
+    UNMAPPED,
+    SourceMap,
+    from_utf16,
+    map_of,
+    order,
+    spelled,
+    tracing,
+    utf16,
+)
 from summarizer.text import digest, quote
 
 ODD = 'e\u0301 caf\u00e9 \U0001f600 "q" back\\slash\ttab\nline \u200bhidden <|fim_prefix|> end'
@@ -24,14 +36,26 @@ def mapped(summary, budget=6000, focus=None):
 
 def field_of(summary, piece):
     """The source field a resolved piece names, read from the summary."""
+    if piece["type"] == "session":
+        name, _, rest = piece["field"].partition("[")
+        if not rest:
+            return summary["session"][name]
+        index, _, key = rest.partition("]")
+        return summary["session"][name][int(index)][key[1:]]
+    if piece["type"] == "observable":
+        return summary["iocs"][int(piece["field"][5:].partition("]")[0])]["value"]
     entry = next(
         e
         for e in summary["entries"]
         if (e["seq"], e["type"]) == (piece["seq"], piece["type"])
         and (piece.get("ref") is None or e.get("ref") == piece["ref"])
     )
-    name, _, index = piece["field"].partition("[")
-    return entry[name][int(index[:-1])] if index else entry[name]
+    name, _, rest = piece["field"].partition("[")
+    if not rest:
+        return entry[name]
+    index, _, key = rest.partition("]")
+    held = entry[name][int(index)]
+    return held[key[1:]] if key else held
 
 
 def odd_session():
@@ -57,7 +81,7 @@ def test_every_character_is_in_exactly_one_segment_and_a_trace_changes_nothing(r
             assert segment["at"][0] == cursor and segment["at"][1] > cursor
             cursor = segment["at"][1]
         assert cursor == len(text)
-        assert {s["kind"] for s in found.segments} <= {SESSION, SYNTHESIZED, UNMAPPED}
+        assert {s["kind"] for s in found.segments} <= {SESSION, DERIVED, SYNTHESIZED}
 
 
 @pytest.mark.parametrize("events", [benign, attack, odd_session])
@@ -66,7 +90,7 @@ def test_a_session_segment_is_the_rendered_form_of_its_source_interval(runtime, 
     text, found = mapped(summary, 20000)
     seen = 0
     for segment in found.segments:
-        if segment["kind"] != SESSION:
+        if segment["kind"] not in (SESSION, DERIVED):
             continue
         seen += 1
         low, high = segment["source"]
@@ -76,7 +100,62 @@ def test_a_session_segment_is_the_rendered_form_of_its_source_interval(runtime, 
         # All of the interval, or, where a cut fell inside one spelled-out character, its start.
         assert shown == whole or (not segment["exact"] and whole.startswith(shown) and shown)
         assert segment["session"] == summary["session"]["session_id"]
+        if segment["field"] in ("tool", "actor", "agent"):  # a bare word: all of it, no marks
+            assert shown == source == field_of(summary, segment)
     assert seen
+
+
+def test_what_summarizer_derived_is_told_apart_from_what_the_session_said(runtime):
+    """An indicator's basis, a note and an observable's value are the summary's own fields:
+    mapped to those, with the event they are about and its trust, and with no interval in
+    the event's text. The working directory and a tool's name are the session's."""
+    summary = summarize(attack(), runtime)
+    focus = next(
+        e["call_id"] for e in summary["entries"] if e.get("indicators") and e.get("call_id")
+    )
+    text, found = mapped(summary, 20000, focus=focus)
+    kinds = {}
+    for segment in found.segments:
+        if segment["kind"] in (SESSION, DERIVED):
+            head = segment["field"].partition("[")[0]
+            kinds.setdefault((segment["kind"], segment["type"], head), []).append(segment)
+    assert (SESSION, "session", "cwd") in kinds and (SESSION, "action", "tool") in kinds
+    assert (DERIVED, "action", "indicators") in kinds and (DERIVED, "observable", "iocs") in kinds
+    for (kind, _, head), segments in kinds.items():
+        assert (kind == DERIVED) == (head in ("indicators", "notes", "iocs"))
+        for segment in segments:
+            assert "ref" not in segment or kind == SESSION
+    (value,) = [s for s in kinds[(DERIVED, "observable", "iocs")] if s["source"][0] == 0][:1]
+    assert value["seq"] is None and value["named"] and all(len(m) == 2 for m in value["named"])
+    session = summary["session"]["session_id"]
+    assert found.locate(session, None, "cwd", 0, 1)  # found as a session field, by identity
+    assert not found.locate(session, None, value["field"], 0, 1)  # not a session field
+    assert found.locate(session, None, value["field"], 0, 1, kind=DERIVED)
+    assert UNMAPPED not in {s["kind"] for s in found.segments}
+
+
+def test_order_is_by_event_number_in_the_calls_session_and_by_time_in_another():
+    cut = {"until": 100.0, "unknown": ["unlisted_sightings"], "tied": False}
+    found = SourceMap("x" * 10, [], cutoff={"session": "now", "seq": 7}, sessions={"then": cut})
+
+    def piece(**about):
+        return {"kind": SESSION, "session": "then", "seq": 3, "ts": 50.0} | about
+
+    assert order({"kind": SYNTHESIZED}, found) == order({"kind": "policy"}, found) == "before"
+    assert order(piece(session="now", seq=7), found) == "before"
+    assert order(piece(session="now", seq=8), found) == "after"
+    assert order(piece(session="now", seq=None), found) == "before"
+    assert order(piece(), found) == order(piece(kind=DERIVED), found) == "before"
+    assert order(piece(ts=100.5), found) == "after"
+    assert order(piece(ts=100.0), found) == "unknown"  # at the very time of the call
+    assert order(piece(ts=None), found) == order(piece(ts=True), found) == "unknown"
+    assert order(piece(seq=None, ts=None), found) == "before"  # the cut session's own account
+    assert order(piece(session="elsewhere"), found) == "unknown"  # a session with no cut
+    for unknown in ({"until": 0}, {"until": None}, {"until": 100.0, "unknown": ["call_time"]}):
+        found.sessions["then"] = unknown
+        assert order(piece(), found) == "unknown"
+    again = SourceMap.read(found.told())
+    assert again.sessions == found.sessions and order(piece(), again) == "unknown"
 
 
 def test_marks_titles_the_cut_sign_and_quotation_marks_are_no_source(runtime):
@@ -186,6 +265,20 @@ def test_session_text_that_holds_the_stand_in_characters_has_no_map(runtime):
     assert map_of(lambda: digest(summary, 3000)["text"]) is None
 
 
+def test_other_private_use_characters_do_not_cost_a_session_its_map(runtime):
+    """Only the characters stand-ins are made of are in the way; a font's or a vendor's own
+    private characters beside them are ordinary session text."""
+    script = Script("claude_code", "pua-2").start()
+    script.prompt("Keep the logo \uf8ff and the glyph \uf100 in the header.")
+    summary = summarize(script.events, runtime)
+    text, found = mapped(summary, 3000)
+    at = text.index("\uf8ff")
+    (piece,) = found.resolve(at, at + 1)
+    assert piece["kind"] == SESSION and piece["trust"] == "user"
+    low, high = piece["source"]
+    assert field_of(summary, piece)[low:high] == "\uf8ff"
+
+
 def test_a_rendering_that_differs_under_trace_has_no_map():
     calls = []
 
@@ -271,3 +364,22 @@ def test_a_map_told_and_read_back_answers_alike(runtime):
     assert again.resolve(40, 400) == found.resolve(40, 400) and again.sha256 == found.sha256
     with pytest.raises(ValueError):
         SourceMap.read({"schema": "something-else"})
+
+
+def test_intervals_convert_to_utf16_units_and_back_and_half_a_character_is_no_place():
+    text = "a\U0001f600b e\u0301 \U0001f468\u200d\U0001f469 z"  # an emoji, a combining mark, a joined pair
+    assert len(text) == 12 and len(text.encode("utf-16-le")) // 2 == 15
+    spans = [[0, 1], [1, 2], [2, 3], [4, 6], [7, 10], [11, 12], [0, 12], [5, 5]]
+    units = utf16(text, spans)
+    assert units == [[0, 1], [1, 3], [3, 4], [5, 7], [8, 13], [14, 15], [0, 15], [6, 6]]
+    encoded = text.encode("utf-16-le")
+    for (start, end), (low, high) in zip(spans, units, strict=True):
+        assert encoded[2 * low : 2 * high].decode("utf-16-le") == text[start:end]
+    assert from_utf16(text, units) == spans
+    for bad in ([[2, 3]], [[0, 16]], [[9, 13]], [[-1, 1]], [[3, 1]], [[0.0, 1]]):
+        with pytest.raises(ValueError):
+            from_utf16(text, bad)
+    for bad in ([[0, 13]], [[3, 1]], [[-1, 2]], [["0", 1]]):
+        with pytest.raises(ValueError):
+            utf16(text, bad)
+    assert utf16("", []) == [] and utf16("plain", [[1, 4]]) == [[1, 4]]

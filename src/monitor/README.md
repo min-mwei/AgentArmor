@@ -672,8 +672,8 @@ reached does not replace it.
 
 ## Evidence spans
 
-No trained evidence head exists. This is the path a head's spans take, tested with a stand-in:
-unqualified, and it changes no verdict.
+No trained evidence head exists. This is the path a head's spans take, tested with stand-ins
+and random tensors: unqualified, and it changes no verdict.
 
 A span is an interval of the exact state sent to Kai. The client keeps one only if the reply
 names that state (SHA-256 and length) and the head that marked it, and the interval is a pair
@@ -690,24 +690,37 @@ that was sent or there is no map. Each resolved piece is one of:
 
 | `kind` | What it is | What is recorded |
 |---|---|---|
-| `session` | Characters of one field of one event | `session`, `seq`, `type`, `field`, `trust`, `source` (the interval in the field's own text, after redaction), and `ref` for a piece of a tool result |
+| `session` | Characters of one field of one event as the session gave it (a prompt, a result, a call's words, a tool's or an agent's name), or of a field of the session itself (`type: session`: the working directory, an entry of its source or context list; `seq` is then that entry's event or null) | `session`, `seq`, `type`, `field`, `trust`, `ts`, `source` (the interval in the field's own text, after redaction), and `ref` for a piece of a tool result |
+| `derived` | A string Summarizer made from the session and keeps in its summary: an indicator's basis (a refusal's reason among them), a note, an observable's value | The summary field it is (`field`, for example `indicators[0].basis`, `notes[1]`, `iocs[2].value`), the event it is about and that event's `trust`, or for an observable `named` (who named it, in which events), and `source` within that summary field. Where in the event's own text its words came from is not recorded and is not guessed |
 | `policy` | A rule or the interpretation | `rule` |
 | `host_fact` | What this server worked out for the call | |
 | `call` | The proposed call | `field` (`tool` or `arguments`) and, for arguments, `source` |
-| `synthesized` | Headings, counts, marks, quotation marks (`role: quote`), the cut sign (`role: cut`), and short plain words printed without quotes | |
+| `synthesized` | Headings, counts, marks, statuses, quotation marks (`role: quote`), the cut sign (`role: cut`), and plain words of fewer than three characters | |
 | `unmapped` | Session text whose origin the renderer was not told | makes the question an `error` (`unmapped_source`) |
 
-A span that reaches an event after the call under decision in its own session is an `error`
-(`evidence_after_the_call`), and so is any span when the state has no map (`no_source_map`).
+A span must be known to come from before the call. In the call's own session that is the
+event's number against the call's. In another session it is the event's own time against the
+time that session was cut at, which is the call's time by the host's clock; the map keeps
+that cut for every session it shows. A span that reaches a later event is an `error`
+(`evidence_after_the_call`); one whose event has no time, is at the very time of the call,
+or is of a session whose cut is not known is an `error` (`evidence_order_unknown`); and so
+is any span when the state has no map (`no_source_map`).
+
 The map holds offsets and identities and no text, stays on this machine and is never sent to
 a model. It is provenance only: that an interval is the words of a tool result says who wrote
-them and with what trust, never that what they claim is true, authorized or happened.
+them and with what trust, never that what they claim is true, authorized or happened. A
+`derived` piece is Summarizer's own account of an event: it is not the event's words.
 
-Not mapped today: strings the earlier-sessions section writes itself (for example the path in
-an `object` line), observables, indicator bases, notes and the working directory. They are
-`unmapped`, never guessed. Source intervals count the summary's entry text; only a piece of a
-tool result also says where in its event's field it sits (`ref`). Whether an earlier
-session's event came before the call is the lookup's own account and is not checked again.
+Offsets are Unicode code points. `summarizer.sourcemap.utf16()` and `from_utf16()` convert
+intervals of a state to and from UTF-16 code units for clients that count that way; an end
+between the two units of one character is refused.
+
+Not mapped today: strings the earlier-sessions section writes itself (the words it quotes on
+an `object` line, for example a path a call returned). They are `unmapped`, never guessed. A
+session whose text holds the private-use characters stand-ins are made of (U+E000 to U+E002,
+U+E100 to U+F0FF) has no map; other private-use characters are ordinary text. Source
+intervals count the summary's entry text; only a piece of a tool result also says where in
+its event's field it sits (`ref`).
 
 ## Limits
 

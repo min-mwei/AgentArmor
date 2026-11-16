@@ -358,3 +358,47 @@ def test_a_state_whose_token_places_cannot_be_trusted_gets_an_error_not_a_guess(
     plain = service(K0).evaluate(ask | {"state": "cafe\u0301 and more"})
     assert "evidence" not in plain and "evidence" not in plain["answers"]["q"]
     assert plain["evidence_available"] is False
+
+
+def test_evidence_of_an_earlier_session_is_placed_by_its_own_time_against_the_calls(
+    spool, served, monkeypatch
+):
+    """A piece of another session is evidence only if its event is known to have come before
+    the call: by the event's own time against the time that session was cut at."""
+    identity, maps = two_sessions(), {}
+    judged(identity, served(default=[], session=[]).routed(), monkeypatch, maps)
+    (found,) = [m for m in maps.values() if m is not None]
+    earlier = next(s for s in found.segments if s["kind"] == "session" and s["session"] != "s-late")
+    cut = found.sessions[earlier["session"]]  # the cut the lookup made, kept with the map
+    assert earlier["ts"] < cut["until"] and "call_time" not in cut["unknown"]
+
+    def told():
+        spans = {DECISION: {"status": "spans", "spans": [earlier["at"]]}}
+        return escalate.spans_record(spans, lambda: found)[DECISION]
+
+    assert told()["spans"][0]["sources"][0]["seq"] == earlier["seq"]
+    found.sessions[earlier["session"]] = cut | {"until": earlier["ts"] - 1}
+    assert told() == {"status": "error", "why": "evidence_after_the_call"}
+    found.sessions[earlier["session"]] = cut | {"until": earlier["ts"]}  # at the very time
+    assert told() == {"status": "error", "why": "evidence_order_unknown"}
+    found.sessions[earlier["session"]] = cut | {"unknown": ["call_time"]}
+    assert told() == {"status": "error", "why": "evidence_order_unknown"}
+    del found.sessions[earlier["session"]]  # a session shown without its cut
+    assert told() == {"status": "error", "why": "evidence_order_unknown"}
+
+
+def test_what_summarizer_derived_is_kept_as_that_and_is_no_error():
+    """A span over a string Summarizer made (an indicator's basis, a note, an observable) is
+    resolved to the summary field it is and the event it is about: provenance of a derived
+    string, not the session's own words, and not unknown."""
+    from summarizer.sourcemap import SourceMap
+
+    about = {"session": "s-late", "seq": 4, "type": "action", "field": "indicators[0].basis"}
+    segment = about | {"kind": "derived", "trust": "agent", "at": [2, 8], "source": [0, 6]}
+    found = SourceMap("x" * 10, [segment | {"exact": True}], cutoff={"session": "s-late", "seq": 5})
+    told = escalate.spans_record({XPIA: {"status": "spans", "spans": [[3, 6]]}}, lambda: found)
+    (piece,) = told[XPIA]["spans"][0]["sources"]
+    assert (piece["kind"], piece["field"], piece["source"]) == ("derived", about["field"], [1, 4])
+    found.cutoff = {"session": "s-late", "seq": 3}  # derived from an event after the call
+    told = escalate.spans_record({XPIA: {"status": "spans", "spans": [[3, 6]]}}, lambda: found)
+    assert told[XPIA] == {"status": "error", "why": "evidence_after_the_call"}

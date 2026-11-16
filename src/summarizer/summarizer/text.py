@@ -57,9 +57,14 @@ def quote(text, limit, of=None):
     return literal if trace is None else trace.stand_in(literal, source, limit, of)
 
 
-def _word(text):
+def _word(text, of=None):
+    """A short session word as it is printed: bare when it is plain, quoted otherwise. of is
+    its origin, as for quote()."""
     text = str(text)
-    return text if _PLAIN.fullmatch(text) else quote(text, 80)
+    if not _PLAIN.fullmatch(text):
+        return quote(text, 80, of)
+    trace = TRACE.get()
+    return text if trace is None or of is None else trace.word(text, of)
 
 
 def _steps(items):
@@ -95,8 +100,10 @@ def _status(entry):
         return "proposed, outcome unknown"
     reason = ""
     if done[-1]["state"] == "denied":  # why it was refused, in the refuser's words
-        said = [i["basis"] for i in entry.get("indicators", ()) if i["label"] == "denied"]
-        reason = f" {quote(said[0], 120)}" if said else ""
+        said = [n for n, i in enumerate(entry.get("indicators", ())) if i["label"] == "denied"]
+        if said:
+            of = (entry, "indicators", said[0], None, "basis")
+            reason = f" {quote(entry['indicators'][said[0]]['basis'], 120, of)}"
     # A call first seen at this outcome: when it was proposed is not known.
     unseen = " (proposal not observed)" if entry.get("proposal_observed") is False else ""
     return f"{done[-1]['state']} #{done[-1]['seq']}{reason}{unseen}"
@@ -106,11 +113,12 @@ def _what(entry, limit=200):
     """What an entry is, and its session text quoted."""
     if entry["type"] == "action":
         text = call_words(entry["tool"], entry["text"])
-        actor = f" by {_word(entry['actor'])}" if entry.get("actor") else ""
+        actor = f" by {_word(entry['actor'], (entry, 'actor'))}" if entry.get("actor") else ""
         # The call's words are the end of the entry's text (events.call_words takes the
         # tool's name off its start): a map counts their characters from where they begin.
         of = (entry, "text", None, len(entry["text"]) - len(text))
-        return f"action {_word(entry['tool'])} {_status(entry)}{actor}", quote(text, limit, of)
+        tool = _word(entry["tool"], (entry, "tool"))
+        return f"action {tool} {_status(entry)}{actor}", quote(text, limit, of)
     if entry["type"] == "content":
         head = f"content {entry['source']} {quote(entry['origin'], 80, (entry, 'origin'))}"
         # The label stays against the text, after any marks, so the two are read together.
@@ -303,7 +311,8 @@ def _ioc_line(ioc):
         used.setdefault(key, []).append(f"#{use['seq']}" + ("" if done else f" {use['status']}"))
     uses = "".join(f"; {role} {', '.join(seqs)}" for role, seqs in used.items())
     named = ", ".join(f"{mention['by']} #{mention['seq']}" for mention in ioc.get("mentions", ()))
-    return f"{ioc['kind']} {quote(ioc['value'], 120)} {_mark(ioc)} named by {named}{uses}"
+    value = quote(ioc["value"], 120, ("ioc", ioc))
+    return f"{ioc['kind']} {value} {_mark(ioc)} named by {named}{uses}"
 
 
 def _focus_lines(entry, limit):
@@ -318,14 +327,15 @@ def _focus_lines(entry, limit):
         )
     if entry["indicators"]:
         parts = [
-            f"{item['label']} {item['confidence']:.2f} ({quote(item['basis'], 120)})"
-            for item in entry["indicators"]
+            f"{item['label']} {item['confidence']:.2f} "
+            f"({quote(item['basis'], 120, (entry, 'indicators', n, None, 'basis'))})"
+            for n, item in enumerate(entry["indicators"])
         ]
         lines.append(f"indicators, {entry['level']} {entry['confidence']:.2f}: " + "; ".join(parts))
     else:
         lines.append("indicators: none")
-    for note in entry.get("notes", ()):
-        lines.append(f"note: {quote(note, 160)}")
+    for n, note in enumerate(entry.get("notes", ())):
+        lines.append(f"note: {quote(note, 160, (entry, 'notes', n))}")
     links = []
     if entry.get("request", {}).get("sim", 0) > 0:
         links.append(f"user request #{entry['request']['seq']} ({entry['request']['sim']:.2f})")
@@ -385,9 +395,12 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
     if TRACE.get() is not None:  # whose entries the quotes below are of
         TRACE.get().entering(summary)
     coverage, counts = session["coverage"], session["marked"]
-    head = f"SESSION SUMMARY {session['schema']} agent={_word(session['agent'])}"
+    agent = _word(session["agent"], ("session", session, "agent"))
+    cwd = quote(session.get("cwd") or "", 120, ("session", session, "cwd"))
+    head = f"SESSION SUMMARY {session['schema']} agent={agent}"
     marks = ", ".join(f"{name} {counts[name]}" for name in ("high", "medium", "low"))
-    mode = _word(session.get("permission_mode") or "unknown")
+    mode = session.get("permission_mode") or "unknown"
+    mode = _word(mode, ("session", session, "permission_mode"))
     scanned = "every captured event was scanned"
     if coverage["gaps"]:
         scanned = "partial: " + "; ".join(coverage["gaps"])
@@ -398,18 +411,21 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
         ((0,), False, 0, f"coverage: {scanned}"[:400]),
         ((2, 3), False, 0, "never delivered by this agent's hooks: "
                            + "; ".join(coverage["not_captured"])),
-        ((2, 1), False, 0, f"cwd={quote(session.get('cwd') or '', 120)} mode={mode}"),
+        ((2, 1), False, 0, f"cwd={cwd} mode={mode}"),
         ((2, 0), False, 0, _flow_line(session["flow"])),
     ]  # fmt: skip
     sources = [
-        f"{item['source']} {quote(item['origin'], 60)} #{item['seq']}"
-        for item in session["sources"]
+        f"{item['source']} "
+        f"{quote(item['origin'], 60, ('session', session, 'sources', n, 'origin'))} #{item['seq']}"
+        for n, item in enumerate(session["sources"])
     ]
     if sources:
         lines.append(((5, 1), False, 0, _listing("lower-trust sources", sources)))
     context = [
-        f"{item['kind']} {quote(item.get('detail', ''), 60)} #{item['seq']}"
-        for item in session["context"]
+        f"{item['kind']} "
+        f"{quote(item.get('detail', ''), 60, ('session', session, 'context', n, 'detail'))} "
+        f"#{item['seq']}"
+        for n, item in enumerate(session["context"])
     ]
     if context:
         lines.append(((4, 2), False, 0, _listing("context", context)))
