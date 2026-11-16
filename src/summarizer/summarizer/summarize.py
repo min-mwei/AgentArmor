@@ -72,7 +72,7 @@ from .labels import (
 )
 from .probes import calibrated, fitted_for, probability, uncalibrated
 from .probes import load as load_probes
-from .text import MESSAGE_SHOWN, render
+from .text import MESSAGE_SHOWN, PLACES, render
 
 MIN_RANKED_CHARS = 32  # shorter fragments say too little to be ranked or tagged by resemblance
 MIN_LINKED_CHARS = 16  # and a few characters resemble anything: no action is linked to them
@@ -124,6 +124,11 @@ class Config:
     # the call's clipped words), the newest this many, so that a lookup can account for every
     # recorded call it did not keep (MR198-1); how many more there are is said.
     max_dropped_calls: int = 1024
+
+
+def _places(unit):
+    """The places a call names, as "kind:value" (text.PLACES): what it sends to or reaches."""
+    return {f"{kind}:{value}" for kind, value in unit.iocs if kind in PLACES}
 
 
 def effects_record(unit):
@@ -1328,10 +1333,14 @@ class Session:
         # though nothing marks it and no request set a condition in so many words. The paths
         # are the ones recorded from each call's whole words; the newest such calls are kept.
         named = {path for action in actions[-8:] for path in units[action].named}
+        # And what an earlier call returned that named a place one of them reaches (an address, a
+        # host, a URL): a check of the recipients a send is about to use is that send's story too.
+        reached = {ioc for action in actions[-8:] for ioc in _places(units[action])}
         related = [
             action
             for action in actions[:-8]
-            if named and any(named & set(paths) for paths in units[action].effects.values())
+            if (named and any(named & set(paths) for paths in units[action].effects.values()))
+            or (reached and reached & _places(units[action]))
         ]
         related = related[-config.max_related :] if config.max_related else []
         for action in set(actions[-8:]) | (kept & set(actions)) | set(since) | set(related):
@@ -1423,6 +1432,7 @@ class Session:
             | {"call_id": units[i].call_id, "result": result_seq(units[i])}
             | {"lifecycle": [{"state": s, "seq": q, "ts": t} for s, q, t in units[i].lifecycle]}
             | effects_record(units[i])
+            | ({"places": sorted(_places(units[i]))[:ENTRY_IOCS]} if _places(units[i]) else {})
             for i in actions
             if i not in shown
         ]

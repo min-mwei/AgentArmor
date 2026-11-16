@@ -32,7 +32,10 @@ _PATCH_FRAME = ("*** Begin Patch", "*** End Patch", "*** End of File")  # header
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 SCALARS, KEYS = "{values}", "{keys}"  # stand-ins for a key: scalar members, member names
 _MCP_WRITE = re.compile(
-    r"create|update|send|post|write|comment|push|upload|publish|delete|edit|add|reply|merge|share",
+    r"create|update|send|post|write|comment|push|upload|publish|delete|edit|add|reply|merge|share"
+    # Data moved or put somewhere else: a copy, a transfer, an export or import, a sync, a
+    # restore or replication into another place, a migration, a move, an insert.
+    r"|copy|transfer|export|import|sync|restore|replicat|migrat|move|insert",
     re.I,
 )
 # Result fields of the agents' own tools that hold an identifier, never prose. A value under one
@@ -264,9 +267,16 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
         target, body, prose = "", _json(args), True
         if tool.startswith("mcp__"):
             target = "/".join(tool.split("__")[1:3])
-            flags["mcp"] = target
-            if _MCP_WRITE.search(tool.split("__")[-1]):
-                flags["mcp_write"] = target  # by its name, the tool changes or sends something
+        # A tool that is none of the agent's own is someone else's, whatever its name looks like:
+        # an MCP server's ("mcp__cloud__copy"), or one a client names otherwise ("cloud.copy").
+        # What it does is not read here, so it is marked as an outside tool, weakly, and as one
+        # that changes or moves something when its own name says so (the server's name is not
+        # read). Before, only an "mcp__" name was marked, and a call such as "tablesvc.copy_table"
+        # carried no indicator at all and was never put to a decision.
+        if tool and tool not in BUILTIN:
+            flags["mcp"] = target or clip(tool, TARGET_CHARS)
+            if _MCP_WRITE.search(re.split(r"__|[./]", tool)[-1]):
+                flags["mcp_write"] = flags["mcp"]  # by its name, it changes or sends something
         text = f"{tool} {body}"
         call_hosts |= hosts(body)
     # Whatever else the agent wrote in the call (a command's description, the text an edit

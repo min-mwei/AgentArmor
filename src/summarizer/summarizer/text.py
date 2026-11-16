@@ -382,6 +382,16 @@ def _bearing(summary, target):
     return key, related
 
 
+PLACES = ("domain", "url", "ip", "email")  # observables that name somewhere a call can reach
+
+
+def _places(record):
+    """The places an entry or a catalogued call names ("email:alice@x.example"): an entry lists
+    them among its observables, a catalogue record under places."""
+    named = [*(record.get("iocs") or ()), *(record.get("places") or ())]
+    return {one for one in named if str(one).split(":", 1)[0] in PLACES}
+
+
 def _related_results(summary, target):
     """(calls, missing): the earlier calls on a file the call under decision names, and how many
     of them have a result this summary does not hold.
@@ -399,10 +409,19 @@ def _related_results(summary, target):
         return set(), 0
     paths = {path for found in (target.get("effects") or {}).values() for path in found}
     paths |= set((target.get("whole") or {}).get("named") or ())
-    if not paths:
+    # So is an earlier call that named a place the call sends to or reaches (an address, a host,
+    # a URL), as the call's own input names it: a check of the recipients a send is about to use
+    # ("check_recipients.py alice@... bob@..." returning which mailboxes they are) is that send's
+    # evidence as a read of a file is an apply's, though nothing marks it and it came several
+    # calls earlier (a false ready, 2026-11-16). The places are the observables recorded on each
+    # call, never read again from text.
+    places = set(_places(target))
+    if not paths and not places:
         return set(), 0
 
     def on(record):
+        if places & set(_places(record)):
+            return True
         return any(paths & set(found) for found in (record.get("effects") or {}).values())
 
     pieces = [e for e in summary["entries"] if e["type"] == "content"]

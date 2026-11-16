@@ -21,6 +21,7 @@ from sessions import (
 )
 from standins import word_embedder
 
+from summarizer import text as text_module
 from summarizer.embedder import HashEmbedder, control_pattern, controls_of, inert
 from summarizer.events import agent_home, call_words, describe_call, field_text
 from summarizer.hook import build_record, call_sha256
@@ -2420,6 +2421,106 @@ def test_a_result_the_summary_did_not_keep_of_the_file_a_call_names_is_counted(r
     assert shown["related_results_missing"] == 40 - seen
     assert shown["key_dropped"] >= shown["related_results_missing"] > 0
     assert f"results of {40 - seen} earlier calls on what this call names" in shown["text"]
+
+
+DEV_CWD = "/home/dev/proj"
+RECIPIENTS = ["alice@finance.example", "bob@ops.example"]
+MAILBOXES = "mailboxes=[mb-201,mb-305]"
+
+
+def recipients_checked(tool, noise, agent="claude_code"):
+    """A session that checks which mailboxes two addresses are, does other work, then sends to
+    those addresses. Nothing marks the check and no request sets a condition: the check names
+    the send's recipients, and its result (which mailboxes they are) is what a decision about
+    the send rests on. Returns (summary input events, call id, identity)."""
+    script = Script(agent=agent, cwd=DEV_CWD).start()
+    script.prompt("Send the weekly report to the finance list once it is reviewed.")
+    # The address book names the addresses first, so the check's result is not their first
+    # mention below the user and is not key evidence on that account.
+    book = "\n".join(
+        f"address={a} mailbox=mb-{n}" for n, a in zip((201, 305), RECIPIENTS, strict=True)
+    )
+    script.tool("Bash", {"command": f"cat {DEV_CWD}/mail/directory.txt"}, book)
+    script.tool(
+        "Bash",
+        {"command": "python tools/check_recipients.py " + " ".join(RECIPIENTS)},
+        f"count: 2\nrecipients=[{','.join(RECIPIENTS)}]\n{MAILBOXES}",
+    )
+    # The draft the send is made from: what the call most resembles, so the check's result is
+    # not key evidence on that account either.
+    draft = f"to: {' '.join(RECIPIENTS)}\nsubject: Weekly report\nbody_file: out/report.md"
+    script.tool("Bash", {"command": f"cat {DEV_CWD}/out/draft.txt"}, draft)
+    for index in range(noise):
+        script.tool("Bash", {"command": f"python tools/lint_{index}.py"}, f"lint {index} fine")
+    if tool == "Bash":
+        final = {"command": f"sendmail {' '.join(RECIPIENTS)} < {DEV_CWD}/out/report.md"}
+    else:
+        final = {"to": RECIPIENTS, "subject": "Weekly report", "body_file": "out/report.md"}
+    script.tool(tool, final)
+    return script.events, f"call-{script.calls}", call_sha256(tool, final)
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("tool", ["Bash", "mcp__mail__send", "mail.send"])
+@pytest.mark.parametrize("noise", [6, 14])
+def test_an_earlier_call_on_the_addresses_a_call_sends_to_is_shown_or_missed(
+    runtime, agent, tool, noise
+):
+    # A false ready (2026-11-16): a recipients check several calls before a send was dropped from
+    # the packet for room as an ordinary line, or not kept by the summary at all, and the packet
+    # said it was complete. Its result is now key evidence, as an earlier read of a file is for a
+    # call on that file: shown, or counted as missing or cut, and never a clean account without it.
+    events, call, identity = recipients_checked(tool, noise, agent)
+    summary = summarize(events, runtime, agent)
+    roomy = digest(summary, 11000, focus=call, call_sha256=identity)
+    assert MAILBOXES in roomy["text"], roomy["text"]
+    line = next(x for x in roomy["text"].split("\n") if MAILBOXES in x)
+    assert "check_recipients.py" in line  # whose result it is
+    assert roomy["key_dropped"] == 0 and roomy["related_results_missing"] == 0
+    for budget in range(700, 3200, 100):
+        tight = digest(summary, budget, focus=call, call_sha256=identity)
+        assert MAILBOXES in tight["text"] or tight["key_dropped"] > 0, budget
+
+
+def test_a_call_sending_to_other_addresses_does_not_take_the_check_as_its_own(runtime):
+    events, call, _ = recipients_checked("mcp__mail__send", 14)
+    for event in events[-1:]:
+        event["tool_input"] = {"to": ["carol@elsewhere.example"], "subject": "Weekly report"}
+    summary = summarize(events, runtime)
+    (target,) = [
+        e for e in summary["entries"] if e.get("call_id") == call and e["type"] == "action"
+    ]
+    assert text_module._related_results(summary, target) == (set(), 0)
+    assert digest(summary, 11000, focus=call)["related_results_missing"] == 0
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_a_tool_of_no_agent_s_own_is_marked_whatever_its_name_looks_like(runtime, agent):
+    # A copy of a table into another account through a tool named "tablesvc.copy_table" carried no
+    # indicator at all (level none, so never put to a decision): only a tool named "mcp__…" was
+    # marked as someone else's, and "copy" was no word for changing or moving something.
+    copy = {"account": "acct-7", "database": "reporting", "table": "orders", "mode": "new"}
+    for tool in ("tablesvc.copy_table", "mcp__tablesvc__copy_table", "tablesvc/copy_table"):
+        described = describe_call(tool, copy, DEV_CWD, "/home/dev")
+        assert {"mcp", "mcp_write"} <= described["flags"].keys(), tool
+    looked = describe_call("hosts.describe", {"hostname": "db.example"}, DEV_CWD, "/home/dev")
+    assert "mcp" in looked["flags"] and "mcp_write" not in looked["flags"]
+    # The server's name is not read for what the tool does, and the agents' own tools are theirs.
+    named = describe_call("mcp__copy-service__status", {}, DEV_CWD, "/home/dev")
+    assert "mcp" in named["flags"] and "mcp_write" not in named["flags"]
+    for tool, given in (("Read", {"file_path": f"{DEV_CWD}/a.txt"}), ("TodoWrite", {"todos": []})):
+        assert (
+            not {"mcp", "mcp_write"}
+            & describe_call(tool, given, DEV_CWD, "/home/dev")["flags"].keys()
+        )
+    script = Script(agent=agent, cwd=DEV_CWD).start()
+    script.prompt("Copy the orders table into the reporting database of the second account.")
+    script.tool("tablesvc.copy_table", copy)
+    (entry,) = [
+        e for e in entries(summarize(script.events, runtime, agent)) if e["type"] == "action"
+    ]
+    assert entry["level"] != "none"  # put to a decision at the "low" threshold
+    assert "external_write" in [item["label"] for item in entry["indicators"]]
 
 
 def test_a_call_that_names_nothing_an_earlier_call_touched_is_the_packet_it_was(runtime):

@@ -465,6 +465,7 @@ UNDER = 3  # writes shown of what a session did under a bound the user stated
 TURN = 4
 OBJECT_EVENTS = 8  # recorded events listed in an object's account, the newest; the rest counted
 EARLIER = 3  # other requests of the project's earlier sessions shown as context, the newest
+NEAR_CHARS, NEAR_EDITS = 8, 2  # a place resembles another this close, in a name this long (_near)
 
 
 def _program(word):
@@ -1023,14 +1024,53 @@ def _keyed(text):
     }
 
 
-def _bears(prompt, call_text, named, cwd, home, kinds=(), structured=False):
+def _near(one, other):
+    """Whether two places ("domain:...", "email:...") are the same, or one only resembles the
+    other: the same kind, and at most two letters apart (one changed, added, left out, or two
+    side by side swapped), in names long enough for that to be a likeness and not a coincidence.
+    An address is compared whole and only for being the same."""
+    kind, _, a = str(one).partition(":")
+    other_kind, _, b = str(other).partition(":")
+    if kind != other_kind or not a or not b:
+        return False
+    if a == b:
+        return True
+    if kind not in ("domain", "email") or min(len(a), len(b)) < NEAR_CHARS:
+        return False
+    if abs(len(a) - len(b)) > NEAR_EDITS:
+        return False
+    # Edits with adjacent swaps (optimal string alignment), stopped as soon as it is too far.
+    before, row = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        current = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = a[i - 1] != b[j - 1]
+            current[j] = min(row[j] + 1, current[j - 1] + 1, row[j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                current[j] = min(current[j], before[j - 2] + 1)
+        if min(current) > NEAR_EDITS:
+            return False
+        before, row = row, current
+    return row[-1] <= NEAR_EDITS
+
+
+def _bears(prompt, call_text, named, cwd, home, kinds=(), structured=False, reached=()):
     """Whether a statement of the user states a bound and is tied to the call: it names one
     of the call's paths, a word of its command, or a kind of action the call is; or, stating
     no bound, names a target for the kind of action the call is, where that kind is one of
     _TARGETED; or, for a call of a tool with no command line (structured), names by a compound
-    name ("svc-night-rotation") the very thing the call's input names. A candidate link, said
-    to be no more: it asks for review and settles nothing."""
+    name ("svc-night-rotation") the very thing the call's input names; or names a place that only
+    resembles one the call reaches (reached: its hosts and addresses; _near), whatever the kind
+    of action. A candidate link, said to be no more: it asks for review and settles nothing."""
     text = str(prompt.get("text") or "")
+    # The user's word on a place is read beside a call that reaches a place only like it:
+    # "load the dump onto the server at warehouse-db-rpelica.example" beside a load onto
+    # warehouse-db-replica.example. Which place it is, and whether the word was a grant, is for
+    # the reader (a near-host false ready, 2026-11-16: the statement was shown only as context
+    # and the lookup of its server was never retrieved). The very place the call reaches is not
+    # tied this way: a request for the change a call makes is no reason to ask by itself.
+    if any(_near(said, place) and said != place for said in _places(prompt) for place in reached):
+        return True
     spoken_kinds = _kinds_said(_REFERS.sub(" ", text))
     said_kinds = spoken_kinds & set(kinds)
     if not _bound(prompt):
@@ -1586,7 +1626,7 @@ def select(mine, call_id, others, home, within=True):
         for e in entries
         if e["type"] == "prompt"
         and e["seq"] < call["seq"]
-        and _bears(e, spoken, mine_uses["named"], cwd, home, kinds, structured)
+        and _bears(e, spoken, mine_uses["named"], cwd, home, kinds, structured, places)
     ]
     for prompt in stated:
         tokens |= _tokens(prompt)
@@ -1614,7 +1654,9 @@ def select(mine, call_id, others, home, within=True):
         taken = {(item["seq"], item["type"]): item for item in found["items"]}
         shown_in[other["key"]] = taken
         for prompt in (e for e in summary["entries"] if e["type"] == "prompt"):
-            named = _bears(prompt, spoken, mine_uses["named"], there, home, kinds, structured)
+            named = _bears(
+                prompt, spoken, mine_uses["named"], there, home, kinds, structured, places
+            )
             if same_project and named:
                 tokens |= _tokens(prompt)
                 bearing.append(prompt)
@@ -2379,6 +2421,11 @@ def _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses,
     words = _words(f"{command} {said}")
     names = tokens | set(_TOKEN.findall(f"{command} {said}"))
     stated = set().union(*(_words(str(p.get("text") or "")) for p in bearing))
+    # A place a bearing statement names ties what a session was told when it looked that place
+    # up, as the call's own places do, and so does a place that only resembles one of either
+    # (_near): the lookup of the server a grant names, beside a call to another that resembles
+    # it, or of a server whose name is a letter or two from the call's, is what tells them apart.
+    said_places = places | set().union(*(_places(p) for p in bearing))
     found = []
     for other in others:
         if other["key"] not in shown_in or other["cwd"] != cwd:
@@ -2397,6 +2444,11 @@ def _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses,
                 f"{e.get('target') or ''} {e.get('text') or ''}" for e in (action, content) if e
             )
             strong = bool(set(_TOKEN.findall(text)) & names) or bool(_places(content) & places)
+            strong = strong or any(
+                _near(one, place)
+                for one in _places(content) | _places(action or {})
+                for place in said_places
+            )
             strong = strong or bool(_said(content, cwd, home) & mine_uses["named"])
             # A path in the earlier text ties only as the file it is: its words are not counted,
             # so "nested/setup.sh" there is no tie to a call that runs scripts/nested/setup.sh.

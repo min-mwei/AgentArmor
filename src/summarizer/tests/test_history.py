@@ -5222,7 +5222,8 @@ def test_what_a_session_did_after_a_late_request_that_bears_is_key_evidence(runt
     assert view["history"]["complete"] is True and found["why"] == found["unsupported"] == []
     assert view["route"] == "asked" and found["route_reason"] == "earlier_session_bears_on_call"
     # With no room for it, key evidence is said to be left out: never a ready, partial packet.
-    _, tight, less = selected(_late_check(), runtime, budget=1800)
+    # (The push, a tool of no agent's own, carries an indicator line of its own: 1,700, not 1,800.)
+    _, tight, less = selected(_late_check(), runtime, budget=1700)
     assert "key_group_left_out" in tight["history"]["why"] and PASSED not in less
     assert tight["history"]["complete"] is False and tight["route"] == "undecided"
 
@@ -5350,3 +5351,77 @@ def test_a_session_s_own_late_check_is_no_gap_of_its_own_past(runtime):
     found = _selected_after(_late_check(one_session=True), runtime, _result_dropped("b"))
     assert found["why"] == [] and found["unsupported"] == []
     assert found["route"] == "asked"
+
+
+# --- a place the user named that only resembles the one the call reaches -------------------------
+
+REPLICA, LOOKALIKE = "warehouse-db-replica.example", "warehouse-db-rpelica.example"
+
+
+def _lookups(granted, far=False):
+    """An earlier session that looked up two servers whose names are two letters apart, then
+    heard which one the user wants (granted); a later one that loads onto REPLICA. far adds a
+    lookup of a server with an unrelated name, which is no evidence about either."""
+    earlier = [
+        {"id": "q1", "tool": "hosts.describe", "input": {"hostname": REPLICA},
+         "output": f"hostname: {REPLICA}\nid: s-1\nrole: replica server"},
+        {"id": "q2", "tool": "hosts.describe", "input": {"hostname": LOOKALIKE},
+         "output": f"hostname: {LOOKALIKE}\nid: s-2\nrole: staging server"},
+    ]  # fmt: skip
+    if far:
+        earlier.append(
+            {"id": "q0", "tool": "hosts.describe", "input": {"hostname": "metrics.example"},
+             "output": "hostname: metrics.example\nid: s-3\nrole: metrics server"}
+        )  # fmt: skip
+    earlier += [
+        {"id": "q3", "prompt": f"Load the prepared dump onto the server at {granted}."},
+        {"id": "q4", "run": "sha256sum tmp/dump.sql", "output": "c0ffee  tmp/dump.sql"},
+    ]
+    later = [
+        {"id": "m1", "prompt": "Finish the load I approved earlier."},
+        {"id": "m2", "run": "python tools/check_dump.py tmp/dump.sql", "output": "40 inserts"},
+        {"id": "m3", "run": f"dbload apply --server {REPLICA} --file tmp/dump.sql"},
+    ]
+    where = {"cwd": "/home/dev/shop"}
+    return story(("a", where, earlier), ("b", where, later))
+
+
+def test_two_places_are_near_when_a_letter_or_two_apart_in_a_long_name():
+    assert history._near(f"domain:{REPLICA}", f"domain:{LOOKALIKE}")  # two letters swapped
+    assert history._near(
+        "domain:packages.elm-data.example.com", "domain:packages.elm-data.example.co"
+    )
+    assert history._near("email:alice@finance.example", "email:alicee@finance.example")
+    assert not history._near("domain:ab.io", "domain:ac.io")  # too short to be a likeness
+    assert not history._near(f"domain:{REPLICA}", "domain:warehouse-db-primary.example")
+    assert not history._near(f"domain:{REPLICA}", f"email:ops@{REPLICA}")  # another kind
+    assert not history._near("ip:10.0.0.12", "ip:10.0.0.13")  # an address is the same or not
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("granted", [LOOKALIKE, REPLICA])
+def test_a_lookup_of_a_server_whose_name_resembles_the_call_s_is_shown_or_missed(
+    runtime, agent, granted
+):
+    # A false ready (2026-11-16): the user granted a load onto one server, the call loads onto
+    # another whose name is two letters away, and the earlier session's lookup that tells them
+    # apart was neither shown nor counted; the packet said it was complete. A user statement that
+    # names a place only like the call's now bears on it, and what a session was told when it
+    # looked up a place like the call's, or like the statement's, is key evidence of it.
+    found, view, shown = selected(_lookups(granted), runtime, agent, budget=11000)
+    assert "staging server" in shown and "replica server" in shown, shown
+    assert view["history"]["complete"] is True
+    if granted == LOOKALIKE:  # the statement names a place only like the call's: it bears
+        assert (view["route"], found["route_reason"]) == ("asked", "earlier_session_bears_on_call")
+    # With less room the lookup is shown, or the account says key evidence found no room.
+    for budget in range(1500, 4200, 150):
+        _, tight, less = selected(_lookups(granted), runtime, agent, budget=budget)
+        assert "staging server" in less or tight["history"]["complete"] is False, budget
+
+
+def test_a_lookup_of_an_unrelated_server_is_not_taken_for_evidence_of_the_call(runtime):
+    found, _, _ = selected(_lookups(LOOKALIKE, far=True), runtime, budget=11000)
+    told = [g["id"] for g in found["groups"] if ":told:" in g["id"]]
+    shown = {(i["key"], i["seq"]) for i in found["items"] if any(t in i["groups"] for t in told)}
+    far = [i for i in found["items"] if i["type"] == "content" and "metrics" in json.dumps(i)]
+    assert not far and shown  # the near lookups are tied, the unrelated one is not
