@@ -649,7 +649,7 @@ One JSON line per trigger in the session's directory under Summarizer's spool
 | `decision` | Kai's answer for a tool call, `allow` or `deny`; null for other entries |
 | `kai` | `p_deny`, `p_xpia` and what the service says of itself (model, readout, revision, package hash). `identity_checked` says whether that was checked against a configured model before the answer was used: true on the local server, false for a `scan` run without `--kai-package-sha256`. `claims_policy_ready` is the service's own word about its readiness, kept as its claim: the record's `policy_ready` is false whatever it says |
 | `flagged` | `decision` is `deny`, or `p_xpia` is at least 0.5 (not a qualified cutoff) |
-| `spans` | Present when the reply said anything about evidence: for each question its `status` (`unavailable`, `empty`, `spans`, `error` with `why`), the package and head that marked it, and for `spans` each interval `at` in the state with the `sources` it resolves to. No text is kept. See [Evidence spans](#evidence-spans) |
+| `spans` | Present when the reply said anything about evidence: for each question its `status` (`unavailable`, `empty`, `spans`, `error` with `why`), the state, package and head it is of and by, and for `spans` each strict interval `at` in the state with the `sources` it resolves to, and `projected` (the same intervals read against the renderer's marks) when the package says what its head's targets were projected by. No text is kept. See [Evidence spans](#evidence-spans) |
 | `disagreement` | Summarizer marked the entry medium or higher and Kai cleared it. Kept apart from "nothing found"; list them with `detections --disagreements` |
 | `packet` | Size and SHA-256 of the packet; `state_chars`; whether the call was verified; Summarizer's own account (`ready`, `dropped` (lines that found no room, by section), `key_dropped`, `cut` (lines that quote less of their entry than there is, by kind: `prompt`, `action`, `message`), `key_clipped` (those among them that are key evidence, which keep a packet from being ready), `unresolved_conditions`, `scanned_all_captured`, `later_events`); `request_sha256`, the identifier of the final request (canonical JSON, not wire bytes); the call's `call_source`, `call_chars`, `call_chars_not_shown` and `call_redactions` (the last two are null for a `representation`: unknown); and `complete`: the packet was ready and the call's own arguments were shown whole |
 | `review` | `pre_action` when the hooks delivered the call's proposal, nothing has been reported to have become of it, and the summary held nothing from after it; otherwise `retrospective`. A call first seen at its result or failure is always retrospective (`packet.proposal_observed` is false): its outcome is already in the packet. Only pre-action records are evidence about what could be known in time. This is a separate property from `packet.complete`, which is about how much was shown |
@@ -716,15 +716,22 @@ which checkpoint is asked, not that its answer is right.
 
 ## Evidence spans
 
-No trained evidence head exists. This is the path a head's spans take, tested with stand-ins
-and random tensors: unqualified, and it changes no verdict.
+No evidence head is published or qualified. This is the path a head's spans take, tested
+with stand-ins and random tensors, and once on CPU with a research head fitted in the Kai
+project (see the end of this section): unqualified, and it changes no verdict.
 
 A span is an interval of the exact state sent to Kai. The client keeps one only if the reply
 names that state (SHA-256 and length) and the head that marked it, and the interval is a pair
 of integers inside the state, in order and not overlapping. Anything else makes that
 question's evidence an `error` with its reason. An error is not an empty answer, and neither
 touches the decision, which stands or falls by its own admission rules. With two checkpoints
-each question's evidence is its own checkpoint's, of its own request.
+each question's evidence is its own checkpoint's, of its own request. What is kept beside a
+question's intervals says what they are of and by: `state_sha256`, `head_sha256`,
+`package_sha256`, the `readout`, the kind of interval (`intervals`) and `targets` (what the
+package says its head's targets were projected by). A reply that says the service projected
+its intervals is an `error` (`projection_by_the_service`): a service holds no renderer's
+marks. Token places that do not hold the ends of their span are an `error`
+(`edges_malformed`).
 
 The server then says what each kept interval is, from a map it makes of the state
 (`summarizer.sourcemap`, through `escalate.source_map`). The map is made while rendering, not
@@ -749,6 +756,54 @@ that cut for every session it shows. A span that reaches a later event is an `er
 (`evidence_after_the_call`); one whose event has no time, is at the very time of the call,
 or is of a session whose cut is not known is an `error` (`evidence_order_unknown`); and so
 is any span when the state has no map (`no_source_map`).
+
+**Strict and projected.** The intervals a record keeps as `spans` are strict: as the service
+decoded them, token-aligned, with nothing added or removed (`strict: {"rule": "exact",
+"intervals": "token-hull"}`). A tokenizer often joins a value to the quotation mark beside
+it, and a head whose training targets were widened to such a mark returns the value with
+the mark. Where the package says so (`targets`: the rule `value-wrapper-quote-v1` and whose
+marks it used), the record also keeps `projected` (`agentarmor_monitor/spans.py`): the same
+intervals read under that rule against the marks the renderer itself wrote in this state,
+taken from the map and never from the look of the text.
+
+| In `projected.spans` | Meaning |
+|---|---|
+| `at` | The strict interval this is a reading of |
+| `rule: "value-wrapper-quote-v1"`, `value`, `marks`, `sources` | The interval is a value and that value's own mark(s): `value` is the interval less the mark at either end, `marks` the positions taken off, `sources` what the value alone resolves to |
+| `rule: "exact"`, `value` | Neither end is a renderer's mark: the value is the interval |
+| `rule: null`, `why` | No such reading, and the strict interval stands alone: `mark_of_another_value` (it begins or ends with another value's mark, or holds a value's mark and runs out of that value), `mark_not_joined` (the mark is a token of its own, so no target was ever widened to it), `only_marks`, `space_inside_the_mark`, `no_token_edges` |
+
+A mark is one of two things the map proves: a quotation mark `text.quote()` wrote around a
+mapped session string (`quote`), or one this server's JSON wrote around a string value of
+the proposed call's arguments (`call-argument-value`; never a key). A quotation mark inside
+session text, a rule, an unmapped literal or a value (escaped) is content and is never
+taken. A mark is taken off only for the value it encloses and only when one token holds the
+mark and the value's character beside it (the service's `edges`). This is the inverse of the
+training projection: an annotated value was widened to a hull there exactly when the hull is
+read back as that value here, and `projected.layout` names the state and the map by hash and
+whose marks were used, as the layout the targets were projected with does. The two readings
+are kept apart; neither replaces the other. `projected` is absent when the package states no
+rule or the state has no map, and a rule or a source of marks this code does not have is
+named and not applied (`status: unknown_rule`).
+
+Spans that resolve say whose words a head marked. They do not say the marked words are all
+a decision rests on or that the packet was complete: `packet.complete`, the decision and
+`policy_ready` are read from the record as before, and no span turns an incomplete packet
+into an allow.
+
+**Exercised and not (CPU, 2026-11-15).** With the research head (K0, head stage fitted in
+true float32, targets projected by `value-wrapper-quote-v1` over `quote` and
+`call-argument-value` marks) and the fit's saved features in place of the backbone's
+forward: on a dozen TRAIN states the strict spans, state, head and package identity arrived
+at the record as the service sent them; the marks and the map identity equalled the layout
+the fit's targets were projected with (for 218 of 218 questions that are not held out of
+the fit and have a saved map); and reading every target hull of those questions back gave
+the annotated value and the rule the fit recorded (580 of 580 spans). Three of the dozen are a training reference view that shows
+other sessions without the cut the lookup makes: there the record is an `error`
+(`evidence_order_unknown`), as it is for any state whose other sessions cannot be placed
+before the call. Not exercised: the service computing its own hidden states on MLX, and
+`detect()` making the map of a live packet for this head (the maps were those saved when
+the fit's states were rendered). No quality or agreement claim is made.
 
 The map holds offsets and identities and no text, stays on this machine and is never sent to
 a model. It is provenance only: that an interval is the words of a tool result says who wrote

@@ -127,6 +127,7 @@ EVIDENCE_HEAD = "evidence_head.safetensors"
 PEFT_PREFIX, MLX_PREFIX = "base_model.model.", "language_model.model."
 _HEX = re.compile(r"[0-9a-f]{64}")
 _LEAF = re.compile(r"[a-z][a-z0-9_]*")
+_RULE = re.compile(r"[a-z][a-z0-9-]*")  # a projection rule's or a mark source's name
 _ADAPTED = re.compile(r"(layers\.\d+\.(?:[A-Za-z0-9_]+\.)*([A-Za-z0-9_]+))\.lora_([AB])\.weight")
 
 
@@ -286,11 +287,18 @@ class LoraPackage:
         """None for a package without an evidence head ("unavailable"), else what it says of
         its head: the readout that runs it, the SHA-256 of that readout's source and, when the
         readout decodes with them, the decoder's threshold and span budget (both or neither).
-        The head file is one of the package's bound files. Naming a head qualifies nothing."""
+        It may also say what the head's training targets were projected by ("targets": the
+        rule's name and whose marks it was allowed to add, "wrapper_sources"). That is a
+        statement about the head, passed on as one: this service holds no renderer's marks and
+        projects nothing. The head file is one of the package's bound files. Naming a head
+        qualifies nothing."""
         if evidence == "unavailable":
             return None
         decoder = {"threshold", "max_spans"}
-        named = isinstance(evidence, dict) and set(evidence) - decoder == {"readout", "impl_sha256"}
+        named = isinstance(evidence, dict) and set(evidence) - decoder - {"targets"} == {
+            "readout",
+            "impl_sha256",
+        }
         if (
             not named
             or not isinstance(evidence["readout"], str)
@@ -307,6 +315,20 @@ class LoraPackage:
                 or not 1 <= budget <= 32
             ):
                 raise ValueError("invalid evidence decoder settings")
+        if "targets" in evidence:
+            told = evidence["targets"]
+            names = isinstance(told, dict) and set(told) == {"rule", "wrapper_sources"}
+            sources = told["wrapper_sources"] if names else None
+            if (
+                not names
+                or not isinstance(told["rule"], str)
+                or not _RULE.fullmatch(told["rule"])
+                or not isinstance(sources, list)
+                or not sources
+                or len(set(map(str, sources))) != len(sources)
+                or any(not isinstance(s, str) or not _RULE.fullmatch(s) for s in sources)
+            ):
+                raise ValueError("invalid evidence target projection")
         return dict(evidence)
 
     @staticmethod

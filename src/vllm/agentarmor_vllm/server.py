@@ -182,6 +182,9 @@ def main(argv=None):
                 "package_sha256": found.package.identity,
                 "verified": "package, tokenizer and pointer; no weight loaded",
             }
+            if found.head_sha256 is not None:  # an evidence head: which, read by what
+                about["evidence_head_sha256"] = found.head_sha256
+                about["evidence"] = found.package.evidence
             print(json.dumps(about))
         return
     with HTTPServer(("127.0.0.1", args.port), handler(service, session)) as server:

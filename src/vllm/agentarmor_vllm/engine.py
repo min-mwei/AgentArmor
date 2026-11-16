@@ -282,6 +282,10 @@ class MlxLoraBackbone(MlxBackbone):
 # (pairs.py). No trained head is published with it, and a package that names a readout this
 # build does not have is refused, not answered without.
 EVIDENCE = {PairReadout.name: PairReadout}
+# What a readout's intervals are, said in every reply beside them. The pair decoder returns the
+# character hull of a token pair without the white space at its ends (pairs.decode_pairs): a
+# token-aligned interval, exactly what Kai's training decode returns for the same scores.
+INTERVALS = {PairReadout.name: "token-hull"}
 MAX_SPANS, MAX_EVIDENCE_STATE = 32, 4096
 
 
@@ -326,6 +330,26 @@ def checked_spans(spans, length):
         out.append([span[0], span[1]])
         end = span[1]
     return out
+
+
+def token_edges(spans, offsets):
+    """[[first token's place, last token's place]] for each span, or None: the places of the
+    tokens that hold a span's first and its last character. With them, whoever holds the
+    renderer's marks can tell whether a mark at an end of a span stands in one token with
+    the value beside it, which is the only case in which Kai's target projection widens a
+    value to its mark. Nothing is decided here."""
+    import bisect
+
+    real = sorted({(a, b) for a, b in offsets if b > a})
+    starts = [a for a, _ in real]
+
+    def holding(place):
+        index = bisect.bisect_right(starts, place) - 1
+        found = real[index] if index >= 0 else (0, 0)
+        return list(found) if found[0] <= place < found[1] else None
+
+    edges = [[holding(start), holding(end - 1)] for start, end in spans]
+    return None if any(None in pair for pair in edges) else edges
 
 
 class Service:
@@ -412,10 +436,18 @@ class Service:
         about = {"state_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
         about |= {"state_chars": len(text), "head_sha256": self.head_sha256}
         about |= {"readout": self.package.evidence["readout"], "qualified": False}
+        # Strict intervals only: the decoder's own, with no mark added or removed. A projection
+        # needs the renderer's marks, which this service does not hold (it is sent a state, not
+        # its source map) and never takes from a caller's text. What the package says the
+        # head's targets were projected by is passed on for whoever holds the map.
+        about |= {"intervals": INTERVALS.get(about["readout"]), "projection": "none"}
+        if self.package.evidence.get("targets") is not None:
+            about["targets"] = self.package.evidence["targets"]
         return {**self.metadata(), "answers": answers, "evidence": about, "coverage": "complete"}
 
     def _spans(self, hidden, row, offsets, text):
-        """One question's evidence: {"status", "spans"}. A head that fails, or whose
+        """One question's evidence: {"status", "spans"} and, with spans, "edges" (the places
+        of the tokens at each span's two ends: token_edges). A head that fails, or whose
         intervals are not intervals of this state, is an error for this question alone;
         the answer beside it was already computed and stands."""
         try:
@@ -425,7 +457,10 @@ class Service:
         spans = checked_spans(found, len(text))
         if spans is None:
             return {"status": "error", "spans": []}
-        return {"status": "spans" if spans else "empty", "spans": spans}
+        if not spans:
+            return {"status": "empty", "spans": []}
+        edges = token_edges(spans, offsets)
+        return {"status": "spans", "spans": spans} | ({"edges": edges} if edges else {})
 
 
 def load_service(

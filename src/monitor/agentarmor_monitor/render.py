@@ -88,7 +88,7 @@ SOURCES = (
 )
 SOURCES += ("gate.py", "hostfacts_profile.py")
 SOURCES += ("kai.py", "local.py", "panels.py", "policy.py", "render.py", "route.py", "server.py")
-SOURCES += ("tally.py",)
+SOURCES += ("spans.py", "tally.py")
 # What a request row keeps of the record detect() builds. The request itself is added to it.
 KEPT = ("key", "trigger", "review", "layout", "packet", "shown")
 KEPT += ("summary_embedding", "summary_detector")

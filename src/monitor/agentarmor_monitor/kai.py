@@ -250,6 +250,16 @@ def evidence(reply, question, state):
     "error" with its reason, and no interval of that question is kept: evidence that cannot
     be checked is not evidence, and it is not an empty answer either. Nothing here touches
     the answer itself; a decision stands or falls by _decision() alone.
+
+    The intervals are strict: the decoder's own (token-aligned for the pair readout), with
+    no mark added or removed. A service is sent a state and holds no renderer's marks, so a
+    reply that says it projected its intervals is an error ("projection_by_the_service"):
+    projecting is for whoever holds the state's source map (spans.py). What is kept beside
+    the intervals says what they are of and by: the state's SHA-256, the head, the readout,
+    what kind of interval, and what the package says the head's targets were projected by
+    ("targets"), which is the package's statement and is only passed on. "edges", when the
+    service gives them, are the places of the tokens holding each interval's first and last
+    character; each must hold that character, or the question's evidence is an error.
     """
     answer = reply["answers"][question]
     given, about = answer.get("evidence"), reply.get("evidence")
@@ -270,8 +280,22 @@ def evidence(reply, question, state):
     digest = hashlib.sha256(state.encode("utf-8")).hexdigest()
     if about.get("state_sha256") != digest or about.get("state_chars") != len(state):
         return error("evidence_of_another_state")
-    status, spans = given.get("status"), given.get("spans")
-    if set(given) != {"status", "spans"} or not isinstance(spans, list):
+    if about.get("projection", "none") != "none":
+        return error("projection_by_the_service")
+    targets = about.get("targets")
+    if targets is not None and not (
+        isinstance(targets, dict)
+        and set(targets) == {"rule", "wrapper_sources"}
+        and isinstance(targets["rule"], str)
+        and isinstance(targets["wrapper_sources"], list)
+        and all(isinstance(source, str) for source in targets["wrapper_sources"])
+    ):
+        return error("targets_malformed")
+    readout, intervals = about.get("readout"), about.get("intervals")
+    if not all(value is None or isinstance(value, str) for value in (readout, intervals)):
+        return error("evidence_malformed")
+    status, spans, edges = given.get("status"), given.get("spans"), given.get("edges")
+    if set(given) - {"edges"} != {"status", "spans"} or not isinstance(spans, list):
         return error("evidence_malformed")
     if status in ("unavailable", "error"):
         return {"status": status, "spans": []} | ({"why": "service"} if status == "error" else {})
@@ -285,7 +309,26 @@ def evidence(reply, question, state):
         if not whole or not end <= span[0] < span[1] <= len(state):
             return error("span_outside_the_state_or_out_of_order")
         end = span[1]
-    return {"status": status, "spans": [list(span) for span in spans], "head_sha256": head}
+    if edges is not None:  # the tokens at each span's two ends: each must hold its end
+        if status != "spans" or not isinstance(edges, list) or len(edges) != len(spans):
+            return error("edges_malformed")
+        for span, pair in zip(spans, edges, strict=True):
+            whole = isinstance(pair, list) and len(pair) == 2
+            whole = whole and all(
+                isinstance(place, list) and len(place) == 2 and all(type(x) is int for x in place)
+                for place in pair
+            )
+            if (
+                not whole
+                or not 0 <= pair[0][0] <= span[0] < pair[0][1] <= len(state)
+                or not 0 <= pair[1][0] < span[1] <= pair[1][1] <= len(state)
+            ):
+                return error("edges_malformed")
+        edges = [[list(place) for place in pair] for pair in edges]
+    kept = {"status": status, "spans": [list(span) for span in spans], "head_sha256": head}
+    kept |= {"edges": edges}
+    kept |= {"state_sha256": digest, "readout": readout, "intervals": intervals}
+    return kept | {"targets": targets}
 
 
 class KaiClient:

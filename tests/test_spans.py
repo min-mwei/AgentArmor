@@ -4,6 +4,7 @@ the gate's record, and back to the source. Stand-ins only: a stub readout, no mo
 What is checked is the path and its refusals. No trained evidence head exists; nothing here
 says a span is right."""
 
+import hashlib
 import json
 import threading
 from http.server import HTTPServer
@@ -160,7 +161,16 @@ def test_a_source_is_located_marked_served_admitted_and_resolved_to_itself(
         "text",
         "user",
     )
-    assert record["spans"][XPIA] == {"status": "empty", "package_sha256": K0, "head_sha256": HEAD}
+    digest = hashlib.sha256(state.encode()).hexdigest()  # what the evidence is of, kept too
+    assert record["spans"][XPIA] == {
+        "status": "empty",
+        "package_sha256": K0,
+        "head_sha256": HEAD,
+    } | {
+        "state_sha256": digest,
+        "readout": "stub",
+    }
+    assert told["state_sha256"] == digest and told["strict"]["rule"] == "exact"
     assert wanted not in json.dumps(record["spans"])  # identities and offsets, no text
     assert record["kai"]["evidence_available"] is True and record["policy_ready"] is False
 
@@ -222,6 +232,11 @@ def test_checked_intervals_of_the_state_that_was_sent_are_kept():
         "status": "spans",
         "spans": [[0, 1], [1, 7], [30, len(STATE)]],
         "head_sha256": HEAD,
+        "edges": None,
+        "state_sha256": said([])["evidence"]["state_sha256"],
+        "readout": None,
+        "intervals": None,
+        "targets": None,
     }
     assert kai.evidence(said([]), XPIA, STATE)["status"] == "empty"
     assert kai.evidence(said([], "unavailable"), XPIA, STATE) == {
@@ -293,6 +308,8 @@ def test_a_span_on_session_text_of_unknown_origin_or_from_after_the_call_is_an_e
     assert record["spans"][DECISION] == {"status": "error", "why": "unmapped_source"} | {
         "package_sha256": K3,
         "head_sha256": HEAD,
+        "state_sha256": found.sha256,
+        "readout": "stub",
     }
     # The same map with the call moved earlier: the request it marked is now after the call.
     late = next(
@@ -350,7 +367,12 @@ def test_a_state_whose_token_places_cannot_be_trusted_gets_an_error_not_a_guess(
     made = service(K0, [[0, 3]])
     ask = {"questions": {"q": {"type": "noul", "instructions": "check"}}}
     composed = made.evaluate(ask | {"state": "caf\u00e9 and more"})
-    assert composed["answers"]["q"]["evidence"] == {"status": "spans", "spans": [[0, 3]]}
+    assert composed["answers"]["q"]["evidence"] == {
+        "status": "spans",
+        "spans": [[0, 3]],
+        "edges": [[[0, 1], [2, 3]]],  # the tokens holding its two ends (one for a character)
+    }
+    assert composed["evidence"]["projection"] == "none"  # a service projects nothing
     assert composed["evidence"]["state_chars"] == 13 and composed["evidence"]["qualified"] is False
     apart = made.evaluate(ask | {"state": "cafe\u0301 and more"})  # e, then a combining accent
     assert apart["answers"]["q"]["evidence"] == {"status": "error", "spans": []}

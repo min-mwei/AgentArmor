@@ -260,9 +260,11 @@ or deployment qualification, and it says nothing for vLLM. `policy_ready` stays 
 
 ### Evidence spans
 
-No trained evidence head exists and none is published. What exists is the path a head's spans
-take and one readout to run a head with; both are unqualified, and `policy_ready` stays
-`false`.
+No evidence head is published or qualified. What exists is the path a head's spans take and
+one readout to run a head with; both are unqualified, and `policy_ready` stays `false`. One
+research head has been fitted in the Kai project (K0's frozen backbone, the head stage in
+true float32) and is packaged locally for a shadow check of this path; it is not released,
+and what was and was not exercised with it is said at the end of this section.
 
 An unmerged package may carry a head. Its `evidence` field then names the readout instead of
 being `"unavailable"`, and `evidence_head.safetensors` (safetensors, never a pickle) is a
@@ -276,6 +278,19 @@ third bound file:
 `readout` must be one this build has (`agentarmor_vllm.engine.EVIDENCE`) whose source file has
 that hash; a package that names another, or another source, is refused at load, never served
 without its head. A head reads at most 4,096 state tokens.
+
+The field may also say what the head's training targets were projected by:
+
+```json
+"targets": {"rule": "value-wrapper-quote-v1", "wrapper_sources": ["quote", "call-argument-value"]}
+```
+
+This is a statement about the head, bound by the package's identity like the rest of
+`kai.json`, and the service only passes it on (`evidence.targets` in a reply). A head scores
+token pairs, and a tokenizer often joins a value to the quotation mark beside it, so a head
+fitted on targets widened to such a mark returns intervals that hold the mark. Reading them
+back as values needs the marks the renderer itself wrote, which only the holder of a state's
+source map has: the monitor does that (`agentarmor_monitor/spans.py`), never this service.
 
 One readout is published, `joint_pairs_memory_v1` (`agentarmor_vllm/pairs.py`): the span-pair
 scorer and decoder of the Kai project, in NumPy, published by that project's owner. It is
@@ -308,11 +323,24 @@ what its evidence is of, and each answer carries its own:
 ```json
 {
   "evidence": {"state_sha256": "…", "state_chars": 2699, "head_sha256": "…",
-               "readout": "NAME", "qualified": false},
+               "readout": "NAME", "qualified": false,
+               "intervals": "token-hull", "projection": "none",
+               "targets": {"rule": "…", "wrapper_sources": ["…"]}},
   "answers": {"decision": {"type": "choice", "choice": "deny", "probabilities": {"…": 0.0},
-                           "evidence": {"status": "spans", "spans": [[1204, 1260]]}}}
+                           "evidence": {"status": "spans", "spans": [[1204, 1260]],
+                                        "edges": [[[1204, 1209], [1255, 1260]]]}}}
 }
 ```
+
+The intervals are strict: exactly what the decoder returned, which for the pair readout is
+the character hull of a token pair without white space at its ends (`intervals:
+"token-hull"`), the same decode Kai's training reads run on the same scores. `projection` is
+always `"none"`: the service is sent a state, not its source map, so it adds and removes no
+mark, and it takes no layout from a caller. `edges` gives, for each span, the places of the
+tokens that hold its first and its last character; with them the monitor can tell whether a
+mark at an end of a span stands in one token with the value beside it, the only case in
+which the training projection widened a value to its mark. `targets` is present when the
+package states it.
 
 | `status` | Meaning |
 |---|---|
@@ -329,4 +357,21 @@ offsets: a state holding a letter followed by a combining mark that composes wit
 example `e` and U+0301) is such a state, and its answers are unaffected. A caller that wants
 evidence sends composed text. Reserved token spellings are escaped one character for one and
 do not move anything. Spans count code points; a client whose strings count UTF-16 units
-converts with `summarizer.sourcemap.utf16()`.
+converts with `summarizer.sourcemap.utf16()`. The refusal stands until places are aligned to
+the original code points here as Kai's training alignment does (it tokenizes a composed copy
+and maps each place back); the text is never normalized and no interval is widened by guess.
+
+**What has been exercised with the research head (CPU, 2026-11-15), and what has not.** The
+head is K0's evidence template fitted head-only in the Kai project on TRAIN span annotations,
+its head stage in true float32 (`head-true-float32-v1`); the backbone keeps its registered
+arithmetic, and no process-wide float32 setting is used anywhere. Its targets were projected
+by `value-wrapper-quote-v1` over the renderer's `quote` and `call-argument-value` marks. It
+is served by the pinned NumPy readout (`pairs.py`, float32) on detached hidden states.
+Starting from the fit's saved features in place of the backbone's forward, a dozen cases
+(states up to 3,604 tokens) went through this loader, the service's encoding and token places, the
+readout, a loopback reply, the client and the monitor's record: the token rows and places
+equalled the fit's, pair scores differed from the fit's by at most 0.0003, and the strict
+spans equalled the fit's read-back in every case. Not exercised: this service computing its
+own hidden states for those spans on MLX (`MlxLoraBackbone`). A runner for that hop is
+prepared and has not been run. Nothing here says a span is right or complete, and no
+agreement rule has been set.

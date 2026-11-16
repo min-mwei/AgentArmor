@@ -180,7 +180,7 @@ def source_map(rules, summary, entry, max_chars, sessions, call, body):
     return found if same else None
 
 
-def spans_record(told, mapped):
+def spans_record(told, mapped, state=None):
     """What a record keeps of a reply's evidence, question by question (kai.evidence()).
 
     A question answered with spans has each resolved through the state's own map: the
@@ -193,16 +193,36 @@ def spans_record(told, mapped):
     placed against it, or a state that has no map, makes the whole question an "error" with
     its reason, and none of its spans is kept. An error is not an empty answer, and neither
     changes the decision.
+
+    The intervals kept as "spans" are strict: as the service decoded them ("strict" says
+    what kind). Where the package said what its head's targets were projected by, and state
+    (the text that was sent) is given, "projected" holds the same intervals read under that
+    rule against the renderer's own marks in this state (spans.py): for each, the value it
+    is the hull of and the mark taken off, with the value's sources, or why it has no such
+    reading. The two are kept apart and neither replaces the other. A map that is of another
+    state than the reply's evidence names is an error ("map_of_another_state").
+
+    Spans that resolve say whose words were marked. They do not say that the packet was
+    complete or that the marked words are all a decision rests on: packet.complete and the
+    decision are read from the record as before, and nothing here changes either.
     """
     from summarizer import sourcemap
 
+    from . import spans as readings
+
     out, found = {}, []
     for question, given in told.items():
-        kept = {key: value for key, value in given.items() if key != "spans" and value is not None}
+        apart = ("spans", "edges")
+        kept = {
+            key: value for key, value in given.items() if key not in apart and value is not None
+        }
         if given["status"] == "spans":
             if not found:
                 found.append(mapped())
             source, spans, why = found[0], [], None if found[0] else "no_source_map"
+            named = given.get("state_sha256")
+            if source and named is not None and named != source.sha256:
+                source, why = None, "map_of_another_state"
             for start, end in given["spans"] if source else ():
                 pieces = source.resolve(start, end)
                 placed = {sourcemap.order(piece, source) for piece in pieces}
@@ -213,7 +233,21 @@ def spans_record(told, mapped):
                 elif "unknown" in placed:
                     why = why or "evidence_order_unknown"
                 spans.append({"at": [start, end], "sources": pieces})
-            kept |= {"status": "error", "why": why} if why else {"spans": spans}
+            if why:
+                kept |= {"status": "error", "why": why}
+            else:
+                kept |= {"spans": spans}
+                kept["strict"] = {"rule": readings.EXACT, "intervals": given.get("intervals")}
+                read = None
+                if state is not None:
+                    read = readings.projected(
+                        given["spans"], state, source, given.get("targets"), given.get("edges")
+                    )
+                for one in (read or {}).get("spans", ()):
+                    if one["rule"] is not None:  # the value alone: whose words it is
+                        one["sources"] = source.resolve(*one["value"])
+                if read is not None:
+                    kept["projected"] = read
         out[question] = kept
     return out
 
@@ -551,7 +585,7 @@ def detect(
             record["kai"]["p_deny"] = answers[DECISION]["p_deny"]
             record["decision"] = answers[DECISION]["choice"]  # Kai's answer: allow or deny
         if reply.get("evidence"):  # spans, or why there are none; never part of the verdict
-            record["spans"] = spans_record(reply["evidence"], mapped)
+            record["spans"] = spans_record(reply["evidence"], mapped, body)
         record["flagged"] = record["decision"] == "deny" or answers[XPIA] >= FLAG_AT
         # Summarizer marked it and Kai cleared it: kept apart from "nothing was found".
         marked = LEVELS.get(entry.get("level"), 0) >= LEVELS["medium"]

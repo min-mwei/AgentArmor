@@ -586,9 +586,26 @@ def test_the_published_readout_loads_a_head_of_its_layout_with_the_packages_deco
     assert (service.evidence.dim, service.evidence.width) == (4, 2)
 
 
+def test_a_package_may_say_what_its_heads_targets_were_projected_by(made, monkeypatch):
+    stub_tokenizer(monkeypatch, made.base)
+    targets = {"rule": "value-wrapper-quote-v1"}
+    targets |= {"wrapper_sources": ["quote", "call-argument-value"]}
+    pair_head(made, targets=targets)
+    service = engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)
+    # Stated, bound by the package's identity and passed on; the service projects nothing.
+    assert service.package.evidence["targets"] == targets
+    assert service.evidence.threshold == 0.0 and service.head_sha256
+
+
 @pytest.mark.parametrize(
     "evidence",
     [
+        {"targets": "value-wrapper-quote-v1"},
+        {"targets": {"rule": "value-wrapper-quote-v1"}},
+        {"targets": {"rule": "Rule!", "wrapper_sources": ["quote"]}},
+        {"targets": {"rule": "r", "wrapper_sources": []}},
+        {"targets": {"rule": "r", "wrapper_sources": ["quote", "quote"]}},
+        {"targets": {"rule": "r", "wrapper_sources": ["quote"], "qualified": True}},
         {"impl_sha256": "0" * 64},  # another source than this build's
         {"threshold": None},
         {"max_spans": 0},
