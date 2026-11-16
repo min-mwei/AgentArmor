@@ -97,13 +97,32 @@ def wrappers(found, state, sources=(QUOTE,)):
     return marks
 
 
+def map_sha256(found):
+    """A source map by hash: of what it tells (told()), which holds offsets and no text."""
+    told = json.dumps(found.told(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(told.encode("utf-8")).hexdigest()
+
+
+def map_identity(found):
+    """What a question's intervals were resolved through: the map by hash, the state it is of,
+    and what it places events against (the call under decision, and the time each other
+    session was cut at). With it a reader can check again, from the record alone, that every
+    source kept beside an interval is from before the call (sourcemap.order). No text."""
+    return {
+        "map_sha256": map_sha256(found),
+        "state_sha256": found.sha256,
+        "state_chars": found.chars,
+        "cutoff": found.cutoff,
+        "sessions": found.sessions,
+    }
+
+
 def identity(found, sources):
     """What a layout was taken from: the state and the map, by hash, and whose marks."""
-    told = json.dumps(found.told(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return {
         "schema": LAYOUT_SCHEMA,
         "state_sha256": found.sha256,
-        "map_sha256": hashlib.sha256(told.encode("utf-8")).hexdigest(),
+        "map_sha256": map_sha256(found),
         "wrapper_sources": list(sources),
     }
 

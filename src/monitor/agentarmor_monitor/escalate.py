@@ -194,6 +194,11 @@ def spans_record(told, mapped, state=None):
     its reason, and none of its spans is kept. An error is not an empty answer, and neither
     changes the decision.
 
+    Beside the intervals the record keeps what they were resolved through ("map": the map
+    by hash, the state it is of, the call it places this session's events against and the
+    time each other session was cut at), so that the order of every source can be checked
+    again from the record alone.
+
     The intervals kept as "spans" are strict: as the service decoded them ("strict" says
     what kind). Where the package said what its head's targets were projected by, and state
     (the text that was sent) is given, "projected" holds the same intervals read under that
@@ -236,7 +241,7 @@ def spans_record(told, mapped, state=None):
             if why:
                 kept |= {"status": "error", "why": why}
             else:
-                kept |= {"spans": spans}
+                kept |= {"spans": spans, "map": readings.map_identity(source)}
                 kept["strict"] = {"rule": readings.EXACT, "intervals": given.get("intervals")}
                 read = None
                 if state is not None:

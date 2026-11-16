@@ -13,12 +13,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from agentarmor_monitor import decide, escalate, kai
+from agentarmor_monitor import spans as readings
 from agentarmor_monitor.kai import DECISION, XPIA, KaiClient
 from agentarmor_monitor.route import Routed
 from agentarmor_vllm.encode import SPECIAL, tokenizer_sha256
 from agentarmor_vllm.engine import Pointer, Service
 from agentarmor_vllm.server import handler
 from test_earlier_sessions import two_sessions
+
+from summarizer import sourcemap
 
 K0, K3, HEAD = "a" * 64, "b" * 64, "c" * 64
 
@@ -399,8 +402,20 @@ def test_evidence_of_an_earlier_session_is_placed_by_its_own_time_against_the_ca
         return escalate.spans_record(spans, lambda: found)[DECISION]
 
     assert told()["spans"][0]["sources"][0]["seq"] == earlier["seq"]
+    # What the interval was resolved through is kept: the map by hash, and what it places
+    # events against. From the record alone the order of each source is found again.
+    kept = told()
+    about = kept["map"]
+    assert about["map_sha256"] == readings.map_sha256(found) and len(about["map_sha256"]) == 64
+    assert (about["state_sha256"], about["state_chars"]) == (found.sha256, found.chars)
+    assert about["cutoff"] == found.cutoff and about["cutoff"]["session"] == "s-late"
+    assert about["sessions"][earlier["session"]]["until"] == cut["until"]
+    reader = SimpleNamespace(cutoff=about["cutoff"], sessions=about["sessions"])
+    assert {sourcemap.order(p, reader) for s in kept["spans"] for p in s["sources"]} == {"before"}
+    moved = readings.map_sha256(found)
     found.sessions[earlier["session"]] = cut | {"until": earlier["ts"] - 1}
-    assert told() == {"status": "error", "why": "evidence_after_the_call"}
+    assert told() == {"status": "error", "why": "evidence_after_the_call"}  # and no map kept
+    assert readings.map_sha256(found) != moved  # another cut is another map
     found.sessions[earlier["session"]] = cut | {"until": earlier["ts"]}  # at the very time
     assert told() == {"status": "error", "why": "evidence_order_unknown"}
     found.sessions[earlier["session"]] = cut | {"unknown": ["call_time"]}
