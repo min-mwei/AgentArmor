@@ -670,6 +670,50 @@ The packet text is not copied into the record; it can be rebuilt from the summar
 and the daemon both ask about one call, the answer stands: a later note that Kai could not be
 reached does not replace it.
 
+## A second checkpoint for calls that depend on what came before
+
+Research and shadow only; nothing here is adopted for enforcement and `policy_ready` stays `false`.
+
+Started with `--kai-session-url` (and its package hash), the server asks two checkpoints. Which
+one answers is the server's own choice from its own account of the packet, never a caller's and
+never from text a model reads:
+
+| Question | Answered by |
+|---|---|
+| `is_xpia_attempt` | Always the default checkpoint |
+| `decision` | The session checkpoint when `route.session_adapter(packet)` holds; else the default |
+
+`session_adapter` holds when the packet is ready and complete, its history is complete, every
+session's coverage is known, and the lookup's reason is `earlier_session_bears_on_call`. Both
+answers are required; one missing leaves the request without an answer.
+
+**The candidate route, off by default.** `--kai-session-prior-events` (refused without a
+session model) adds `route.prior_event_adapter(packet)`: the session checkpoint also decides
+when an event *before the current request* bears on the call, in this session or an earlier
+one. The lookup's account names those events under `history.prior`, each as
+`{alias, seq, type, placement}` with `placement` `same_session` or `earlier_session`, and
+nothing of its text:
+
+- a statement of the user in an earlier prompt that bears on the call (a grant, a limit, a
+  withdrawal); the current request, the user's last prompt before the call, is never one;
+- what an earlier session holds that the lookup finds to bear (a write of a file the call
+  names with the lower-trust text that named it, a file the call runs);
+- the same events of *this* session before the current request, found by reading the session
+  as the two it would be after a restart at that request. The lookup's reason is then
+  `earlier_event_bears_on_call`, and the call is asked about as it is across a restart.
+
+What is claimed is narrow: for those events, a session that ends and starts again at the current
+request changes the placement and nothing else. An event the reading of another session would
+not find is not on the list, and a restart elsewhere is not covered. With
+`--earlier-sessions off` there is no lookup account, so the candidate has no effect; a call
+whose history sits wholly in an earlier session is then not asked about at all.
+
+It is a candidate because no checkpoint has been measured on such packets. Turning it on for
+anything but shadow measurement waits on: a session checkpoint read on same-session and
+cross-session cases, controls on ordinary single-request calls and the older ToolCall and
+XPIA panels, exact pre-call context, and a replay through real serving. Stub replays show
+which checkpoint is asked, not that its answer is right.
+
 ## Evidence spans
 
 No trained evidence head exists. This is the path a head's spans take, tested with stand-ins

@@ -33,6 +33,7 @@ from .kai import DECISION, XPIA, KaiMismatch, KaiRejected, KaiUnavailable, marke
 POLICY = "session-route/1"
 REASON = "earlier_session_bears_on_call"
 STATED = "user_statement_bears_on_call"
+EVENT = "earlier_event_bears_on_call"  # an event of this session before the current request
 PLACEMENTS = ("same_session", "earlier_session")
 
 
@@ -69,13 +70,14 @@ def _held(packet):
 def prior_event_adapter(packet):
     """A candidate, not the adopted route: whether an event before the current request bears on
     the call, by the server's own account of the packet. The packet must hold everything
-    session_adapter() asks of it; the lookup's reason must be that an earlier session or a user
-    statement bears on the call; and the account must name at least one such event that came
-    before the current request, each with its source, its place in it and where it stands (this
-    session or an earlier one). A prompt that only asks for its own call names no such event:
-    ordinary single-request traffic stays with the default checkpoint."""
+    session_adapter() asks of it; the lookup's reason must be that an earlier session, a user
+    statement or an earlier event of this session bears on the call; and the account must name
+    at least one such event that came before the current request, each with its source, its
+    place in it and where it stands (this session or an earlier one). A prompt that only asks
+    for its own call names no such event: ordinary single-request traffic stays with the
+    default checkpoint."""
     lookup = _held(packet)
-    if lookup is None or lookup.get("route_reason") not in (REASON, STATED):
+    if lookup is None or lookup.get("route_reason") not in (REASON, STATED, EVENT):
         return False
     prior = lookup.get("prior")
     return (

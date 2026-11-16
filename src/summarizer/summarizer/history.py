@@ -1226,7 +1226,41 @@ def cut_at(others, until):
     return [other | {"summary": as_of(other["summary"], until)} for other in others]
 
 
-def select(mine, call_id, others, home):
+BEFORE = "\x00before"  # ends the key select() gives the part of a session before its request
+
+
+def _restarted(mine, call):
+    """The session mine as the two it would be had it ended just before the current request (the
+    user's last prompt before the call) and started again there: (before, after), each as select()
+    takes a session, or None when nothing but requests came before that prompt.
+
+    The part before is the summary as it stood at its last event before the request (as_of():
+    a mark that rests on what came later is no part of it, and what cannot be dated is said, as
+    for any other session), without anything from the request on. Nothing of it happened
+    between then and the call, so that is also how it stood when the call was proposed. The
+    part after is the entries from the request on. Nothing is read or written again."""
+    summary = {k: v for k, v in mine["summary"].items() if k != "as_of"}
+    entries = summary["entries"]
+    asked = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] < call["seq"]]
+    current = max(asked, default=None)
+    earlier = [e for e in entries if current is not None and e["seq"] < current]
+    if all(e["type"] == "prompt" for e in earlier):
+        return None
+    times = [float(e["ts"]) for e in earlier if _number(e.get("ts"))]
+    before = as_of(summary, max(times, default=0))
+    session = before["session"]
+    catalogue = [c for c in session.get("dropped_calls") or () if c["seq"] < current]
+    before = before | {"entries": [e for e in before["entries"] if e["seq"] < current]}
+    before |= {"session": session | {"dropped_calls": catalogue}}
+    stood = before["as_of"] | {"until": float(call.get("ts") or 0), "tied": False}
+    after = summary | {"entries": [e for e in entries if e["seq"] >= current]}
+    return (
+        mine | {"key": mine["key"] + BEFORE, "summary": before | {"as_of": stood}},
+        mine | {"summary": after},
+    )
+
+
+def select(mine, call_id, others, home, within=True):
     """What the other sessions hold for the call call_id of the session mine.
 
     mine and each of others is {"key", "summary", "cwd", "namespace"}; others are oldest first,
@@ -1249,6 +1283,13 @@ def select(mine, call_id, others, home):
          "route": "asked" | "unasked" | "undecided", "route_reason": ...,
          "prior": [{"key", "seq", "type", "placement"}, ...]}   what came before the current
                                              request and bears on the call (prior_events())
+
+    What this session itself did before the current request is held to the call by the very same
+    reading: the session is taken as the two it would be after a restart at that request
+    (_restarted()), and what that reading finds to bear, other than the user's statements, which
+    are found here already, is a prior event of this session. A call then goes the same way
+    whichever side of a restart its history happens to stand on. within=False leaves that out
+    (it is how the reading of the two parts is itself made).
 
     Items are in the order they should be shown: by source, then by event. Each is in one
     or more groups. A group of kind "writer" or "statement" is key evidence: it is shown
@@ -1588,6 +1629,18 @@ def select(mine, call_id, others, home):
         if "object_call_effects_not_known" not in unsupported:
             unsupported.append("object_call_effects_not_known")
         why.append("lookup_unfinished")
+    # What this session did before the current request, read as an earlier session's would be.
+    # What that reading could not finish is unfinished here: a writer of the call's file before
+    # the request cannot be ruled out any more than one in another session.
+    earlier_here, parts = [], _restarted(mine, call) if within else None
+    if parts is not None:
+        apart = select(parts[1], call_id, [parts[0]], home, within=False)
+        why += apart["why"]
+        earlier_here = [
+            one
+            for one in [*apart["items"], *apart["bridges"]]
+            if one.get("bears") and one.get("type", "action") != "prompt"
+        ]
     why = sorted(set(why))
     marked = LEVELS.get(call.get("level"), 0) >= LEVELS["medium"]
     linked = any(b["bears"] for b in bridges) or any(item.get("bears") for item in items)
@@ -1597,10 +1650,12 @@ def select(mine, call_id, others, home):
         route, reason = "asked", "earlier_session_bears_on_call"
     elif stated:
         route, reason = "asked", "user_statement_bears_on_call"
+    elif earlier_here:
+        route, reason = "asked", "earlier_event_bears_on_call"
     else:
         route, reason = ("asked", "marked") if marked else ("unasked", "nothing_earlier_bears")
     return {
-        "prior": prior_events(mine["key"], entries, call, stated, items, bridges),
+        "prior": prior_events(mine["key"], entries, call, stated, items, bridges, earlier_here),
         "sources": [key for key in searched if any(item["key"] == key for item in items)],
         "items": items,
         "groups": groups,
@@ -1619,16 +1674,22 @@ def select(mine, call_id, others, home):
     }
 
 
-def prior_events(key, entries, call, stated, items, bridges):
+def prior_events(key, entries, call, stated, items, bridges, earlier_here=()):
     """The events that came before the current request and bear on the call: who they are and
     where they stand, never what they mean.
 
     The current request is the user's last prompt before the call. A statement in that very
     prompt bears on the call it asks for and is no dependence on an earlier turn, so it is not
     here; a statement of an earlier prompt of this session is ("same_session"), and so is what
-    another session holds that bears on the call ("earlier_session"). The relation is the one
-    select() already found: a session that ends and starts again moves an event from one
-    placement to the other and changes nothing else.
+    another session holds that bears on the call ("earlier_session"). earlier_here is what
+    select() found of this session's own calls and of what they brought back before the
+    current request, by the reading it gives another session (the write of a file the call
+    names with the lower-trust text that named it, a file the call runs): "same_session" as
+    well, each once. For those, and for the user's statements, a session that ends and starts
+    again at the current request moves an event from one placement to the other and changes
+    nothing else. That is all that is claimed: an event of this session that the reading of
+    another session would not find is not here, and a restart anywhere else than at the
+    current request is not covered by this account.
     """
     asked = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] < call["seq"]]
     current = max(asked, default=None)
@@ -1638,6 +1699,13 @@ def prior_events(key, entries, call, stated, items, bridges):
         if current is not None and e["seq"] < current
     ]
     seen = set()
+    for one in earlier_here:
+        if (key, one["seq"]) not in seen:
+            seen.add((key, one["seq"]))
+            found.append(
+                {"key": key, "seq": one["seq"], "type": one.get("type", "action")}
+                | {"placement": "same_session"}
+            )
     for one in [*items, *bridges]:
         if one.get("bears") and (one["key"], one["seq"]) not in seen:
             seen.add((one["key"], one["seq"]))

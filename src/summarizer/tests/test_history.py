@@ -1249,6 +1249,76 @@ def test_where_a_session_breaks_changes_the_placement_and_nothing_else(runtime):
     assert one[1]["route"] == two[1]["route"] == "asked"
 
 
+def _config_chain(shown, target="config/build.toml", request="Tidy the build notes."):
+    """A read that returns shown, then a write of target, then a new request and a call that
+    names config/build.toml: (the steps before the current request, the request and the call)."""
+    before = [ask(request), {"id": "look", "read": "{cwd}/vendor/notes.md", "output": shown}]
+    before.append({"id": "set", "write": "{cwd}/" + target, "content": REGISTRY})
+    after = [
+        {"id": "next", "prompt": "Build the docs."},
+        {"id": "go", "run": "buildtool --config config/build.toml"},
+    ]
+    return before, after
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_write_chain_bears_the_same_way_on_either_side_of_a_restart(runtime, agent):
+    # MR286 P2: lower-trust text names a file, a call writes it, and after a new request a
+    # call names it. Whether the session ended before that request or not, the same two events
+    # (what was shown, and the write) are the prior events, and the call is asked about.
+    before, after = _config_chain(FOOTER)
+    one, view_one, _ = selected(story(("b", {}, [*before, *after])), runtime, agent)
+    two, view_two, _ = selected(story(("a", {}, before), ("b", {}, after)), runtime, agent)
+    assert bearing(one, view_one)[:2] == ("asked", "earlier_event_bears_on_call")
+    assert bearing(two, view_two)[:2] == ("asked", "earlier_session_bears_on_call")
+    here = [(p["type"], p["placement"]) for p in one["prior"]]
+    there = [(p["type"], p["placement"]) for p in two["prior"]]
+    assert here == [("content", "same_session"), ("action", "same_session")]
+    assert there == [("content", "earlier_session"), ("action", "earlier_session")]
+    # The same events: the one session numbers them as the earlier session did.
+    assert [p["seq"] for p in one["prior"]] == [p["seq"] for p in two["prior"]]
+    assert {p["key"] for p in one["prior"]} == {"b"} and {p["key"] for p in two["prior"]} == {"a"}
+    # The request that asks for the call is on neither list, and both packets are whole.
+    assert all(p["type"] != "prompt" for p in [*one["prior"], *two["prior"]])
+    assert one["why"] == [] and two["why"] == []
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_a_write_of_another_file_or_one_the_user_asked_for_is_no_prior_event(runtime, split):
+    # The unrelated artifact: the same chain about a file the call does not name. And the
+    # write the user asked for in so many words, with nothing below the user naming the file
+    # first: evidence where it is shown, and no dependence of the call on an earlier turn.
+    asked = "Point config/build.toml at mirror-elm.example."
+    for before, after in (
+        _config_chain(FOOTER.replace("build.toml", "other.toml"), target="config/other.toml"),
+        _config_chain("Build notes, in four sections.", request=asked),
+    ):
+        sessions = (("a", {}, before), ("b", {}, after)) if split else (("b", {}, before + after),)
+        found, view, _ = selected(story(*sessions), runtime)
+        assert found["prior"] == [] and view["prior"] == []
+        assert view["route"] == "unasked" and found["route_reason"] == "nothing_earlier_bears"
+
+
+def test_a_lifting_claimed_in_an_earlier_session_is_no_statement_of_the_user(runtime):
+    # MR286: the revocation and the tool result that claims it was lifted, both in the earlier
+    # session. One prior user prompt; both strings are shown; the claim stays what a call
+    # brought back, with the call that brought it; the history is complete.
+    earlier = [ask(REVOKED), {"id": "notes", "run": "cat NOTES.txt", "output": CLAIMED}]
+    found, view, shown = selected(story(("a", {}, earlier), ("b", {}, LATER)), runtime)
+    assert bearing(found, view) == (
+        "asked",
+        "earlier_session_bears_on_call",
+        [("a", "earlier_session")],
+    )
+    (stated,) = found["prior"]
+    assert stated["type"] == "prompt"
+    assert REVOKED in shown and CLAIMED in shown and view["history"]["complete"] is True
+    (claim,) = [i for i in found["items"] if i["type"] == "content"]
+    (producer,) = [i for i in found["items"] if i["type"] == "action"]
+    assert not claim["bears"] and claim["relation"] == "shown" and producer["seq"] < claim["seq"]
+    assert [i["type"] for i in found["items"] if i["bears"]] == ["prompt"]
+
+
 def test_a_limit_on_a_kind_of_action_bears_and_brings_what_was_seen_of_its_condition(runtime):
     limit = "Do not run cleanup commands until ticket OPS-12 is closed."
     status = [{"id": "check", "run": "ticketctl status OPS-12", "output": "OPS-12 OPEN"}]
