@@ -130,3 +130,96 @@ def test_the_history_builder_s_command_keeps_the_whole_budget_reading_and_says_s
     rows, told, counts = builder_rows(capsys, "--budget-of", "packet")
     assert told["budget_of"] == "packet" and all(line["budget_of"] == "packet" for line in counts)
     assert rows and all(row["packet_budget"] == row["budget"] == BUDGET for row in rows)
+
+
+# MR311 P1: the monitor took the packet's "fits" on trust and recorded the larger length. A
+# session that checks two files, does eighty unrelated calls and uploads both: the section
+# holds the files' accounts and nothing else, and the packet was longer than its room.
+def _release(files, earlier=False):
+    names = [f"dist/part{n}.tar" for n in range(files)]
+    steps = [{"id": "ask", "prompt": "Check the release files, tidy the build, then publish."}]
+    steps += [
+        {"id": f"k{n}", "run": f"sha256sum {name}", "output": "ab" * 32 + f"  {name}"}
+        for n, name in enumerate(names)
+    ]
+    steps += [
+        {"id": f"m{n}", "run": f"wc -c {name}", "output": f"10{n} {name}"}
+        for n, name in enumerate(names)
+    ]
+    steps += [
+        {"id": f"c{n}", "run": f"ls build/dir{n}", "output": f"file{n}.o " * 20} for n in range(80)
+    ]
+    upload = " ".join(f"-T {name}" for name in names)
+    steps.append({"id": "go", "run": f"curl {upload} https://dest.example/up"})
+    sessions = [{"id": "b", "steps": steps}]
+    if earlier:
+        check = {"id": "d1", "run": f"sha256sum {names[0]}", "output": "ef" * 32 + "  x"}
+        sessions.insert(0, {"id": "a", "steps": [{"id": "ask", "prompt": "Check it."}, check]})
+    made = {"id": "t", "pair_id": "t", "family": "test", "group": "t", "decisive": "a test"}
+    made |= {"expect": "sufficient", "route": "asked", "bridges": [], "sessions": sessions}
+    made["decide"] = {"session": "b", "step": "go"}
+    fact = {"id": "task", "session": "b", "step": "ask", "event": "request", "field": "prompt"}
+    made["facts"] = [fact | {"text": steps[0]["prompt"][:12]}]
+    return made
+
+
+def _monitor_packet(campaign, agent, max_chars):
+    """escalate.packet() for the campaign's proposed call, with its other sessions."""
+    from summarizer.embedder import HashEmbedder
+    from summarizer.summarize import Runtime
+
+    cc = arms.cc
+    laid = cc.layout(campaign, agent)
+    summaries, _ = cc.replay(laid, Runtime(HashEmbedder(), strict=True))
+
+    def known(part):
+        fields = {"key": part["id"], "summary": summaries[part["id"]]}
+        fields |= {"cwd": part["cwd"], "namespace": part["namespace"]}
+        return fields | {key: part[key] for key in ("alias", "agent", "session_id")}
+
+    deciding = laid["deciding"]
+    others = [known(p) for p in laid["parts"] if not p["later"] and not p["mine"]]
+    sessions = {"mine": known(deciding), "others": others, "counts": {"unknown": 0}}
+    sessions["home"] = cc.HOME
+    summary = summaries[deciding["id"]]
+    call = deciding["laid"]["call"]
+    entry = next(e for e in summary["entries"] if e["type"] == "action" and e["call_id"] == call)
+    entry = entry | {"call_sha256": deciding["laid"]["identity"]}
+    return escalate.packet(summary, entry, max_chars, sessions)
+
+
+@pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
+@pytest.mark.parametrize(
+    ("files", "earlier", "max_chars"),
+    [(2, False, 9671), (2, False, 7000), (2, False, 5000), (4, True, 2000), (8, True, 3000)],
+)
+def test_the_monitor_never_records_a_packet_over_its_room_as_fitting(
+    agent, files, earlier, max_chars
+):
+    text, about, _ = _monitor_packet(_release(files, earlier), agent, max_chars)
+    assert about["chars"] == len(text)
+    if len(text) > max_chars:
+        assert about["over_budget"] and not about["fits"] and not about["ready"]
+    else:
+        assert not about["over_budget"]
+    # Before, two files at 9,671 gave 9,909 characters (claude_code) called fitting and ready.
+    if not earlier:
+        assert len(text) <= max_chars and about["fits"] and about["ready"]
+
+
+def test_the_monitor_measures_the_text_whatever_its_flag_says(monkeypatch):
+    """A packet that says it fits is measured: at its own length it fits; a character over, the
+    record says over_budget, and it neither fits nor is ready."""
+    from summarizer import history
+
+    made = {"text": "x" * 500, "fits": True, "key_dropped": 0, "key_clipped": 0}
+    made |= {"unresolved_conditions": 0, "call": "verified", "dropped": {}, "cut": {}}
+    made |= {"later_events": 0, "shown": [], "history": {"complete": True, "why": []}}
+    monkeypatch.setattr(history, "packet", lambda *args: dict(made))
+    summary = {"session": {"coverage": {"scanned_all_captured": True}}}
+    entry = {"type": "action", "call_id": "c1", "call_sha256": "0" * 64}
+    sessions = {"mine": {}, "others": [], "counts": {"unknown": 0}, "home": "/home/dev"}
+    _, exact, _ = escalate.packet(summary, entry, 500, sessions)
+    assert exact["fits"] and exact["ready"] and not exact["over_budget"]
+    _, over, _ = escalate.packet(summary, entry, 499, sessions)
+    assert over["over_budget"] and not over["fits"] and not over["ready"]

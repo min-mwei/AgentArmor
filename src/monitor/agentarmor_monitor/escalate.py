@@ -111,7 +111,11 @@ def packet(summary, entry, max_chars, sessions=None):
         )
     coverage = summary["session"]["coverage"]
     gaps = shown["key_dropped"] or shown["key_clipped"] or shown["unresolved_conditions"]
-    ready = bool(shown["fits"] and not gaps and coverage["scanned_all_captured"])
+    # The text is measured here, and its own flag is not taken on trust (MR311 P1): a packet
+    # longer than its room does not fit, whatever it says, and is not ready.
+    over_budget = len(shown["text"]) > max_chars
+    fits = bool(shown["fits"] and not over_budget)
+    ready = bool(fits and not gaps and coverage["scanned_all_captured"])
     lookup = None
     if sessions is not None:
         account = shown.get("history") or {}
@@ -138,7 +142,8 @@ def packet(summary, entry, max_chars, sessions=None):
         "max_chars": max_chars,
         "sha256": hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest(),
         "call": shown["call"],
-        "fits": shown["fits"],
+        "fits": fits,
+        "over_budget": over_budget,
         "dropped": shown["dropped"],  # lines that found no room, by section
         "key_dropped": shown["key_dropped"],
         # Lines that quote less of their entry than there is, by kind, and those among them
@@ -557,6 +562,12 @@ def detect(
         body = state(rules, text, call, observed)
         key = request_sha256(body, questions)
         record["packet"] |= {"state_chars": len(body), "request_sha256": key}
+        # The state is measured too, without the observation section, which is outside the
+        # budget (MR311 P1): one longer than max_chars is over budget, does not fit, and is
+        # sent only as incomplete.
+        if len(state(rules, text, call)) > max_chars:
+            record["packet"] |= {"fits": False, "ready": False, "complete": False}
+            record["packet"]["over_budget"] = True
 
         room = max(size, MIN_CHARS)
 

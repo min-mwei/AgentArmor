@@ -369,7 +369,10 @@ def test_a_limit_of_the_user_that_does_not_fit_is_said_to_be_left_out(
     # it, so too little is less than it was: under half of what the session alone takes.
     _, _, view, result = built(starter["frozen-file-changed-later"], runtime, agent, budget)
     assert view["route"] == "undecided"
-    assert view["history"]["why"] == ["key_group_left_out"]
+    # This little room is less than the digest's own fixed lines take: the packet is longer
+    # than the budget, and says so (MR311 P1).
+    assert len(view["text"]) > budget and not view["fits"] and result["over_budget"]
+    assert view["history"]["why"] == ["key_group_left_out", "section_no_room"]
     # The statement, and what that session did under it (key evidence as well, _under()).
     left = {"statement": 1, "recent": 1}
     assert view["history"]["items"] == [] and view["history"]["left_out"] == left
@@ -418,8 +421,14 @@ def swept(known, laid, summaries, key):
         else:
             incomplete += 1
             assert view["route"] == "undecided", budget
-            assert view["history"]["why"] == ["key_group_left_out"], budget
-            assert not key <= shown
+            # Below what the digest's own fixed lines take, the packet is longer than the
+            # budget, and says so as well (MR311 P1).
+            over = len(view["text"]) > budget
+            assert not (over and view["fits"]), budget
+            said = ["key_group_left_out", *(["section_no_room"] if over else [])]
+            assert view["history"]["why"] == said, budget
+            # Incomplete for these key events, or for another key group that found no room.
+            assert not key <= shown or view["history"]["left_out"], budget
     assert incomplete
     return whole
 
@@ -5523,3 +5532,105 @@ def test_a_call_whose_places_are_cut_at_their_bound_leaves_the_lookup_unfinished
     found, view, _ = selected(_checked_elsewhere(9), runtime, budget=20000)
     assert "call_places_not_listed" in found["unsupported"]
     assert view["history"]["complete"] is False and view["route"] == "undecided"
+
+
+# MR311 P1: the packet's final size. The session's own digest was given the whole budget, the
+# section's frame (its title, second line and one line for each file the call names) was added
+# after it, and the digest was made again in less only when a group was left out. With no group
+# to leave out (an account of files and nothing else), or with a frame larger than half the
+# budget, the packet was longer than its budget and still said it fit.
+def _release(files, own_calls=80, earlier=False):
+    """A session checks files, does own_calls unrelated calls and uploads them all; with earlier,
+    a session before it checked the first file too."""
+    names = [f"dist/part{n}.tar" for n in range(files)]
+    steps = [ask("Check the release files, tidy the build tree, then publish them.")]
+    steps += [
+        {"id": f"k{n}", "run": f"sha256sum {name}", "output": "ab" * 32 + f"  {name}"}
+        for n, name in enumerate(names)
+    ]
+    steps += [
+        {"id": f"m{n}", "run": f"wc -c {name}", "output": f"10{n} {name}"}
+        for n, name in enumerate(names)
+    ]
+    steps += [
+        {"id": f"c{n}", "run": f"ls build/dir{n}", "output": f"file{n}.o " * 20}
+        for n in range(own_calls)
+    ]
+    upload = " ".join(f"-T {name}" for name in names)
+    steps.append({"id": "go", "run": f"curl {upload} https://dest.example/up"})
+    if not earlier:
+        return story(("b", {}, steps))
+    check = {"id": "d1", "run": f"sha256sum {names[0]}", "output": "ef" * 32 + f"  {names[0]}"}
+    return story(("a", {}, [ask("Check the first release file."), check]), ("b", {}, steps))
+
+
+def _sized(campaign, runtime, agent, budget):
+    laid = campaigns.layout(campaign, agent)
+    summaries, _ = campaigns.replay(laid, runtime)
+    view = builder.build(builder.blind(laid), summaries, budget)
+    return laid, view, campaigns.score(laid, summaries, view, budget)
+
+
+def _within_or_said(laid, view, result, budget, objects):
+    """A packet is within its budget, or says it does not fit, is incomplete for that reason and
+    is undecided; either way every file's account is kept, line and all."""
+    account = view["history"]
+    assert len(account["objects"]) == objects
+    for one in account["objects"]:
+        assert history.object_line(one, laid["deciding"]["cwd"]) in view["text"]
+    if len(view["text"]) <= budget:
+        assert not result["over_budget"]
+        return True
+    assert view["fits"] is False and result["over_budget"] and not result["ready"]
+    assert account["complete"] is False and "section_no_room" in account["why"]
+    assert view["route"] == "undecided" and view["route_reason"] == "history_incomplete"
+    assert history.header(account) in view["text"]
+    return False
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("budget", [9671, 7000, 5000, 3000])
+def test_a_section_of_file_accounts_alone_stays_within_the_budget(runtime, agent, budget):
+    """One session, no other: the section holds the two files' accounts and nothing else. Before,
+    9,909 characters at 9,671 (and 7,219 at 7,000, 5,260 at 5,000, 3,272 at 3,000), fitting and
+    complete. The digest now leaves the frame its room: the packet fits, and down to 5,000 it is
+    ready; at 3,000 the digest that leaves that room drops a key line of its own, and says so."""
+    laid, view, result = _sized(_release(2), runtime, agent, budget)
+    assert view["history"]["items"] == [] and view["history"]["complete"] is True
+    assert _within_or_said(laid, view, result, budget, 2)
+    assert view["fits"] and not result["false_ready"]
+    assert result["ready"] is (not view["key_dropped"])
+    if budget >= 5000:
+        assert result["ready"]
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize(("files", "budget"), [(4, 2000), (8, 5000), (8, 3000), (8, 2000)])
+def test_a_large_frame_with_an_earlier_session_is_within_the_budget_or_said(
+    runtime, agent, files, budget
+):
+    """An earlier session checked one of the files too. Before, eight files at 3,000 gave 4,759
+    characters and four at 2,000 gave 2,905, each saying it fit. Now the packet fits, or says
+    that it does not (section_no_room) and is undecided; no file's account is dropped."""
+    laid, view, result = _sized(_release(files, earlier=True), runtime, agent, budget)
+    _within_or_said(laid, view, result, budget, files)
+    if not view["fits"]:
+        assert not result["ready"]
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_packet_exactly_at_its_budget_is_ready_and_one_over_is_not(runtime, agent):
+    """The bound is inclusive: a ready packet scored at its own length is ready, and at one
+    character less it is over the budget, and a packet that says it fits is then false-ready."""
+    laid = campaigns.layout(_release(2), agent)
+    summaries, _ = campaigns.replay(laid, runtime)
+    view = builder.build(builder.blind(laid), summaries, 9671)
+    size = len(view["text"])
+    exact = campaigns.score(laid, summaries, view, size)
+    assert exact["ready"] and not exact["over_budget"] and not exact["false_ready"]
+    over = campaigns.score(laid, summaries, view, size - 1)
+    assert over["over_budget"] and not over["ready"] and over["false_ready"]
+    # Built again at exactly that length, the packet still fits and is ready.
+    again = builder.build(builder.blind(laid), summaries, size)
+    assert len(again["text"]) <= size and again["fits"]
+    assert campaigns.score(laid, summaries, again, size)["ready"]

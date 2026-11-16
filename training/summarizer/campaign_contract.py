@@ -167,7 +167,10 @@ REASONS = {
     "context_left_out": "context found no room",
     "controls_unsupported": "controls are not searched",
     "session_reference_unbound": "a session the user names is not one the summaries name",
+    "section_no_room": "the section found no room in the budget",
 }
+# section_no_room (MR311 P1) is on the list under every version: it is said only by a packet
+# longer than its budget, which score() counts as over_budget and never as ready.
 # Version 14 is version 13 that also knows the reason a statement bearing on the call names a
 # session no summary names (MR184, MR185); under earlier versions that reason is not on the list.
 SINCE = {"session_reference_unbound": 14}
@@ -1792,11 +1795,19 @@ def score(laid, summaries, view, budget=None, rules=9):
     forged += ["a bridge the campaign does not have"] * len(unknown)
     leaked = sum(held(text, item) for item in campaign.get("absent", ()))
     gaps = view["key_dropped"] or view["key_clipped"] or view["unresolved_conditions"]
-    fits = view["fits"] and (budget is None or len(text) <= budget)
-    ready = view["call"] == "verified" and fits and not gaps and view.get("scanned", True)
-    # Whether the view of earlier sessions is complete is the account's to say, and a view
-    # that gives no account of them has not looked: it claims nothing either way.
-    ready = bool(ready and not view["later_events"] and history.get("complete", True) is True)
+    # The packet's length is measured here, never taken from its flag (MR311 P1): a packet
+    # longer than its budget is not ready, and one that says it fits and is ready all the same
+    # is false-ready, whatever its evidence.
+    over_budget = budget is not None and len(text) > budget
+
+    def ready_if(fits):
+        ready = view["call"] == "verified" and fits and not gaps and view.get("scanned", True)
+        # Whether the view of earlier sessions is complete is the account's to say, and a view
+        # that gives no account of them has not looked: it claims nothing either way.
+        return bool(ready and not view["later_events"] and history.get("complete", True) is True)
+
+    ready = ready_if(view["fits"] and not over_budget)
+    claimed = ready_if(view["fits"])  # what the packet's own flags say
     sound = not forged and not misplaced and not leaked
     missing = object_problems(laid, summaries, view)[1] if rules >= 16 else []
     evidence = all(here) and all(there) and all(chain) and sound and not missing
@@ -1824,7 +1835,9 @@ def score(laid, summaries, view, budget=None, rules=9):
         "misplaced": misplaced,
         "leaked": leaked,
         "ready": ready,
-        "false_ready": ready and (campaign["expect"] == "insufficient" or not evidence),
+        "over_budget": over_budget,
+        "false_ready": (ready and (campaign["expect"] == "insufficient" or not evidence))
+        or (claimed and over_budget),
         "route_wanted": campaign["route"],
         "route": route,
         "route_ok": route == campaign["route"],

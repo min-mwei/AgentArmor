@@ -3109,6 +3109,7 @@ REASONS = {
     "context_left_out": "context found no room",
     "controls_unsupported": "controls are not searched",
     "session_reference_unbound": "a session the user names is not one the summaries name",
+    "section_no_room": "the section found no room in the budget",
 }
 
 
@@ -3183,6 +3184,13 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     in less, down to one part in OWN_SHARE of the budget, and kept only if more then finds
     room: a long session does not crowd out the write that planted the file it is about to
     run. What the shorter digest leaves out it counts, as it does at any size.
+
+    The section's frame (its title, its second line at the longest it can be written, a line for
+    each file the call names and each condition's candidate evidence) is never left out, and
+    room for it is kept whole (MR311 P1): where the digest leaves too little, the digest is made
+    again in what the frame leaves, below OWN_SHARE if it must, counting what it drops. The
+    final text is then measured. A packet still longer than its budget says so: "fits" is
+    False, the history is incomplete (section_no_room) and the route undecided. Nothing is cut.
     """
     from .text import condition_line_for, digest, entry_lines
 
@@ -3259,7 +3267,21 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # whose search has a gap: one line each, after the section's other lines (MR196).
     objects = [account for account in found["objects"] if account["events"] or account["gaps"]]
     told_of = [object_line(account, mine["cwd"]) for account in objects]
-    frame = len(TITLE) + 80 + sum(len(line) + 1 for line in told_of)  # title, second line, objects
+    # Something a searched session keeps at the very time of the call (below) leaves the lookup
+    # unfinished whatever is placed.
+    tied = any(parts[key]["summary"]["as_of"]["tied"] for key in found["searched"] if key in parts)
+    passed = found["controls_not_applying"]
+    # The section's second line at its longest: every reason it can come to give, or the count
+    # of every source and line it could show (MR311 P1).
+    may = [*found["why"], "key_group_left_out", "context_left_out", "lookup_unfinished"]
+    may = [reason for reason in REASONS if reason in may]
+    shown_at_most = sum(len(made) for made in rendered)
+    second = max(
+        len(header({"complete": False, "why": may})),
+        len(f"{COMPLETE}{len(found['sources'])} sources shown, {shown_at_most} lines"),
+    )
+    # The title, the second line and each object's line, each with the line break before it.
+    frame = len(TITLE) + 1 + second + 1 + sum(len(line) + 1 for line in told_of)
     # Conditions of this session that only an earlier session can settle: room for each one's
     # line of candidate evidence is kept before anything else is placed (MR201 ruling).
     elsewhere = _settled_only_elsewhere(mine, view, found["objects"], home)
@@ -3285,16 +3307,32 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     def lacks(why):
         return ("key_group_left_out" in why, "context_left_out" in why)
 
+    # Whether there will be a section at all: lines of other sessions, or anything the account
+    # must say. Without one, the digest keeps the whole budget, as it always has.
+    sectioned = bool(found["items"] or found["why"] or found["unresolved"] or passed)
+    sectioned = sectioned or bool(objects or tied)
+
+    def over(view, chosen):
+        """Whether the digest, the frame and the chosen lines exceed the budget."""
+        need = len(view["text"]) + frame + sum(cost(index) for index in chosen)
+        return sectioned and need > budget
+
+    whole_budget = view
     chosen, left, why = placed(view)
-    if left:
+    if left or over(view, chosen):
         # First for the key evidence alone, then for all that was found: the session's own
         # lines give way as far as that brings more in, and no further.
         key = {index for group in found["groups"] if group["key"] for index in members(group)}
-        for wanted in (range(len(rendered)), key):
-            less = max(budget - frame - sum(cost(index) for index in wanted), budget // OWN_SHARE)
-            shorter = digested(less) if less < len(view["text"]) else view
+        tries = [
+            max(budget - frame - sum(cost(index) for index in wanted), budget // OWN_SHARE)
+            for wanted in (range(len(rendered)), key)
+        ]
+        # Last, for the frame alone, which is never left out: below OWN_SHARE if it must be.
+        tries.append(budget - frame)
+        for less in tries:
+            shorter = digested(max(less, 0)) if less < len(view["text"]) else view
             again = placed(shorter)
-            if lacks(again[2]) < lacks(why):
+            if (over(shorter, again[0]), *lacks(again[2])) < (over(view, chosen), *lacks(why)):
                 view, (chosen, left, why) = shorter, again
     # An observation retrieved by a key and a number is evidence only whole (MR233): a group of one
     # that found room but has a line quoting less of its entry than there is (a call longer than a
@@ -3326,7 +3364,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # "tied"): which came first is not known, so the account is not complete (MR243-2), as
     # earlier.scope() counts such a session as not known. The lookup's route is its own and
     # stands: a tie is read and kept, and never makes a packet complete (MR173-1).
-    if any(parts[key]["summary"]["as_of"]["tied"] for key in found["searched"] if key in parts):
+    if tied:
         if "cutoff_tied" not in unsupported:
             unsupported.append("cutoff_tied")
         if "lookup_unfinished" not in why:
@@ -3343,7 +3381,6 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # searched without knowing that keeps its account, also when nothing in it matched.
     # So does a lookup whose only finding is a control it passed over: the account is how
     # that is traced, and it puts nothing of the control before the reader (MR146-1).
-    passed = found["controls_not_applying"]
     # What came before the current request and bears on the call, by alias: an identity of the
     # event, with nothing of its text.
     aliases = {key: other["alias"] for key, other in parts.items()} | {mine["key"]: mine["alias"]}
@@ -3354,7 +3391,8 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         if one["key"] in aliases
     ]
     if not items and not why and not found["unresolved"] and not passed and not objects:
-        return view | {
+        # No section after all: the digest keeps the whole budget.
+        return whole_budget | {
             "route": found["route"],
             "route_reason": found["route_reason"],
             "prior": prior,
@@ -3401,6 +3439,15 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     shown = [f"[s:{source['alias']}] {words}: {line}" for source, _, words, line, _ in items]
     body, _, footer = view["text"].rpartition("\n")
     text = "\n".join([body, TITLE, header(account), *shown, *told_of, footer])
+    # The packet as written is measured (MR311 P1). One longer than its budget is not cut: it
+    # says that it does not fit and that its history is incomplete, and so is undecided.
+    fits = view["fits"]
+    if len(text) > budget:
+        fits = False
+        if "section_no_room" not in why:
+            why.append("section_no_room")
+        account |= {"complete": False, "why": list(why)}
+        text = "\n".join([body, TITLE, header(account), *shown, *told_of, footer])
     # What the account says beyond the section's own lines: what was found and not shown,
     # why what the call uses could not be told, and which sources may be another place.
     for name, value in (("left_out", left), ("unsupported", unsupported)):
@@ -3434,4 +3481,4 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     route = "undecided" if why else found["route"]
     reason = "history_incomplete" if why else found["route_reason"]
     told = {"text": text, "history": account, "route": route, "route_reason": reason}
-    return view | told | {"prior": prior}
+    return view | told | {"fits": fits, "prior": prior}
