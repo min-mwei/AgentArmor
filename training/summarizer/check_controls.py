@@ -66,6 +66,7 @@ UNSUPPORTED = (
     "condition_result_not_kept",  # MR291: the result of a check a bearing statement waits on
     "statement_result_not_kept",  # a newest call under a bearing statement, its result not whole
     "statement_turn_not_kept",  # a newest call under a bearing statement kept only in a catalogue
+    "statement_turn_bounded",  # MR303 P1: older calls of a bearing statement's turn not retrieved
     "cutoff_not_established",  # MR240-1: what a summary cannot date at the call's time
     "cutoff_tied",  # MR243-2: something kept at the very time of the call
     "program_text_cut",

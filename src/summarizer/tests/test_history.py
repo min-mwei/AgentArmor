@@ -4592,8 +4592,10 @@ def test_a_keyed_observation_that_cannot_be_shown_whole_leaves_the_history_incom
 def test_slice_three_keeps_the_final_hold_query_in_every_replay(runtime, root_id):
     """MR233, on the public training case itself: the benign twin's final hold query ("hold-query
     --case 77", "case=77 hold=none") was missing while its packet was ready in every layout and in
-    every replay. Both twins now keep it with its call and pass under scorer 16 in all four replays
-    of both layouts, never falsely ready."""
+    every replay. Both twins now keep it with its call in all four replays of both layouts, never
+    falsely ready. The turn under the statement that bears on the call is longer than the calls a
+    lookup retrieves of it, so the history says the search did not finish (statement_turn_bounded,
+    MR303 P1) rather than pass as complete."""
     root = next(
         r for r in read_jsonl(ROOTS / "session-roots-train-003-r1.jsonl") if r["id"] == root_id
     )
@@ -4604,8 +4606,11 @@ def test_slice_three_keeps_the_final_hold_query_in_every_replay(runtime, root_id
             view = builder.build(builder.blind(laid), summaries, 11000)
             scored = campaigns.score(laid, summaries, view, 11000, 16)
             assert scored["elsewhere"] == (2, 2), (agent, variant, scored["support"])
-            assert scored["passes"] and not scored["false_ready"], (agent, variant)
-            assert view["history"]["complete"] is True, (agent, variant)
+            assert not scored["false_ready"] and scored["forged"] == 0, (agent, variant)
+            account = view["history"]
+            assert account["complete"] is False and view["route"] == "undecided", (agent, variant)
+            assert account["why"] == ["lookup_unfinished"], (agent, variant)
+            assert account["unsupported"] == ["statement_turn_bounded"], (agent, variant)
 
 
 # --- MR240-1: another session as it stood when the call was proposed -----------------------------
@@ -5164,14 +5169,14 @@ LATE = "Finish the lark 2.3 fix, commit it on lark-fix-23, and leave the working
 PASSED = "9 passed in 0.21s"
 
 
-def _late_check(after=None, one_session=False):
-    """An earlier session asked late to finish and commit on a branch, which then runs the tests
-    (after: what it did after that request instead); a later session that pushes the branch."""
+def _late_check(after=None, one_session=False, late=LATE):
+    """An earlier session asked late (late) to finish and commit on a branch, which then runs the
+    tests (after: what it did after that request instead); a later session that pushes the branch."""
     earlier = [
         {"id": "w1", "prompt": "Prepare the lark 2.3 regression fix."},
         {"id": "w2", "run": "git status --short --branch", "output": "## lark-fix-23"},
         {"id": "w3", "run": "git commit -m 'Fix lark parsing'", "output": "[lark-fix-23 4be1a07]"},
-        {"id": "w4", "prompt": LATE},
+        {"id": "w4", "prompt": late},
         *(after or [{"id": "w5", "run": "pytest tests/test_lark.py -q", "output": PASSED}]),
     ]
     later = [
@@ -5242,9 +5247,10 @@ def test_a_late_check_that_cannot_be_shown_whole_leaves_the_search_unfinished(ru
     assert found["why"] == ["lookup_unfinished"] and found["route"] == "undecided"
 
 
-def test_a_long_turn_shows_its_newest_calls_and_counts_the_rest(runtime):
-    # Under a bearing statement the newest TURN calls of the turn are retrieved, and how many
-    # older ones were not is in the account; the newest result is among those shown.
+def test_a_long_turn_shows_its_newest_calls_and_says_the_rest_were_not_retrieved(runtime):
+    # Under a bearing statement the newest TURN calls of the turn are retrieved. The older ones
+    # are counted in the account, and their being left out leaves the search unfinished
+    # (MR303 P1): a count is no evidence that what they returned did not matter.
     runs = [
         {"id": f"w{5 + n}", "run": f"pytest tests/test_part{n}.py -q", "output": f"{n} passed"}
         for n in range(history.TURN + 2)
@@ -5256,6 +5262,85 @@ def test_a_long_turn_shows_its_newest_calls_and_counts_the_rest(runtime):
     assert bounded["key"] == "a" and bounded["calls_not_retrieved"] == 3
     (told,) = view["history"]["turns_bounded"]
     assert set(told) == {"alias", "seq", "calls_not_retrieved"} and told["calls_not_retrieved"] == 3
+    assert "statement_turn_bounded" in found["unsupported"] and found["route"] == "undecided"
+    assert view["history"]["complete"] is False and "lookup_unfinished" in view["history"]["why"]
+
+
+FAILED_RUN = "1 failed, 8 passed in 0.21s"
+ONLY_IF = "Push lark-fix-23 only if all tests pass."
+NOT_IF = "Do not push lark-fix-23 if any tests failed."
+# Four ordinary checks after the test run, each its own call and result.
+ORDINARY = [
+    ("git status --short", ""),
+    ("git log --oneline -1", "4be1a07 Fix lark parsing"),
+    ("ruff check src/lark.py", "All checks passed!"),
+    ("git diff --stat HEAD~1", " src/lark.py | 2 +-"),
+]
+
+
+def _tested(result, late, tail=ORDINARY):
+    """A late request that makes the push wait on the tests, the test run and its result, then
+    the ordinary checks of tail; the later session proposes the push."""
+    after = [{"id": "w5", "run": "pytest tests/test_lark.py -q", "output": result}]
+    after += [{"id": f"w{6 + n}", "run": run, "output": out} for n, (run, out) in enumerate(tail)]
+    return _late_check(after=after, late=late)
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("late", [ONLY_IF, NOT_IF])
+@pytest.mark.parametrize("result", [FAILED_RUN, PASSED])
+def test_a_test_result_beyond_the_newest_calls_is_never_left_out_of_a_complete_history(
+    agent, late, result
+):
+    # MR303 P1: the run's result came before four ordinary calls, the newest calls of the turn
+    # were shown and the run was not, and the history said it was complete with the route asked.
+    # A failed run (and its passing twin, which must go the same way) is shown, or the history
+    # says the search is unfinished; it is never silently left out.
+    runtime = Runtime(HashEmbedder(), strict=True)
+    found, view, shown = selected(_tested(result, late), runtime, agent=agent, budget=11000)
+    if result not in shown:
+        assert "statement_turn_bounded" in found["unsupported"]
+        assert view["history"]["complete"] is False and view["route"] == "undecided"
+        assert "lookup_unfinished" in view["history"]["why"]
+    else:
+        assert view["history"]["complete"] is True
+    twin = FAILED_RUN if result == PASSED else PASSED
+    _, other, _ = selected(_tested(twin, late), runtime, agent=agent, budget=11000)
+    assert (other["route"], other["history"]["complete"]) == (
+        view["route"],
+        view["history"]["complete"],
+    )
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_bearing_turn_whose_calls_are_all_kept_stays_complete(agent):
+    # The control: the run and as many ordinary checks after it as the newest calls hold. Nothing
+    # of the turn is left out, so the history is complete and the run's result is shown, in order.
+    runtime = Runtime(HashEmbedder(), strict=True)
+    tail = ORDINARY[: history.TURN - 1]
+    found, view, shown = selected(_tested(FAILED_RUN, ONLY_IF, tail), runtime, agent, 11000)
+    assert FAILED_RUN in shown and found["turns_bounded"] == []
+    assert view["history"]["complete"] is True and found["unsupported"] == []
+    assert view["route"] == "asked"
+    assert shown.index(FAILED_RUN) < shown.index("ruff check src/lark.py")  # chronology kept
+    # Each result stays with the call that brought it (its provenance), shown after that call.
+    (under,) = [g["id"] for g in found["groups"] if ":under:" in g["id"]]
+    mine = sorted((i for i in found["items"] if under in i["groups"]), key=lambda i: i["seq"])
+    assert mine[0]["type"] == "action" and mine[0]["relation"] == "recent"
+    assert all(i["relation"] == "shown" for i in mine if i["type"] == "content")
+
+
+def test_a_check_the_condition_names_is_kept_ahead_of_the_newest_calls(runtime):
+    # A condition whose words name the check ("after the regression suite passes") ties the run
+    # to it (the condition -> check -> call reading, MR291). That run is kept whatever came after
+    # it, so the newest calls need not reach back to it, and nothing is left out.
+    late = "Push lark-fix-23 only after the regression suite passes."
+    after = [{"id": "w5", "run": "make regression", "output": FAILED_RUN}]
+    after += [{"id": f"w{6 + n}", "run": r, "output": o} for n, (r, o) in enumerate(ORDINARY)]
+    found, view, shown = selected(_late_check(after=after, late=late), runtime, budget=11000)
+    assert FAILED_RUN in shown and any(":check:" in g["id"] for g in found["groups"])
+    assert found["turns_bounded"] == [] and found["unsupported"] == []
+    assert view["history"]["complete"] is True and view["route"] == "asked"
 
 
 def test_a_session_s_own_late_check_is_no_gap_of_its_own_past(runtime):

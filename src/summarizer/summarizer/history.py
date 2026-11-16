@@ -461,7 +461,7 @@ PLACES = ("domain", "url", "ip", "email")  # observables that are somewhere a ca
 _FROM_CALLS = frozenset({"action_source", "destination_source"})
 UNDER = 3  # writes shown of what a session did under a bound the user stated
 # Under a statement that bears on the call, the newest other calls of that turn shown with all that
-# came back (a test run, a status check); any more are counted, never dropped in silence (_under).
+# came back (a test run, a status check); any more are counted and leave the search unfinished.
 TURN = 4
 OBJECT_EVENTS = 8  # recorded events listed in an object's account, the newest; the rest counted
 EARLIER = 3  # other requests of the project's earlier sessions shown as context, the newest
@@ -997,6 +997,21 @@ def _checks(prompt):
         if _OUTCOME.search(said):
             found |= {word.lower() for word in _CHECK_WORD.findall(said)} - _NO_CHECK
     return found
+
+
+def _condition_checks(entries, said_at, words):
+    """The calls a session made after a statement whose words name what its condition waits on
+    (words, _checks()): the newest MAX_CHECKS, in order. A call is one of them by its own words,
+    never by what came back. select() shows each with all that came back; _under() counts them
+    as shown of that statement's turn."""
+    made = [
+        e
+        for e in entries
+        if e["type"] == "action"
+        and e["seq"] > said_at
+        and words & {w.lower() for w in _CHECK_WORD.findall(str(e.get("text") or ""))}
+    ]
+    return made[-MAX_CHECKS:] if words else []
 
 
 def _keyed(text):
@@ -1686,14 +1701,7 @@ def select(mine, call_id, others, home, within=True):
         for key, said_at, words in waits:
             if key != other["key"]:
                 continue
-            made = [
-                e
-                for e in entries_there
-                if e["type"] == "action"
-                and e["seq"] > said_at
-                and words & {w.lower() for w in _CHECK_WORD.findall(str(e.get("text") or ""))}
-            ]
-            for entry in made[-MAX_CHECKS:]:
+            for entry in _condition_checks(entries_there, said_at, words):
                 group = f"{key}:check:{entry['seq']}"
                 groups.append({"id": group, "kind": "named", "key": True, "bears": False})
                 # Every piece that came back for it, one it had seen before included (_arrived).
@@ -2881,12 +2889,15 @@ def _under(other, prompt, taken, key=False):
     Under a statement that bears on the call (key), what the session then did is key evidence
     whatever the tool: a test run or a status check made after the request is what was known of
     it when that session moved on, and a call that is no write was left out of the packet while
-    the packet said it was complete. So the newest TURN other calls of that turn are shown as
-    well, each with all that came back, in the same group. Older calls of a longer turn are not
-    retrieved, as older writes are not (UNDER); how many is counted ("bounded") and the account
-    says so. What cannot be shown of those newest calls leaves the search unfinished (gaps): a
-    call the summary lists only in its catalogue ("statement_turn_not_kept"), or a result it does
-    not keep whole ("statement_result_not_kept"). Nothing here says what a result means."""
+    the packet said it was complete. The calls a condition of the statement names (its checks,
+    _condition_checks()) are shown by select() in groups of their own whatever came after them,
+    so they are kept ahead of the rest; then the newest TURN other calls of the turn are shown
+    as well, each with all that came back, in this group. Older calls of a longer turn are not
+    retrieved; how many is counted ("bounded"), and what they returned is then not known to be
+    beside the point, so that leaves the search unfinished ("statement_turn_bounded", MR303 P1),
+    as does a call among the newest that the summary lists only in its catalogue
+    ("statement_turn_not_kept") or one whose result it does not keep whole
+    ("statement_result_not_kept"). Nothing here says what a result means."""
     entries = other["summary"]["entries"]
     later = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] > prompt["seq"]]
     end = min(later, default=float("inf"))
@@ -2897,6 +2908,7 @@ def _under(other, prompt, taken, key=False):
     items, seen, gaps, rest, bounded = [], set(taken), set(), [], 0
     if key:
         chosen = {e["seq"] for e in writes}
+        chosen |= {e["seq"] for e in _condition_checks(entries, prompt["seq"], _checks(prompt))}
         rest = [
             e
             for e in turn
@@ -2914,6 +2926,8 @@ def _under(other, prompt, taken, key=False):
         ]
         window = sorted([*rest, *listed], key=lambda e: e["seq"])
         bounded, window = max(0, len(window) - TURN), window[-TURN:]
+        if bounded:
+            gaps.add("statement_turn_bounded")
         if any(e.get("listed") for e in window) or session.get("dropped_calls_not_listed"):
             gaps.add("statement_turn_not_kept")  # not kept, or kept where it is not known
         rest = [e for e in window if not e.get("listed")]
