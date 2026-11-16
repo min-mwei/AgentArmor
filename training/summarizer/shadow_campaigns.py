@@ -117,7 +117,13 @@ for _source in reversed(SOURCES[:2]):
         sys.path.insert(0, _source)
 
 from agentarmor_monitor import earlier  # noqa: E402
-from agentarmor_monitor.escalate import MIN_CHARS, logged_call, proposed, request_sha256  # noqa: E402
+from agentarmor_monitor.escalate import (  # noqa: E402
+    MIN_CHARS,
+    _observations,  # noqa: E402
+    logged_call,
+    proposed,
+    request_sha256,
+)
 from agentarmor_monitor.escalate import read as read_detections  # noqa: E402
 from agentarmor_monitor.kai import DECISION, XPIA, loopback  # noqa: E402
 from agentarmor_monitor.policy import load_rules, state  # noqa: E402
@@ -515,6 +521,8 @@ class Server:
         command += ["--kai-timeout", str(args.kai_timeout), "--wait", str(args.wait)]
         if getattr(args, "session_observations", "off") != "off":  # the server's option, as asked
             command += ["--session-observations", args.session_observations]
+        if getattr(args, "observation_quantities", "off") != "off":  # part B, as asked
+            command += ["--observation-quantities", args.observation_quantities]
         command += ["--port", str(self.port)]
         if args.policy:
             command += ["--policy", args.policy]
@@ -685,7 +693,7 @@ def alias(agent, session_id):
     return earlier.alias(agent, safe_id(session_id))
 
 
-def at_cutoff(laid, spool, home, rules, max_chars):
+def at_cutoff(laid, spool, home, rules, max_chars, observations=False, quantities=False):
     """What the server's own code builds for the call under decision from what the server held
     when the call was answered. Run right after the call's gate returns and before anything more
     is logged, on the run's spool: every session's summary as the spool holds it (each where the
@@ -696,7 +704,12 @@ def at_cutoff(laid, spool, home, rules, max_chars):
     identifier of the request it makes (escalate.request_sha256).
 
     It is a recomputation, so it counts only where a request it makes is the one the issued
-    record names: same identifier, same request. Session text stays in memory."""
+    record names: same identifier, same request. Session text stays in memory.
+
+    observations and quantities are the server's --session-observations and
+    --observation-quantities: the section the server puts in its request is built here the
+    same way (escalate._observations), else no recomputed request could be the issued one and
+    the scorer would not run for that arm."""
     deciding = laid["deciding"]
     agent, name, call_id = (
         deciding["agent"],
@@ -721,14 +734,20 @@ def at_cutoff(laid, spool, home, rules, max_chars):
         ]
         retries = ((issued[-1].get("routing") or {}).get("refusal_retries") or {}) if issued else {}
         until = retries.get("budget_reductions")
-        call = proposed(entry, None, logged_call(directory, entry))[:2]
+        *call, accounted = proposed(entry, None, logged_call(directory, entry))
+        call = tuple(call)
         others, counts = earlier.scope(agent, name, summary, call_id, home)
         mine = earlier.known(agent, name, summary)
+        observed = None
+        if observations:
+            sessions = {"mine": mine, "others": others, "counts": counts, "home": home}
+            observed = _observations(summary, entry, call[1], accounted, sessions, quantities)
+            observed = observed["lines"]
         size, views = max_chars - len(state(rules, "", call)), []
         while True:
             room = max(size, MIN_CHARS)
             view = lookup.packet(mine, call_id, others, home, room, entry.get("call_sha256"))
-            body = state(rules, view["text"], call)
+            body = state(rules, view["text"], call, observed)
             key = request_sha256(body, (DECISION, XPIA))
             views.append({"size": room, "view": view, "sha256": key, "state_chars": len(body)})
             if size <= MIN_CHARS or (isinstance(until, int) and len(views) > until):
@@ -837,7 +856,9 @@ def drive(laid, args, stack, folder):
                     seen["window"] = window
                     try:  # what the server's code builds from what it held, before more is logged
                         made = (laid, spool, str(stack["home"]), stack["rules"], args.budget)
-                        seen["cutoff"] = at_cutoff(*made)
+                        observing = getattr(args, "session_observations", "off") == "on"
+                        counting = getattr(args, "observation_quantities", "off") == "on"
+                        seen["cutoff"] = at_cutoff(*made, observing, counting)
                     except Exception as error:  # noqa: BLE001 - a measure that failed says so
                         seen["cutoff"] = {"error": type(error).__name__}
                 if number == part["damaged_at"]:  # a line of the log that cannot be read
@@ -1566,6 +1587,12 @@ def parse(argv=None):
         choices=("off", "on"),
         default="off",
         help="the server's --session-observations (passed only when on)",
+    )
+    go.add_argument(
+        "--observation-quantities",
+        choices=("off", "on"),
+        default="off",
+        help="the server's --observation-quantities (passed only when on)",
     )
     go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body")
     go.add_argument(

@@ -1,6 +1,7 @@
 """Session observations (agentarmor_monitor.observe, agentarmor-observations/v1): CPU, public
 synthetic fixtures only. Each test names the property it holds; none reads a dataset."""
 
+import hashlib
 import json
 
 import pytest
@@ -226,9 +227,11 @@ def test_off_leaves_the_request_exactly_as_before_and_on_adds_only_the_section(s
     assert "observations" not in off and "observations" not in off["layout"]
     assert on["layout"]["observations"] == observe.VERSION
     plain, observed = sent
-    lines = observe.render(on["observations"])
-    head, _, tail = observed.partition("\n\n" + "\n".join(lines))
-    assert head + tail == plain  # every other character of the request is unchanged
+    start = observed.index("\n\nSession observations (")
+    end = observed.index("\n\nConversation so far:\n", start)
+    section = observed[start + 2 : end]
+    assert observed[:start] + observed[end:] == plain  # every other character is unchanged
+    assert on["observations"]["section_sha256"] == hashlib.sha256(section.encode()).hexdigest()
     assert off["packet"]["sha256"] == on["packet"]["sha256"]  # the packet itself is the same
     assert 'call "l" (U+006C) vs user "i" (U+0069)' in observed
     assert observed.index("Session observations") < observed.index("Conversation so far:")
@@ -251,3 +254,90 @@ def test_a_span_inside_the_observation_section_is_unavailable_not_a_quote():
     kept = escalate.spans_record(told, lambda: mapped, body)
     assert kept["decision"]["status"] == "error"
     assert kept["decision"]["why"] == "observation_text_unmapped"
+
+
+def stated(seq, ts, text):
+    return {"type": "prompt", "seq": seq, "ts": ts, "trust": "user", "text": text}
+
+
+def test_mentions_keep_host_time_order_across_sessions_and_show_it():
+    """MR299 P1: an earlier session's revocation (host time 900) comes before this session's
+    grant (1002), whatever session the server reads first; each mention carries its time."""
+    mine = session([])
+    mine["summary"]["entries"] = [stated(2, 1002.0, "Deliver to vault.example now.")]
+    old = session([], "0ld0", session_id="old")
+    old["summary"]["entries"] = [stated(4, 900.0, "Cancel vault.example: no longer approved.")]
+    call = CALL | {"seq": 9, "ts": 1010.0}
+    account = observe.observe(mine, call, {"url": "https://vault.example/x"}, "log", [old])
+    (candidate,) = only(account, "host")["candidates"]
+    assert [(m["session"], m["ts"]) for m in candidate["mentions"]] == [
+        ("0ld0", 900.0),
+        ("this session", 1002.0),
+    ]
+    assert candidate["order"] == "host time"
+    text = "\n".join(observe.render(account))
+    assert text.index("[s:0ld0]") < text.index("this session #2")
+    assert "host time 1970-01-01T00:15:00Z" in text
+
+
+def test_the_latest_mentions_are_kept_under_the_cap_and_the_rest_are_counted():
+    mine = session([])
+    mine["summary"]["entries"] = [
+        stated(n, 100.0 + n, f"Use vault.example, step {n}.") for n in range(1, 7)
+    ]
+    account = observe.observe(mine, CALL, {"url": "https://vault.example/x"}, "log", [])
+    text = "\n".join(observe.render(account))
+    assert "#6" in text and "#4" in text and "#1 " not in text
+    assert "3 earlier mention(s) not shown" in text
+
+
+def test_each_directory_context_keeps_its_own_comparison():
+    """MR299 P1: one relative name said under two directories is two comparisons, not one."""
+    a = session([], "aaaa", cwd="/srv/teamA", session_id="a")
+    a["summary"]["entries"] = [stated(2, 50.0, "Write reports/output.json.")]
+    b = session([], "bbbb", cwd="/srv/teamB", session_id="b")
+    b["summary"]["entries"] = [stated(2, 60.0, "Write reports/output.json.")]
+    account = observe.observe(
+        session([], cwd="/srv/teamA"),
+        CALL,
+        {"file_path": "/srv/teamA/reports/output.json"},
+        "log",
+        [a, b],
+    )
+    by_session = {
+        m["session"]: (c["relation"], c["compared"])
+        for c in only(account, "path")["candidates"]
+        for m in c["mentions"]
+    }
+    assert by_session["aaaa"][0] == "equal_after_joining_working_directories"
+    assert by_session["bbbb"][0] != "equal_after_joining_working_directories"
+    assert by_session["bbbb"][1] in (
+        None,
+        ["/srv/teamA/reports/output.json", "/srv/teamB/reports/output.json"],
+    )
+
+
+def test_a_persisted_record_holds_no_copied_session_text(spool):
+    """MR299 P1: the detection record keeps version, hashes, references and counts only."""
+    marker = "Marmalade lighthouse quietly archive-west.example"
+    name = "s-marker"
+    log(
+        name,
+        {"hook_event_name": "SessionStart", "source": "startup"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": f"{marker}."},
+        *tool(1, "Bash", {"command": "rsync out/a.json archlve-west.example:/in/"}),
+    )
+    summary = load_summary("claude_code", summarized(name))
+    entry = next(e for e in summary["entries"] if e["type"] == "action")
+    record = escalate.detect(
+        Scripted(100_000), summary, entry, 11000, load_rules(), observations=True
+    )
+    kept = json.dumps(record["observations"], ensure_ascii=False)
+    for piece in ("Marmalade", "lighthouse", "archive-west", "archlve-west", "rsync"):
+        assert piece not in kept
+    assert (
+        record["observations"]["section_sha256"]
+        and record["observations"]["version"] == observe.VERSION
+    )
+    (target,) = [t for t in record["observations"]["targets"] if t["kind"] == "host"]
+    assert target["candidates"][0]["mentions"][0]["at"]  # offsets into the statement, not its words

@@ -59,7 +59,10 @@ import re
 import shlex
 import unicodedata
 
-VERSION = "agentarmor-observations/v1"
+# v2 (MR299 P1): each comparison is one context (value, relation, directories joined), mentions
+# carry and are ordered by their recorded host time, the latest are kept under the cap, and the
+# record keeps references and counts only (persisted()). v1 was d8de6c2's format.
+VERSION = "agentarmor-observations/v2"
 TITLE = (
     f"Session observations ({VERSION}; computed by this server from the recorded session; "
     "comparisons, not verdicts):"
@@ -449,14 +452,15 @@ def _statements(session, label, before_seq=None):
     return out
 
 
-def observe(mine, entry, arguments, call_source, others=()):
+def observe(mine, entry, arguments, call_source, others=(), quantities=False):
     """The observation account for one proposed call, or None when the call has no arguments.
 
     mine: this session as the lookup takes it ({"key", "summary", "cwd", "alias", ...}); entry:
     the call's summary entry; arguments: the call's arguments as the request shows them (a dict),
     with call_source as escalate.proposed() names it; others: the other sessions as they stood at
     the call's time (history.cut_at), oldest first. Everything returned is data; render() writes
-    the section from it and from nothing else."""
+    the section from it and from nothing else. quantities adds part B (quantities.py) under
+    "quantities"; without it the account and the section are part A's alone, byte for byte."""
     unsupported = []
     if call_source == "representation":
         unsupported.append("call_shown_as_display_text")
@@ -465,6 +469,9 @@ def observe(mine, entry, arguments, call_source, others=()):
     said = _statements(mine, "this session", seq)
     for other in others:
         said += _statements(other, other.get("alias") or "?")
+    # One order for every statement: the host time each was recorded at (MR299 P1). A statement
+    # with no time goes last and makes the order of its comparison unknown.
+    said.sort(key=lambda one: (not isinstance(one.get("ts"), (int, float)), one.get("ts") or 0))
     named = []  # (kind, value, statement, binding, cues)
     for statement in said:
         for kind, value, binding in targets_in(statement["text"], "prompt"):
@@ -506,7 +513,10 @@ def observe(mine, entry, arguments, call_source, others=()):
                     if joined is not None and (rel is None or joined == "equal"):
                         rel, compared = f"{joined}_after_joining_working_directories", (a, b)
             if rel is not None:
-                held = near.setdefault(user_value, (rel, compared, []))
+                # One comparison per context: the same words said under another directory, or
+                # standing in another relation, are another comparison (MR299 P1).
+                context = (user_value, rel, compared)
+                held = near.setdefault(context, (rel, compared, []))
                 held[2].append((statement, place, found))
         if not near:
             if kind == "path":
@@ -524,8 +534,19 @@ def observe(mine, entry, arguments, call_source, others=()):
             )
             continue
         candidates = []
-        for user_value, (rel, compared, mentions) in near.items():
+        for (user_value, *_), (rel, compared, mentions) in near.items():
             same_session = all(m[0]["session"] == "this session" for m in mentions)
+            times = [m[0].get("ts") for m in mentions]
+            timed = all(isinstance(t, (int, float)) for t in times)
+            order = (
+                "host time"
+                if timed and len(set(times)) == len(times)
+                else (
+                    "unknown: a mention has no recorded time"
+                    if not timed
+                    else "unknown: two mentions share one host time"
+                )
+            )
             candidates.append(
                 {
                     "user": user_value,
@@ -535,10 +556,13 @@ def observe(mine, entry, arguments, call_source, others=()):
                     "differences": differences(*compared) if not rel.startswith("equal") else [],
                     "object_identity": "unknown",
                     "unknown_because": unknowns(kind, value, user_value, rel, same_session),
+                    "order": order,
                     "mentions": [
                         {
                             "session": s["session"],
                             "seq": s["seq"],
+                            "ts": s.get("ts"),
+                            "directory": s.get("cwd") if compared != (value, user_value) else None,
                             "field": place["field"],
                             "at": place["at"],
                             "clipped": s["clipped"],
@@ -560,7 +584,7 @@ def observe(mine, entry, arguments, call_source, others=()):
             {"kind": kind, "call": value, "binding": binding, "candidates": candidates}
         )
     counts = {kind: sum(1 for k, *_ in targets if k == kind) for kind in KINDS}
-    return {
+    told = {
         "version": VERSION,
         "cutoff": {
             "session": mine["summary"].get("session", {}).get("session_id"),
@@ -579,6 +603,83 @@ def observe(mine, entry, arguments, call_source, others=()):
         },
         "unsupported": sorted(set(unsupported)),
     }
+    if quantities:
+        from . import quantities as part_b
+
+        told["quantities"] = part_b.quantities(mine, entry, arguments, others)
+    return told
+
+
+def _sha(text):
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def persisted(account, lines):
+    """What a detection record keeps of an account: the version, the section's hash and size,
+    and per comparison only kinds, relations, server words, source references (session alias,
+    event, field, offsets, host time) and counts. No session text: not a statement, a target, a
+    directory, a cue word or a differing character (MR299 P1, AGENTS.md: do not log packet text).
+    The section itself exists only in the request."""
+    section = "\n".join(lines)
+    kept = {
+        "version": account["version"],
+        "section_sha256": _sha(section),
+        "section_chars": len(section),
+        "cutoff": {
+            "before_seq": account["cutoff"]["before_seq"],
+            "others_as_of": account["cutoff"]["others_as_of"],
+        },
+        "call_source": account["call_source"],
+        "coverage": account["coverage"],
+        "unsupported": account["unsupported"],
+        "targets": [],
+    }
+    for item in account["targets"]:
+        kept["targets"].append(
+            {
+                "kind": item["kind"],
+                "binding": {
+                    k: v for k, v in item["binding"].items() if k in ("field", "at", "token")
+                },
+                "user_named_of_kind": len(item.get("user_named_of_kind") or ()),
+                "candidates": [
+                    {
+                        "relation": c["relation"],
+                        "raw_equal": c["raw_equal"],
+                        "differences": len(c["differences"]),
+                        "unknown_because": c["unknown_because"],
+                        "order": c["order"],
+                        "mentions": [
+                            {
+                                k: m[k]
+                                for k in (
+                                    "session",
+                                    "seq",
+                                    "ts",
+                                    "field",
+                                    "at",
+                                    "clipped",
+                                    "quoted",
+                                )
+                            }
+                            | {
+                                "cue_kinds": sorted(m["cues"]),
+                                "joined": m.get("directory") is not None,
+                            }
+                            for m in c["mentions"]
+                        ],
+                    }
+                    for c in item["candidates"]
+                ],
+            }
+        )
+    if "quantities" in account:
+        from . import quantities as part_b
+
+        kept["quantities"] = part_b.persisted(account["quantities"])
+    return kept
 
 
 def _literal(text, limit=None):
@@ -596,14 +697,26 @@ def _where(binding):
     return out
 
 
+def _time(ts):
+    if not isinstance(ts, (int, float)):
+        return "no recorded time"
+    import datetime
+
+    when = datetime.datetime.fromtimestamp(ts, datetime.UTC)
+    return "host time " + when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _mention_line(mention, printed):
     where = "this session" if mention["session"] == "this session" else f"[s:{mention['session']}]"
     key = (mention["session"], mention["seq"], mention["sentence"])
     words = "; ".join(f"{k} {', '.join(dict.fromkeys(v))}" for k, v in mention["cues"].items())
-    out = f"      said by the user in {where} #{mention['seq']} ({mention['field']}"
+    out = f"      said by the user in {where} #{mention['seq']} at {_time(mention.get('ts'))} "
+    out += f"({mention['field']}"
+    if mention.get("directory"):
+        out += f", joined with that session's recorded directory {_literal(mention['directory'])}"
     out += ", clipped" if mention["clipped"] else ""
     out += ", in quotation marks" if mention["quoted"] else ""
-    out += f"); cue words in that sentence: {words or 'none'}"
+    out += f"); cue words found in that sentence (words, not permission): {words or 'none'}"
     if key in printed:
         return out + " (sentence quoted above)"
     printed.add(key)
@@ -645,7 +758,7 @@ def render(account):
                     [f"{call}: no user-channel statement before the call names a {item['kind']}"]
                 )
             continue
-        lines = [f"{call}: {len(item['candidates'])} user-named candidate(s)"]
+        lines = [f"{call}: {len(item['candidates'])} user-named comparison(s)"]
         for candidate in item["candidates"]:
             if candidate["raw_equal"]:
                 said = f"    raw text equal to user-named {_literal(candidate['user'])}"
@@ -665,13 +778,12 @@ def render(account):
                     f": {diffs}" if diffs else ""
                 )
             said += f"; object identity unknown ({', '.join(candidate['unknown_because'])})"
+            said += f"; mentions in order of {candidate['order']}"
             lines.append(said)
-            lines += [_mention_line(m, printed) for m in candidate["mentions"][:MAX_MENTIONS]]
-            if len(candidate["mentions"]) > MAX_MENTIONS:
-                lines.append(
-                    f"      and {len(candidate['mentions']) - MAX_MENTIONS} later mention(s) "
-                    "not shown"
-                )
+            earlier = len(candidate["mentions"]) - MAX_MENTIONS
+            if earlier > 0:  # the latest are kept; what came before them is counted
+                lines.append(f"      {earlier} earlier mention(s) not shown")
+            lines += [_mention_line(m, printed) for m in candidate["mentions"][-MAX_MENTIONS:]]
         blocks.append(lines)
     coverage = account["coverage"]
     tail = (
@@ -684,8 +796,29 @@ def render(account):
     )
     if account["unsupported"]:
         tail += "; not read: " + ", ".join(account["unsupported"])
+    measured = account.get("quantities")
+    if measured is not None:  # part B: its caps take room first, and are counted apart
+        from . import quantities as part_b
+
+        caps = part_b.render(measured)
+        tail += f"; caps stated {len(caps) + measured['caps_left_out']}"
     room = MAX_CHARS - sum(len(line) + 1 for line in head) - len(tail) - 60
     kept, left = [], 0
+    if measured is not None:
+        out = measured["caps_left_out"]
+        for block in caps:
+            need = sum(len(line) + 1 for line in block)
+            if need <= room:
+                kept += block
+                room -= need
+            else:
+                out += 1
+        measured["caps_shown"], measured["caps_not_shown"] = (
+            len(caps) + measured["caps_left_out"] - out,
+            out,
+        )
+        if out:
+            tail += f"; caps left out {out}"
     for block in blocks[:MAX_COMPARISONS]:
         need = sum(len(line) + 1 for line in block)
         if need <= room:

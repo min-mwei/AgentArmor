@@ -38,6 +38,7 @@ from .hostfacts_profile import allows, resolve
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
 from .observe import VERSION as OBSERVATIONS
 from .policy import LAYOUT, load_rules
+from .quantities import VERSION as QUANTITIES
 
 SLOTS = 4  # calls decided at once; a caller beyond that is told so, and never queued unseen
 SETTLE = 0.5  # seconds an event that is being appended is given to arrive whole
@@ -161,6 +162,7 @@ def judge(
     earlier=None,
     with_earlier=False,
     observations=False,
+    quantities=False,
 ):
     """(verdict, record, why) for one proposed call, named as a hook event names it.
 
@@ -317,6 +319,7 @@ def judge(
         explain=explain,
         sessions=sessions,
         observations=observations,
+        quantities=quantities,
     )
     counts = record.get("requests") or {}
     sent = counts.get("transport_attempts", 0)
@@ -377,6 +380,7 @@ class Decider:
         earlier=None,
         include_earlier=False,
         observations=False,
+        quantities=False,
     ):
         if mode not in MODES:
             raise ValueError(f"a server's mode is one of {MODES}")
@@ -392,6 +396,9 @@ class Decider:
         self.include_earlier = include_earlier
         # Whether a decision request carries this server's session observations (observe.py).
         self.observations = bool(observations)
+        if quantities and not observations:
+            raise ValueError("quantities are a part of the session observations: turn those on")
+        self.quantities = bool(quantities)
         self.client = client
         self.rules = load_rules() if rules is None else rules
         self.level, self.max_chars, self.wait = level, max_chars, wait
@@ -401,18 +408,22 @@ class Decider:
 
     def about(self):
         """What a decision here rests on, for /health: no session text, and no secret."""
-        return {
-            "policy": self.policy,
-            "mode": self.mode,
-            "level": self.level,
-            "max_chars": self.max_chars,
-            "layout": LAYOUT,
-            "at_once": self.slots,
-            "summary_identity_checked": self.made_with is not None,
-            "earlier_sessions": "on"
-            if self.include_earlier
-            else (self.earlier.about() if self.earlier else "off"),
-        } | ({"session_observations": OBSERVATIONS} if self.observations else {})
+        return (
+            {
+                "policy": self.policy,
+                "mode": self.mode,
+                "level": self.level,
+                "max_chars": self.max_chars,
+                "layout": LAYOUT,
+                "at_once": self.slots,
+                "summary_identity_checked": self.made_with is not None,
+                "earlier_sessions": "on"
+                if self.include_earlier
+                else (self.earlier.about() if self.earlier else "off"),
+            }
+            | ({"session_observations": OBSERVATIONS} if self.observations else {})
+            | ({"observation_quantities": QUANTITIES} if self.quantities else {})
+        )
 
     def decide(self, asked):
         """The receipt for one question. Never raises: a check that failed is not a pass.
@@ -445,6 +456,7 @@ class Decider:
                     earlier=ticket,
                     with_earlier=self.include_earlier,
                     observations=self.observations,
+                    quantities=self.quantities,
                 )
             except Exception as error:
                 note(asked["agent"], error, "failed")

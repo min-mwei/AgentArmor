@@ -420,3 +420,23 @@ def test_the_summary_holds_no_session_text(ran):
     body = (ran["out"] / "summary.json").read_text(encoding="utf-8")
     assert json.loads(body) == ran["summary"]
     assert not [t for t in texts if t in body or json.dumps(t)[1:-1] in body]
+
+
+@pytest.mark.parametrize(
+    "more",
+    [
+        ("--session-observations", "on"),
+        ("--session-observations", "on", "--observation-quantities", "on"),
+    ],
+)
+def test_with_observations_on_the_recomputed_request_is_the_issued_one_and_is_scored(
+    written, tmp_path, more
+):
+    """The cutoff rebuild puts in the same observation section the server did: otherwise no
+    rebuilt request is the issued one and the evidence score is null for every observed run."""
+    record, _ = one_run(written, tmp_path / "out", "--layouts", "claude_code", *more)
+    sent = received(tmp_path / "out", record["run"])
+    assert any("\n\nSession observations (" in state for state in sent)
+    recomputed = record["measures"]["a_evidence"]["recomputed"]
+    assert recomputed["matches_issued_request"] is True
+    assert record["measures"]["a_evidence"]["scored"]["evidence_ok"] is not None

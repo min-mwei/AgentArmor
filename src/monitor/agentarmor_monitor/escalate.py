@@ -437,6 +437,7 @@ def detect(
     sessions=None,
     maps=None,
     observations=False,
+    quantities=False,
 ):
     """Send one trigger's packet to Kai and return the detection record.
 
@@ -444,7 +445,9 @@ def detect(
     request the section of session observations this server computes for the call
     (observe.py, agentarmor-observations/v1). The packet is budgeted exactly as without it,
     so the session's lines and the call are unchanged; the record keeps the typed account
-    under "observations" and names the version under layout.
+    under "observations" and names the version under layout. quantities (the operator's
+    `--observation-quantities on`, with observations on) adds part B, cumulative quantities
+    (quantities.py), to that section; without it the section is part A's byte for byte.
 
     maps, when given, receives source_map() for each request made up, under its
     request_sha256, before anything is sent: for a caller that needs to know where a
@@ -518,9 +521,12 @@ def detect(
         call, questions = (tool, shown), (DECISION, XPIA)
     observed = None
     if observations and call is not None:
-        observed = _observations(summary, entry, shown, account, sessions)
-        record["observations"] = observed["account"]
-        record["layout"]["observations"] = observed["account"]["version"]
+        observed = _observations(summary, entry, shown, account, sessions, quantities)
+        # The record keeps references and counts, never the section's copied text (MR299 P1).
+        record["observations"] = observed["kept"]
+        record["layout"]["observations"] = observed["kept"]["version"]
+        if quantities:
+            record["layout"]["observations"] += "+" + observed["kept"]["quantities"]["version"]
         observed = observed["lines"]
     # What the rules and the call leave. The observation section is outside this budget, so a
     # packet is the same with the option on as off (observe.py).
@@ -618,9 +624,10 @@ def detect(
         return record | {"status": "scored"}
 
 
-def _observations(summary, entry, shown, account, sessions):
-    """{"account", "lines"}: observe.observe() for the call as the request shows it, over this
-    session up to the call and the other sessions as they stood at the call's time."""
+def _observations(summary, entry, shown, account, sessions, quantities=False):
+    """{"account", "lines", "kept"}: observe.observe() for the call as the request shows it, over
+    this session up to the call and the other sessions as they stood at the call's time; "kept"
+    is observe.persisted(), the only part a record holds."""
     from summarizer import history
 
     from . import observe
@@ -635,11 +642,13 @@ def _observations(summary, entry, shown, account, sessions):
     else:
         mine = {"summary": summary, "cwd": str(summary["session"].get("cwd") or ""), "alias": None}
         others = []
-    found = observe.observe(mine, entry, arguments, account.get("call_source"), others)
+    found = observe.observe(
+        mine, entry, arguments, account.get("call_source"), others, quantities=quantities
+    )
     if sessions is None:
         found["coverage"]["other_sessions"] = "not read (earlier sessions off)"
     lines = observe.render(found)
-    return {"account": found, "lines": lines}
+    return {"account": found, "lines": lines, "kept": observe.persisted(found, lines)}
 
 
 # What can happen to a request, each counted apart (see detect).
