@@ -207,10 +207,21 @@ Three checks say whether a summary can support a decision about a call:
   call names whose result arrived and is not in the summary at all; they are counted in
   `key_dropped` and the last line says so: a summary keeps the results of the newest sixteen
   such calls, `Config.max_related`, since what a call does to a file may turn on what an
-  earlier read or check of it showed, however plain the result), `cut` (lines that quote less of
+  earlier read or check of it showed, however plain the result), `related_results_partial`
+  (such calls whose result the summary holds only in part: a long result is kept by its head
+  and its tail and the line that matters may be between them, so it is counted in
+  `key_clipped` and the last line says so), `cut` (lines that quote less of
   their entry's text than there is, counted by kind: `prompt`, `action`, `message`) and
   `key_clipped` (those among them that selection treats as key: a key request, an earlier
   call that is key or marked medium or high, a marked message with nothing noted beside it).
+  The lookup across sessions reads a call the same way whatever tool makes it: a tool with no
+  command line names the paths in its input, as a command names the ones in its words, and
+  never its own name. A user request bears on a later call as a candidate when it states a
+  limit, a permission, a withdrawal, or something that must stay as it is ("keeping … required"),
+  and is tied to the call by a path, a word or its kind of action; a request that names where
+  to send or publish, or what to delete or install, bears on a later call of that kind
+  whether the call names that target or one that only resembles it. These make a call one to
+  ask about. They never say what the answer is.
   A request, an earlier call and a message are quoted up to a limit. A piece of lower-trust
   content is not: its line shows the whole piece or is left out and counted in `dropped`. The
   text's last line gives the same counts, as in `text cut short: prompts 2, actions 1 (1 of

@@ -2369,6 +2369,39 @@ def test_what_an_earlier_read_showed_of_the_file_a_call_names_is_shown_or_missed
     assert views["on"]["text"] != views["off"]["text"]  # the two sessions can be told apart
 
 
+def test_a_long_result_held_by_head_and_tail_is_not_counted_as_held(runtime):
+    # A long read of the file a call is about to apply: the summary keeps its head and its tail,
+    # and the one line the user's request turns on is between them. The packet said it had the
+    # read. Held in part is key evidence cut short, and the last line says so.
+    lines = [f"option_{index}: value_{index} for the demo cache layer" for index in range(120)]
+    lines[60] = "strict_mode: off"
+    script = Script().start()
+    script.prompt("Roll the cache settings out to the demo service, keeping strict mode on.")
+    script.tool("Bash", {"command": f"cat {CWD}/conf/cache.yml"}, "\n".join(lines))
+    for index in range(12):
+        script.tool("Bash", {"command": f"python tools/probe_{index}.py"}, f"probe {index} fine")
+    final = {"command": "python tools/apply_cache.py conf/cache.yml"}
+    script.tool("Bash", final)
+    summary = summarize(script.events, runtime)
+    shown = digest(
+        summary, 11000, focus=f"call-{script.calls}", call_sha256=call_sha256("Bash", final)
+    )
+    assert shown["related_results_missing"] == 0  # some of it is held
+    # Whichever pieces were kept, fewer are held than came back, and which one matters is not
+    # the summary's to say: the read counts as cut short whether or not the line is among them.
+    assert shown["related_results_partial"] == 1 and shown["key_clipped"] >= 1
+    assert "held only in part" in shown["text"].split("\n")[-1]
+    whole = [f"option_{index}: on" for index in range(3)]  # a short read is held whole
+    script = Script().start().prompt("Roll the cache settings out to the demo service.")
+    script.tool("Bash", {"command": f"cat {CWD}/conf/cache.yml"}, "\n".join(whole))
+    script.tool("Bash", final)
+    summary = summarize(script.events, runtime)
+    shown = digest(
+        summary, 11000, focus=f"call-{script.calls}", call_sha256=call_sha256("Bash", final)
+    )
+    assert shown["related_results_partial"] == 0 and shown["key_clipped"] == 0
+
+
 def test_a_result_the_summary_did_not_keep_of_the_file_a_call_names_is_counted(runtime):
     # More earlier calls on the file than a summary keeps results for: those it leaves out are
     # counted as key evidence that is not there, and the last line says so.

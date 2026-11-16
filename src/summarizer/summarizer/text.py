@@ -434,6 +434,30 @@ def _related_results(summary, target):
     return calls - {None, ""}, missing
 
 
+def _related_partial(summary, target):
+    """How many earlier calls on a file the call under decision names have a result this summary
+    holds only in part: fewer pieces than came back (a long result is kept by its head and its
+    tail, and the line that matters may be between them). Held in part is not held: the count
+    stands with the key evidence cut short, and the last line says so. It reads only what the
+    summary records of each call (result_pieces, and the pieces that are entries here)."""
+    calls, _ = _related_results(summary, target)
+    if not calls:
+        return 0
+    held = {}
+    for piece in summary["entries"]:
+        if piece["type"] != "content" or piece.get("aside"):
+            continue
+        for call_id in {piece.get("call_id"), *(a["call_id"] for a in piece.get("seen_again", ()))}:
+            held.setdefault(call_id, set()).add(piece.get("sha256") or piece["seq"])
+    return sum(
+        1
+        for entry in summary["entries"]
+        if entry["type"] == "action"
+        and entry.get("call_id") in calls
+        and 0 < len(held.get(entry.get("call_id"), ())) < int(entry.get("result_pieces") or 0)
+    )
+
+
 def _lines(summary, focus, budget, state, whole=frozenset()):
     """Every candidate line in display order, as (rank, key, section, text, cut).
 
@@ -736,7 +760,7 @@ def condition_line_for(conditions, elsewhere=()):
 CUT_KINDS = ("prompt", "action", "message")  # a piece of content is never cut
 
 
-def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False, missing=0):
+def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False, missing=0, partial=0):
     """The packet's last line: what the summary and the budget left out, and what is cut.
 
     cut counts the lines that show less of their entry's text than there is, by kind. With
@@ -761,6 +785,10 @@ def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False, missing
     if missing:  # key evidence the summary itself does not hold (_related_results)
         parts.append(
             f"results of {missing} earlier calls on what this call names are not in this summary"
+        )
+    if partial:  # held by head and tail only (_related_partial)
+        parts.append(
+            f"results of {partial} earlier calls on what this call names are held only in part"
         )
     if dropped:
         over = ", ".join(f"{name} {count}" for name, count in dropped.items())
@@ -787,7 +815,8 @@ def digest(summary, max_chars=3000, focus=None, measure=len, call_sha256=None):
     and are then shown in session order.
 
     Returns {"text", "call", "later_events", "proposal_observed", "fits", "dropped",
-    "key_dropped", "key_clipped", "related_results_missing", "cut", "conditions",
+    "key_dropped", "key_clipped", "related_results_missing", "related_results_partial", "cut",
+    "conditions",
     "unresolved_conditions", "shown"}:
 
     - call is store.call_state() for the focus call: "verified" only when call_sha256, your own
@@ -809,6 +838,8 @@ def digest(summary, max_chars=3000, focus=None, measure=len, call_sha256=None):
       medium or high, the evidence that bears on the focus call (what it resembles, who
       named what it uses, earlier attempts), and what earlier calls returned of a file the focus
       call names. It also counts related_results_missing.
+    - related_results_partial counts the earlier calls on a file the focus call names whose
+      result the summary holds only in part (head and tail of a long one): counted in key_clipped.
     - related_results_missing counts the earlier calls on a file the focus call names whose
       result arrived and is not in the summary at all (the summary keeps the newest of them, and
       a kept call's long result by its head and tail): the last line of the text says so. The
@@ -865,7 +896,11 @@ def _build(summary, lines, target, state, max_chars, measure):
     # its longest, and the line about conditions at its longest.
     reserved = _condition_line(_conditions(summary, target, []), worst=True)
     missing = _related_results(summary, target)[1]
-    used = measure(_footer(summary, worst, 9999, 9999, as_before=True, missing=missing)) + 1
+    partial = _related_partial(summary, target)
+    used = measure(
+        _footer(summary, worst, 9999, 9999, as_before=True, missing=missing, partial=partial)
+    )
+    used += 1
     used += measure(reserved) + 1 if reserved else 0
     kept, titled = set(), {0}
     for index in sorted(range(len(lines)), key=lambda i: lines[i][0]):
@@ -888,7 +923,7 @@ def _build(summary, lines, target, state, max_chars, measure):
             used -= measure(TITLES[lines[gone][2]]) + 1
 
     while True:
-        shown = _write(summary, lines, kept, target, state, fits, missing)
+        shown = _write(summary, lines, kept, target, state, fits, missing, partial)
         spent = sum(measure(line) + 1 for line in shown["text"].split("\n"))
         # Only a count of cut lines can take the text past what was held back for it.
         spare = [index for index in kept if lines[index][0][0]]
@@ -897,7 +932,7 @@ def _build(summary, lines, target, state, max_chars, measure):
         kept.discard(max(spare, key=lambda index: lines[index][0]))  # the least important
 
 
-def _write(summary, lines, kept, target, state, fits, missing=0):
+def _write(summary, lines, kept, target, state, fits, missing=0, partial=0):
     """The text for the chosen lines, and the account of it."""
     out, current, dropped, clipped, cut = [], 0, Counter(), 0, Counter()
     omitted = summary["session"]["omitted"]
@@ -925,7 +960,8 @@ def _write(summary, lines, kept, target, state, fits, missing=0):
     if conditions:
         out.insert(min(3, len(out)), _condition_line(conditions))
     cut = {name: count for name, count in cut.items() if count}
-    out.append(_footer(summary, dropped, key, clipped, cut, missing=missing))
+    clipped += partial  # a related result held only in part is key evidence cut short
+    out.append(_footer(summary, dropped, key, clipped, cut, missing=missing, partial=partial))
     return {
         "text": "\n".join(out),
         "call": state,
@@ -938,6 +974,7 @@ def _write(summary, lines, kept, target, state, fits, missing=0):
         "key_dropped": key,
         "key_clipped": clipped,
         "related_results_missing": missing,
+        "related_results_partial": partial,
         "cut": cut,
         "conditions": conditions,
         "unresolved_conditions": unresolved,

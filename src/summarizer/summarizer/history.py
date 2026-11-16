@@ -279,11 +279,15 @@ _STARTUP = re.compile(r"(?:/[\w./-]*/)?zsh -(?P<options>[il]{0,2})c '[^']*'\Z")
 # or takes one back: what withdraws, ends or narrows a permission bounds a later call as what
 # grants one does, and a call that follows a revocation was otherwise asked of nobody.
 # "Stop" bounds only what it says to stop doing ("stop sending"): "then stop" ends a request.
+# So is what the user says must stay as it is ("keeping signature verification required"): a
+# call that weakens it is bounded by those words as by a "never".
 # They make a statement a candidate; they never decide what it means.
 _BOUNDS = re.compile(
     r"\b(?:only|never|do not|don't|must not|may not|until|unless|except|without|no more than|"
     r"at most|not allowed|allow(?:s|ed|ing)?|approv(?:e|es|ed|ing|al)|permission|"
-    r"permit(?:s|ted|ting)?|forbid(?:s|den|ding)?|frozen|freeze|keep|leave|"
+    r"permit(?:s|ted|ting)?|forbid(?:s|den|ding)?|frozen|freeze|keep(?:s|ing)?|kept|"
+    r"leav(?:e|es|ing)|requir(?:e|es|ed|ing)|must|ensur(?:e|es|ed|ing)|"
+    r"preserv(?:e|es|ed|ing)|retain(?:s|ed|ing)?|maintain(?:s|ed|ing)?|"
     r"limit(?:s|ed|ing)?|restrict(?:s|ed|ing|ion|ions)?|"
     r"authori[sz](?:e|es|ed|ing|ation)|grant(?:s|ed|ing)?|consent(?:s|ed|ing)?|"
     r"revo(?:ke|kes|ked|king|cation)|withdr(?:aw|aws|awn|awing|ew|awal)|"
@@ -336,6 +340,17 @@ _KEYED = re.compile(
     r"(?P<quote>[\"']?)(?P<value>[0-9]+)(?P=quote)(?![\w:/@%-]|\.\w)"
 )
 _PATH_RUN = re.compile(r"[\w.~{}/-]+")
+# The kinds of action whose target is the whole question: where something is sent or published,
+# what is deleted or installed. A request that names a target for such an action is the user's
+# word on where it may go, though it states no limit in so many words (_bears).
+_TARGETED = frozenset({"send", "publish", "delete", "install"})
+# Sending and publishing are one question, where something goes: "post it to X" bears on a call
+# named for publishing as on one named for sending.
+_OUTWARD = frozenset({"send", "publish"})
+# A target a statement names: an address, a host with a path, a recipient, or a path.
+_TARGET = re.compile(
+    r"https?://|\b[\w-]+(?:\.[\w-]+)+/|[\w.+-]+@[\w-]+\.[\w.-]+|(?<![\w.])[~.]?/?[\w.-]+/[\w./-]+"
+)
 
 
 class _Pathish:
@@ -805,6 +820,12 @@ def uses(entry, cwd, home):
         found["read"].append(expand(target, cwd, home))
     elif tool in SHELLS:
         _shell(target, cwd, home, found)
+    else:
+        # A tool that is no shell and no file tool has no command line: its words are its input
+        # ({"path": "routes/proposed.yaml"}), and the paths there are named as a command's are
+        # (named_by_call reads them the same way). Its own name is no file ("mesh.apply").
+        words = {"text": _without_addresses(str(entry.get("text") or ""))}
+        found["named"] |= _said(words, cwd, home) - {expand(str(tool or ""), cwd, home)}
     for piece in _PATHISH.findall(target):
         piece = _piece(piece)
         if "/" in piece or "." in piece.strip("."):
@@ -887,6 +908,17 @@ def _words(text):
     return found
 
 
+def _compounds(text):
+    """The compound names a text holds: a word of eight letters or more with a part joined by a
+    dash or an underscore ("svc-night-rotation", "release_r17"). A dotted name is a file or a
+    host and is tied by other rules."""
+    return {
+        word.strip(".-_").lower()
+        for word in _WORD.findall(text)
+        if len(word) >= 8 and re.search(r"[A-Za-z0-9][-_][A-Za-z0-9]", word) and "." not in word
+    }
+
+
 def _kinds_said(text):
     return {name for name, pattern in _KINDS if pattern.search(text)}
 
@@ -918,14 +950,31 @@ def _keyed(text):
     }
 
 
-def _bears(prompt, call_text, named, cwd, home, kinds=()):
+def _bears(prompt, call_text, named, cwd, home, kinds=(), structured=False):
     """Whether a statement of the user states a bound and is tied to the call: it names one
-    of the call's paths, a word of its command, or a kind of action the call is. A
-    candidate link, said to be no more: it asks for review and settles nothing."""
+    of the call's paths, a word of its command, or a kind of action the call is; or, stating
+    no bound, names a target for the kind of action the call is, where that kind is one of
+    _TARGETED; or, for a call of a tool with no command line (structured), names by a compound
+    name ("svc-night-rotation") the very thing the call's input names. A candidate link, said
+    to be no more: it asks for review and settles nothing."""
     text = str(prompt.get("text") or "")
+    spoken_kinds = _kinds_said(_REFERS.sub(" ", text))
+    said_kinds = spoken_kinds & set(kinds)
     if not _bound(prompt):
-        return False
-    if _kinds_said(_REFERS.sub(" ", text)) & set(kinds):
+        # A request that asks for the very thing a structured call acts on, by its compound name,
+        # is the user's word on it as "do not read X" is: the grant and the limit are then read
+        # beside the call alike, and twins that differ only in which was said take one route.
+        # Shell and file calls are not tied this way: every edit of a file the user named would be.
+        if structured and _compounds(call_text) & _compounds(text):
+            return True
+        if spoken_kinds & _OUTWARD and set(kinds) & _OUTWARD and _TARGET.search(text):
+            return True
+        # A request that names where to send or publish, or what to delete or install, is the
+        # user's word on the target of that kind of action: a later call of the kind is read
+        # beside it whether it names the same target or one that only resembles it. Which it
+        # is, is for the reader of the packet. Runs and writes are too common to tie this way.
+        return bool(said_kinds & _TARGETED and _TARGET.search(text))
+    if said_kinds:
         return True
     said = set()
     for piece in _PATHISH.findall(text):
@@ -1313,6 +1362,7 @@ def select(mine, call_id, others, home, within=True):
     # What the call says: its target and its input. A tool that is no shell has no command
     # line, and its words are in its input ({"release": "r17", "environment": "production"}).
     spoken = f"{command} {call.get('text') or ''}"
+    structured = call.get("tool") not in SHELLS | WRITES | READS
     for other in others:
         near = _known(namespace) and _known(other["namespace"])
         if near and other["namespace"] != namespace:
@@ -1439,7 +1489,7 @@ def select(mine, call_id, others, home, within=True):
         for e in entries
         if e["type"] == "prompt"
         and e["seq"] < call["seq"]
-        and _bears(e, spoken, mine_uses["named"], cwd, home, kinds)
+        and _bears(e, spoken, mine_uses["named"], cwd, home, kinds, structured)
     ]
     for prompt in stated:
         tokens |= _tokens(prompt)
@@ -1465,7 +1515,7 @@ def select(mine, call_id, others, home, within=True):
         taken = {(item["seq"], item["type"]): item for item in found["items"]}
         shown_in[other["key"]] = taken
         for prompt in (e for e in summary["entries"] if e["type"] == "prompt"):
-            named = _bears(prompt, spoken, mine_uses["named"], there, home, kinds)
+            named = _bears(prompt, spoken, mine_uses["named"], there, home, kinds, structured)
             if same_project and named:
                 tokens |= _tokens(prompt)
                 bearing.append(prompt)
@@ -1770,7 +1820,7 @@ def named_by_call(call, cwd, home):
     if isinstance(call.get("named"), list):
         return named | set(call["named"])
     if call.get("tool") not in SHELLS | WRITES | READS:
-        named |= _said(words, cwd, home)
+        named |= _said(words, cwd, home) - {expand(str(call.get("tool") or ""), cwd, home)}
     return named
 
 
