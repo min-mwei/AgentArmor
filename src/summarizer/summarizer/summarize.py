@@ -115,6 +115,10 @@ class Config:
     max_iocs: int = 128  # observables with indicators kept, most confident first
     max_actions: int = 24  # unmarked actions kept for context: the latest, then the most distinct
     max_content: int = 12  # unmarked lower-trust excerpts kept for context
+    # Earlier calls on a file that one of the latest calls names, kept with what they returned:
+    # the newest this many. What a call about to be decided does to a file may turn on what an
+    # earlier call showed of it, however long ago and however plain the result (MR285-5).
+    max_related: int = 16
     max_prompts: int = 200  # user requests kept; they are the task, so nearly always all of them
     # Calls not kept as entries are catalogued in the session record (event, time, tool, status,
     # the call's clipped words), the newest this many, so that a lookup can account for every
@@ -1319,7 +1323,18 @@ class Session:
         # result, so the results of the calls after it are kept as well, newest first.
         waits = [prompt["seq"] for prompt in self.prompts if "condition" in prompt["notes"]]
         since = [i for i in actions if waits and units[i].seq > waits[0]][-64:]
-        for action in set(actions[-8:]) | (kept & set(actions)) | set(since):
+        # So is what an earlier call returned of a file that one of the latest calls names: a
+        # read of the settings a pending call is about to apply is part of that call's story
+        # though nothing marks it and no request set a condition in so many words. The paths
+        # are the ones recorded from each call's whole words; the newest such calls are kept.
+        named = {path for action in actions[-8:] for path in units[action].named}
+        related = [
+            action
+            for action in actions[:-8]
+            if named and any(named & set(paths) for paths in units[action].effects.values())
+        ]
+        related = related[-config.max_related :] if config.max_related else []
+        for action in set(actions[-8:]) | (kept & set(actions)) | set(since) | set(related):
             returned = results.get(units[action].call_id, ())
             # Schema is scanned like everything else but is not what a call is said to have
             # returned.
@@ -1348,7 +1363,7 @@ class Session:
         anchors = sorted((kept | cited) & set(content))
         ranked = self._unseen(rest + dark, config.max_content)
         ranked += self._diverse(rest, rank, config.max_content - len(ranked), anchors=anchors)
-        chosen = sorted(kept | set(recent) | set(older) | cited | set(ranked))
+        chosen = sorted(kept | set(recent) | set(older) | set(related) | cited | set(ranked))
 
         entries = self._prompt_entries() + [self._entry(i, indicators[i]) for i in chosen]
         # Every message that carries an indicator or names an observable, and the latest one.

@@ -202,7 +202,12 @@ Three checks say whether a summary can support a decision about a call:
   (a line is shown whole or not at all): `fits`, how many lines were `dropped` per
   section, `key_dropped` (dropped lines that selection treats as key: the first and latest
   requests, requests that limit, permit or withdraw something, what the call before the decision
-  returned, and the evidence that bears on the focus call), `cut` (lines that quote less of
+  returned, the evidence that bears on the focus call, and what earlier calls returned of a
+  file the focus call names), `related_results_missing` (earlier calls on a file the focus
+  call names whose result arrived and is not in the summary at all; they are counted in
+  `key_dropped` and the last line says so: a summary keeps the results of the newest sixteen
+  such calls, `Config.max_related`, since what a call does to a file may turn on what an
+  earlier read or check of it showed, however plain the result), `cut` (lines that quote less of
   their entry's text than there is, counted by kind: `prompt`, `action`, `message`) and
   `key_clipped` (those among them that selection treats as key: a key request, an earlier
   call that is key or marked medium or high, a marked message with nothing noted beside it).

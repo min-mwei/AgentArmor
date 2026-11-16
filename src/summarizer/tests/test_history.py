@@ -3328,8 +3328,9 @@ def test_every_file_a_patch_changes_is_in_the_object_account(runtime, order, whe
     first: the patch is in artifacts/x.bin's account, whichever place the file has in it, kept or
     catalogued, in its own session and in an earlier one, through every replay (the daemon
     restarted included). Scorer 16 agrees."""
-    if not kept:
-        runtime = Runtime(HashEmbedder(), config=Config(max_actions=1, max_marked=0), strict=True)
+    if not kept:  # nor kept as an earlier call on the file the last call names
+        config = Config(max_actions=1, max_marked=0, max_related=0)
+        runtime = Runtime(HashEmbedder(), config=config, strict=True)
     campaign = _patched(order, where, trailing=0 if kept else 10)
     for agent in campaigns.AGENTS:
         laid = campaigns.layout(campaign, agent)

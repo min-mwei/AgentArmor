@@ -2321,3 +2321,77 @@ def test_one_loader_finds_the_probes_and_says_what_cannot_be_relied_on(tmp_path,
     assert named.probe_version != own.probe_version and named.probes[0]["threshold"] == 0.5
     config = summarize.Config(max_chars=1234)
     assert load(str(model), config=config).config.max_chars == 1234
+
+
+# --- what an earlier call showed of the object a call is about (MR285-5) -------------------------
+
+
+def settings_read(value, tool="Bash", noise=12, agent="claude_code"):
+    """A session that reads a settings file early, does unrelated work, then acts on that file.
+
+    The user's request holds only if the file says so; the read's short, plain result is the one
+    thing that differs between the two sessions. Nothing marks it and no request sets a condition
+    in so many words. Returns (events, the id of the call under decision, its identity)."""
+    script = Script(agent=agent).start()
+    script.prompt("Roll the cache settings out to the demo service, keeping strict mode on.")
+    script.tool("Bash", {"command": "python tools/list_nodes.py"}, "three demo nodes listed")
+    script.tool("Bash", {"command": f"cat {CWD}/conf/cache.yml"}, f"strict_mode: {value}")
+    for index in range(noise):
+        script.tool("Bash", {"command": f"python tools/probe_{index}.py"}, f"probe {index} fine")
+    if tool == "Bash":
+        final = {"command": "python tools/apply_cache.py conf/cache.yml"}
+    else:
+        final = {"configuration": f"{CWD}/conf/cache.yml", "service": "demo"}
+    script.tool(tool, final)
+    return script.events, f"call-{script.calls}", call_sha256(tool, final)
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("tool", ["Bash", "mcp__deploy__reload"])
+def test_what_an_earlier_read_showed_of_the_file_a_call_names_is_shown_or_missed(
+    runtime, agent, tool
+):
+    views = {}
+    for value in ("on", "off"):
+        events, call, identity = settings_read(value, tool, agent=agent)
+        summary = summarize(events, runtime, agent)
+        views[value] = digest(summary, 11000, focus=call, call_sha256=identity)
+        shown = views[value]
+        # With room to spare the read's result is in the text, as that call's result.
+        assert f'"strict_mode: {value}"' in shown["text"], shown["text"]
+        line = next(x for x in shown["text"].split("\n") if f'"strict_mode: {value}"' in x)
+        assert "cat " in line and "conf/cache.yml" in line  # whose result it is
+        assert shown["key_dropped"] == 0 and shown["related_results_missing"] == 0
+        # With no room for it, the packet says key evidence is missing: never a clean account.
+        for budget in (900, 1500, 2400):
+            tight = digest(summary, budget, focus=call, call_sha256=identity)
+            assert f'"strict_mode: {value}"' in tight["text"] or tight["key_dropped"] > 0
+    assert views["on"]["text"] != views["off"]["text"]  # the two sessions can be told apart
+
+
+def test_a_result_the_summary_did_not_keep_of_the_file_a_call_names_is_counted(runtime):
+    # More earlier calls on the file than a summary keeps results for: those it leaves out are
+    # counted as key evidence that is not there, and the last line says so.
+    script = Script().start().prompt("Roll the cache settings out to the demo service.")
+    for index in range(40):
+        script.tool("Bash", {"command": f"cat {CWD}/conf/cache.yml"}, f"strict_mode: v{index}")
+        script.tool("Bash", {"command": f"python tools/probe_{index}.py"}, f"probe {index} fine")
+    final = {"command": "python tools/apply_cache.py conf/cache.yml"}
+    script.tool("Bash", final)
+    summary = summarize(script.events, runtime)
+    shown = digest(
+        summary, 20000, focus=f"call-{script.calls}", call_sha256=call_sha256("Bash", final)
+    )
+    seen = sum(f'"strict_mode: v{index}"' in shown["text"] for index in range(40))
+    assert 0 < seen < 40 and '"strict_mode: v39"' in shown["text"]  # the newest are kept
+    assert shown["related_results_missing"] == 40 - seen
+    assert shown["key_dropped"] >= shown["related_results_missing"] > 0
+    assert f"results of {40 - seen} earlier calls on what this call names" in shown["text"]
+
+
+def test_a_call_that_names_nothing_an_earlier_call_touched_is_the_packet_it_was(runtime):
+    events, call, identity = settings_read("on")
+    events[-1]["tool_input"] = {"command": "git status"}
+    shown = digest(summarize(events, runtime), 11000, focus=call)
+    assert shown["related_results_missing"] == 0 and "strict_mode" not in shown["text"]
+    assert shown["key_dropped"] == 0

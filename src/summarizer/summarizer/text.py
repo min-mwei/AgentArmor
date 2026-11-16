@@ -382,6 +382,58 @@ def _bearing(summary, target):
     return key, related
 
 
+def _related_results(summary, target):
+    """(calls, missing): the earlier calls on a file the call under decision names, and how many
+    of them have a result this summary does not hold.
+
+    What the call does to a file may turn on what an earlier call showed of it (a setting it
+    read, a check it ran on it), so their results are key evidence for a decision about the call,
+    whatever they say and however long ago: shown, or counted as missing (MR285-5). The paths are
+    the ones the runtime recorded from each call's whole words (its effects, and for a pending
+    call cut for display what its whole words name), never read again from clipped text. calls
+    holds the call ids of those the summary keeps. missing counts the ones known to have returned
+    something of which no piece is an entry here, and the ones the summary catalogues as not
+    kept whose result arrived: a call whose result was never seen is not counted, for nothing
+    is known to be missing. It says where to look, never that the result settles anything."""
+    if target is None:
+        return set(), 0
+    paths = {path for found in (target.get("effects") or {}).values() for path in found}
+    paths |= set((target.get("whole") or {}).get("named") or ())
+    if not paths:
+        return set(), 0
+
+    def on(record):
+        return any(paths & set(found) for found in (record.get("effects") or {}).values())
+
+    pieces = [e for e in summary["entries"] if e["type"] == "content"]
+
+    def held(call_id, listed=()):
+        for piece in pieces:
+            if piece.get("sha256") in listed:
+                return True
+            if piece.get("call_id") == call_id and not piece.get("aside"):
+                return True
+            if any(
+                a["call_id"] == call_id and not a.get("aside") for a in piece.get("seen_again", ())
+            ):
+                return True
+        return False
+
+    calls, missing = set(), 0
+    for entry in summary["entries"]:
+        if entry["type"] != "action" or entry is target or entry["seq"] >= target["seq"]:
+            continue
+        if not on(entry):
+            continue
+        calls.add(entry.get("call_id"))
+        if entry.get("result_pieces") and not held(entry.get("call_id"), entry.get("results", ())):
+            missing += 1
+    for record in summary["session"].get("dropped_calls", ()):
+        if record["seq"] < target["seq"] and record.get("result") is not None and on(record):
+            missing += not held(record.get("call_id"))
+    return calls - {None, ""}, missing
+
+
 def _lines(summary, focus, budget, state, whole=frozenset()):
     """Every candidate line in display order, as (rank, key, section, text, cut).
 
@@ -446,6 +498,7 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
             lines.append(((0,), False, 1, shown[0], False, {"entry": target, "limit": limit}))
             lines += [((0,), False, 1, line) for line in shown[1:]]
     key, related = _bearing(summary, target)
+    on_same, _ = _related_results(summary, target)
 
     prompts = [entry for entry in entries if entry["type"] == "prompt"]
     for index, entry in enumerate(prompts):
@@ -514,8 +567,14 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
             rank = (2, 0 if verdict else 1, -entry["seq"])
         elif returned_by(entry, recent):
             rank = (2, 2, -entry["seq"])
+        elif returned_by(entry, on_same):
+            # What an earlier call showed of a file this call names: after what is always key,
+            # before the rest, and key evidence when there is no room for it (below).
+            rank = (2, 1, -entry["seq"])
         elif related(entry) or (entry["type"] == "action" and entry["seq"] in newest):
             rank = (2, 2, -entry["seq"])  # the same observables, or where the session stands now
+        elif entry["type"] == "action" and entry.get("call_id") in on_same:
+            rank = (2, 2, -entry["seq"])  # the call whose result that is
         elif entry["level"] != "none":
             rank = (_TIER[entry["level"]], 0, -entry["confidence"])
         else:
@@ -529,7 +588,8 @@ def _lines(summary, focus, budget, state, whole=frozenset()):
         # its line shows less of it than there is, that is key evidence cut.
         acted = entry["type"] == "action" and entry["level"] in ("high", "medium")
         line = entry_line(entry, limit=limit)
-        lines.append((rank, rank[0] == 1 or acted, 3, line, _cut(entry, limit), meta))
+        key_line = rank[0] == 1 or acted or returned_by(entry, on_same)
+        lines.append((rank, key_line, 3, line, _cut(entry, limit), meta))
     mine = set(target.get("iocs", ())) if target else set()
     for order, ioc in enumerate(summary.get("iocs", ())):
         if f"{ioc['kind']}:{ioc['value']}" in mine:
@@ -676,7 +736,7 @@ def condition_line_for(conditions, elsewhere=()):
 CUT_KINDS = ("prompt", "action", "message")  # a piece of content is never cut
 
 
-def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False):
+def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False, missing=0):
     """The packet's last line: what the summary and the budget left out, and what is cut.
 
     cut counts the lines that show less of their entry's text than there is, by kind. With
@@ -698,6 +758,10 @@ def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False):
         for name in ("echoed_fields", "redactions", "sightings_not_listed")
         if coverage.get(name)
     ]
+    if missing:  # key evidence the summary itself does not hold (_related_results)
+        parts.append(
+            f"results of {missing} earlier calls on what this call names are not in this summary"
+        )
     if dropped:
         over = ", ".join(f"{name} {count}" for name, count in dropped.items())
         parts.append(
@@ -723,7 +787,8 @@ def digest(summary, max_chars=3000, focus=None, measure=len, call_sha256=None):
     and are then shown in session order.
 
     Returns {"text", "call", "later_events", "proposal_observed", "fits", "dropped",
-    "key_dropped", "key_clipped", "cut", "conditions", "unresolved_conditions", "shown"}:
+    "key_dropped", "key_clipped", "related_results_missing", "cut", "conditions",
+    "unresolved_conditions", "shown"}:
 
     - call is store.call_state() for the focus call: "verified" only when call_sha256, your own
       hook.call_sha256(tool_name, tool_input), equals the logged one; otherwise "unverified",
@@ -741,8 +806,13 @@ def digest(summary, max_chars=3000, focus=None, measure=len, call_sha256=None):
     - key_dropped counts those among them that selection treats as key: the first and latest
       user requests, requests that limit, permit or withdraw something (including any the summary
       itself had no room for), what the call before the decision returned, earlier calls marked
-      medium or high, and the evidence that bears on the focus call (what it resembles, who
-      named what it uses, earlier attempts).
+      medium or high, the evidence that bears on the focus call (what it resembles, who
+      named what it uses, earlier attempts), and what earlier calls returned of a file the focus
+      call names. It also counts related_results_missing.
+    - related_results_missing counts the earlier calls on a file the focus call names whose
+      result arrived and is not in the summary at all (the summary keeps the newest of them, and
+      a kept call's long result by its head and tail): the last line of the text says so. The
+      packet then lacks something the call may turn on, and is not a complete account.
     - cut counts the lines that quote less of their entry's text than there is, by the kind
       of entry: {"prompt", "action", "message"}, a kind with none left out. A request, an
       earlier call and a message are each quoted up to a limit, and a long one the summary
@@ -794,7 +864,8 @@ def _build(summary, lines, target, state, max_chars, measure):
     # Everything that will be printed is paid for before anything is chosen: the last line at
     # its longest, and the line about conditions at its longest.
     reserved = _condition_line(_conditions(summary, target, []), worst=True)
-    used = measure(_footer(summary, worst, 9999, 9999, as_before=True)) + 1
+    missing = _related_results(summary, target)[1]
+    used = measure(_footer(summary, worst, 9999, 9999, as_before=True, missing=missing)) + 1
     used += measure(reserved) + 1 if reserved else 0
     kept, titled = set(), {0}
     for index in sorted(range(len(lines)), key=lambda i: lines[i][0]):
@@ -817,7 +888,7 @@ def _build(summary, lines, target, state, max_chars, measure):
             used -= measure(TITLES[lines[gone][2]]) + 1
 
     while True:
-        shown = _write(summary, lines, kept, target, state, fits)
+        shown = _write(summary, lines, kept, target, state, fits, missing)
         spent = sum(measure(line) + 1 for line in shown["text"].split("\n"))
         # Only a count of cut lines can take the text past what was held back for it.
         spare = [index for index in kept if lines[index][0][0]]
@@ -826,13 +897,14 @@ def _build(summary, lines, target, state, max_chars, measure):
         kept.discard(max(spare, key=lambda index: lines[index][0]))  # the least important
 
 
-def _write(summary, lines, kept, target, state, fits):
+def _write(summary, lines, kept, target, state, fits, missing=0):
     """The text for the chosen lines, and the account of it."""
     out, current, dropped, clipped, cut = [], 0, Counter(), 0, Counter()
     omitted = summary["session"]["omitted"]
     # Requests the summary itself left out never became lines; noted ones count as key evidence.
     key = omitted.get("noted_prompts", omitted.get("prompts", 0))
     key += omitted.get("key_messages", 0)  # marked messages the summary could not keep
+    key += missing  # results of earlier calls on what the call names that are not in the summary
     emitted = []  # the entries the text shows, and how much of each
     for index, (rank, is_key, section, text, *rest) in enumerate(lines):
         if index not in kept:
@@ -853,7 +925,7 @@ def _write(summary, lines, kept, target, state, fits):
     if conditions:
         out.insert(min(3, len(out)), _condition_line(conditions))
     cut = {name: count for name, count in cut.items() if count}
-    out.append(_footer(summary, dropped, key, clipped, cut))
+    out.append(_footer(summary, dropped, key, clipped, cut, missing=missing))
     return {
         "text": "\n".join(out),
         "call": state,
@@ -865,6 +937,7 @@ def _write(summary, lines, kept, target, state, fits):
         "dropped": dict(dropped),
         "key_dropped": key,
         "key_clipped": clipped,
+        "related_results_missing": missing,
         "cut": cut,
         "conditions": conditions,
         "unresolved_conditions": unresolved,
