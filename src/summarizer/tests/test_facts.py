@@ -1015,7 +1015,7 @@ def test_an_agent_s_own_tool_is_never_an_external_tool(agent):
     home, cwd = "/home/dev", "/home/dev/proj"
     for tool in ROSTER[agent]:
         flags = describe_call(tool, {"action": "list"}, cwd, home)["flags"]
-        assert not {"mcp", "mcp_write"} & flags.keys(), tool
+        assert not {"mcp", "mcp_write", "unknown_tool", "unknown_write"} & flags.keys(), tool
     # Codex's browser reaches the web; its results are lower-trust web content.
     opened = describe_call(
         "webrun", {"open": [{"ref_id": "https://docs.example.com/a"}]}, cwd, home

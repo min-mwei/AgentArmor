@@ -61,7 +61,8 @@ ACTION = {
     "timestamp_change": ("defense_evasion", 0.15),  # a file's times set by hand
     "agent_spawn": ("agent_spawn", 0.15),
     "persistence_ref": ("config_reference", 0.10),  # such configuration named, write not seen
-    "mcp_write": ("external_write", 0.10),
+    "mcp_write": ("external_write", 0.10),  # an MCP tool whose name says it changes or sends
+    "unknown_write": ("unknown_write", 0.10),  # so named, of unknown origin: no send asserted
     "package_install": ("package_install", 0.08),
     "analysis_partial": ("analysis_partial", 0.10),  # the command was not read in every way
     "recon": (

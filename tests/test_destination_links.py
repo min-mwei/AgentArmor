@@ -73,3 +73,58 @@ def test_a_ready_packet_shows_the_check_of_any_recipient(agent, count):
         assert "mb-809" in text or account["ready"] is False, (budget, account)
     text, account, _ = packet(summary, target, 20000)
     assert "mb-809" in text and account["ready"] is True  # linked and shown, with room
+
+
+def key_listing(agent, count):
+    """The reviewer's control (MR309 P2b): a listing that names count key files and no place."""
+    folder = ".claude" if agent == "claude_code" else ".codex"
+    common = {"session_id": "s-2", "cwd": CWD, "permission_mode": "default"}
+    common["transcript_path"] = f"{HOME}/{folder}/projects/proj/s-2.jsonl"
+    if agent == "codex_code":
+        common |= {"model": "gpt-test", "turn_id": "turn-1"}
+    command = "ls " + " ".join(f"{HOME}/.ssh/id_rsa_{index}" for index in range(count))
+    call = {"tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "call-1"}
+    return [
+        {**common, "hook_event_name": "SessionStart", "source": "startup"},
+        {
+            **common,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "List the local key file names only",
+        },
+        {**common, "hook_event_name": "PreToolUse", **call},
+    ], "call-1"
+
+
+def summarized(agent, made):
+    session = Session(agent, "test", Runtime(HashEmbedder(), strict=True))
+    for event in made:
+        session.add(build_record(agent, event))
+    session.flush()
+    return view(session.summary())
+
+
+@pytest.mark.parametrize("agent", ["claude_code", "codex_code"])
+@pytest.mark.parametrize("count", [1, 9])
+def test_a_call_that_names_no_place_has_its_whole_list_of_places(agent, count):
+    # At 067dfd0, nine key paths (eight shown observables, none a place) gave ready=false,
+    # key_dropped=1, "places of 1 calls are not all listed": an empty list of places was not
+    # written, and a reader took the entry for a summary that kept no such list.
+    summary = summarized(agent, key_listing(agent, count)[0])
+    (target,) = [e for e in summary["entries"] if e["type"] == "action"]
+    assert target["places"] == [] and "places_complete" not in target
+    text, account, _ = packet(summary, target, 20000)
+    assert account["ready"] is True and account["key_dropped"] == 0, account
+    assert "not all listed" not in text
+
+
+def test_a_summary_that_kept_no_list_of_places_stays_conservative():
+    # A legacy entry (no "places" field) showing as many observables as an entry can show may
+    # name more places than it shows; one with a clipped input or past the cap is never whole.
+    from summarizer import history, text
+
+    legacy = {"iocs": [f"path:{HOME}/.ssh/id_rsa_{index}" for index in range(8)]}
+    clipped = {"places": [], "places_complete": False}
+    over = {"places": ["domain:a.example"], "places_complete": False, "places_not_listed": 3}
+    for whole in (text._places_whole, history._places_whole):
+        assert whole({"places": []}) is True and whole(legacy | {"places": []}) is True
+        assert whole(legacy) is False and whole(clipped) is False and whole(over) is False

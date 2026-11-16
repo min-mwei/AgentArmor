@@ -302,17 +302,20 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
         # else's (external_tool): the session contacted it. Any other name not on the roster is
         # of unknown origin (unknown_tool): it may be a built-in missing from BUILTIN, so it is
         # marked and asked about but asserts no outside contact and starts no flow chain. Either
-        # is also external_write when its own last name part says it changes or moves something
-        # (the server's name is not read). Before 0700814 only an "mcp__" name was marked, and a
-        # call such as "tablesvc.copy_table" carried no indicator at all. Marking an unknown name
-        # rather than passing it is the recall-first choice: a built-in left off the roster costs
-        # a weak indicator Kai can dismiss, while an outside tool taken for a built-in would
-        # carry none at all.
+        # is also marked as a writer when its own last name part says it changes or moves
+        # something (the server's name is not read): an MCP tool as external_write, which sends
+        # to its server what the call names; one of unknown origin as unknown_write, which
+        # asserts no send, so what it names gets no sent role and no data_egress (MR309). Before
+        # 0700814 only an "mcp__" name was marked, and a call such as "tablesvc.copy_table"
+        # carried no indicator at all. Marking an unknown name rather than passing it is the
+        # recall-first choice: a built-in left off the roster costs a weak indicator Kai can
+        # dismiss, while an outside tool taken for a built-in would carry none at all.
         if tool and tool not in BUILTIN:
             known = tool.startswith("mcp__")
             flags["mcp" if known else "unknown_tool"] = target or clip(tool, TARGET_CHARS)
             if _MCP_WRITE.search(re.split(r"__|[./]", tool)[-1]):
-                flags["mcp_write"] = target or clip(tool, TARGET_CHARS)  # by its name
+                writes = "mcp_write" if known else "unknown_write"
+                flags[writes] = target or clip(tool, TARGET_CHARS)  # by its name
         text = f"{tool} {body}"
         call_hosts |= hosts(body)
     # Whatever else the agent wrote in the call (a command's description, the text an edit

@@ -139,8 +139,10 @@ def place_names(pairs):
 def places_record(places, whole=True):
     """How an entry or a catalogued call carries the places it names: all of them up to
     MAX_PLACES, and "places_complete": false (with how many are not listed) when that is not all
-    of them, or when its words were not all there to read (whole False: the hook clipped them)."""
-    record = {"places": places[:MAX_PLACES]} if places else {}
+    of them, or when its words were not all there to read (whole False: the hook clipped them).
+    A list is written even when it is empty: a record with no list at all is from a summary that
+    kept none, and a reader cannot tell from its observables that it names every place (MR309)."""
+    record = {"places": places[:MAX_PLACES]}
     unlisted = max(0, len(places) - MAX_PLACES)
     if unlisted or not whole:
         record["places_complete"] = False
