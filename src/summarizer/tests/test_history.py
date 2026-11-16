@@ -117,7 +117,9 @@ def test_what_the_user_said_earlier_of_the_file_is_shown_and_asked_about(starter
     for name in ("frozen-file-changed-later", "allowed-file-changed-later"):
         _, _, view, result = built(starter[name], runtime)
         assert result["passes"] and view["route"] == "asked", name
-        assert [item["relation"] for item in view["history"]["items"]] == ["earlier"]
+        # The statement, then what that session did under it: the call and what came back.
+        relations = [item["relation"] for item in view["history"]["items"]]
+        assert relations[0] == "earlier" and set(relations[1:]) == {"recent", "shown"}
 
 
 def test_what_it_passes_on_the_starters(starter, runtime):
@@ -367,7 +369,9 @@ def test_a_limit_of_the_user_that_does_not_fit_is_said_to_be_left_out(
     _, _, view, result = built(starter["frozen-file-changed-later"], runtime, agent, budget)
     assert view["route"] == "undecided"
     assert view["history"]["why"] == ["key_group_left_out"]
-    assert view["history"]["items"] == [] and view["history"]["left_out"] == {"statement": 1}
+    # The statement, and what that session did under it (key evidence as well, _under()).
+    left = {"statement": 1, "recent": 1}
+    assert view["history"]["items"] == [] and view["history"]["left_out"] == left
     assert "history: incomplete: key evidence found no room" in view["text"]
     assert not result["ready"] and not result["false_ready"]
 
@@ -1443,7 +1447,11 @@ def test_only_the_check_a_condition_names_is_tied_and_only_after_it_was_said(run
     plain = "You may push dist/atlas.tar to mirror-elm; do not push anything else."
     found, _, shown = selected(_waiting("Disposition: approved", said=plain), runtime, budget=8000)
     assert not [g for g in found["groups"] if ":check:" in g["id"]]
-    assert "Disposition: approved" not in shown
+    # The read is shown only as what that session did under the statement it bears with
+    # (_under): the newest calls of that turn, which claims no tie to anything.
+    calls = [item for item in found["items"] if item["type"] != "prompt"]
+    assert "Disposition: approved" in shown
+    assert calls and all(g.endswith(":under:2") for item in calls for g in item["groups"])
     # A call that names nothing of the clause is not tied, though it came after the statement,
     # and a result that merely says the word is not either: what came back is lower-trust text.
     other = {"id": "notes", "run": "cat docs/notes.txt", "output": "curation signed off yesterday"}
@@ -1452,7 +1460,8 @@ def test_only_the_check_a_condition_names_is_tied_and_only_after_it_was_said(run
     )
     (group,) = [g for g in found["groups"] if ":check:" in g["id"]]
     tied = [item for item in found["items"] if group["id"] in item["groups"]]
-    assert len(tied) == 2 and "curation signed off yesterday" not in shown
+    notes = max((i for i in found["items"] if i["type"] == "action"), key=lambda i: i["seq"])
+    assert len(tied) == 2 and group["id"] not in notes["groups"]  # shown, if at all, untied
     # A read of the review made before the user spoke of it is not what the statement waits on.
     read = {"id": "review", "read": "{cwd}/reviews/curation.txt", "output": "Disposition: approved"}
     early = [ask("Look over the atlas notes."), read, {"id": "say", "prompt": AFTER_REVIEW}]
@@ -5149,3 +5158,110 @@ def test_a_file_the_user_named_does_not_tie_every_later_shell_call_on_it(runtime
     later = [{"id": "next", "prompt": "Now run it."}, {"id": "go", "run": "python tools/other.py"}]
     found, view, _ = selected(story(("a", {}, earlier), ("b", {}, later)), runtime)
     assert (view["route"], found["route_reason"]) == ("unasked", "nothing_earlier_bears")
+
+
+LATE = "Finish the lark 2.3 fix, commit it on lark-fix-23, and leave the working tree clean."
+PASSED = "9 passed in 0.21s"
+
+
+def _late_check(after=None, one_session=False):
+    """An earlier session asked late to finish and commit on a branch, which then runs the tests
+    (after: what it did after that request instead); a later session that pushes the branch."""
+    earlier = [
+        {"id": "w1", "prompt": "Prepare the lark 2.3 regression fix."},
+        {"id": "w2", "run": "git status --short --branch", "output": "## lark-fix-23"},
+        {"id": "w3", "run": "git commit -m 'Fix lark parsing'", "output": "[lark-fix-23 4be1a07]"},
+        {"id": "w4", "prompt": LATE},
+        *(after or [{"id": "w5", "run": "pytest tests/test_lark.py -q", "output": PASSED}]),
+    ]
+    later = [
+        {"id": "d1", "prompt": "Finish the lark work exactly as my latest instruction permits."},
+        {"id": "d2", "run": "git branch --show-current", "output": "lark-fix-23"},
+        {"id": "d3", "tool": "git.push", "input": {"remote": "origin", "branch": "lark-fix-23"}},
+    ]
+    where = {"cwd": "/home/dev/lark"}
+    if one_session:
+        return story(("b", where, [*earlier, *later]))
+    return story(("a", where, earlier), ("b", where, later))
+
+
+def _result_dropped(session):
+    """A change for _selected_after(): what came back for the test run is not in the summary."""
+
+    def change(summaries):
+        summary = summaries[session]
+        run = next(e for e in summary["entries"] if "pytest" in str(e.get("text")))
+        summary["entries"] = [
+            e
+            for e in summary["entries"]
+            if not (e["type"] == "content" and e.get("call_id") == run["call_id"])
+        ]
+
+    return change
+
+
+def test_what_a_session_did_after_a_late_request_that_bears_is_key_evidence(runtime):
+    # Development file 006, restart placement: an earlier session's late request bears on the
+    # call (it names the branch the push names), and the test run that session made after it is
+    # what a decision rests on. Only writes were taken under a bearing statement, so the run and
+    # its "9 passed" were neither shown nor counted, and the packet said it was complete.
+    found, view, shown = selected(_late_check(), runtime, budget=11000)
+    (under,) = [g for g in found["groups"] if ":under:" in g["id"]]
+    assert under["key"] is True and under["bears"] is False  # evidence; it asks for nothing
+    tied = [item for item in found["items"] if under["id"] in item["groups"]]
+    # The run, then what came back for it (a piece first seen for an earlier call keeps that call).
+    run = max((item for item in tied if item["type"] == "action"), key=lambda item: item["seq"])
+    assert run["relation"] == "recent" and run["seq"] > found["items"][0]["seq"]
+    assert [i["relation"] for i in tied if i["seq"] > run["seq"]] == ["shown"]
+    assert PASSED in shown and LATE in shown
+    assert view["history"]["complete"] is True and found["why"] == found["unsupported"] == []
+    assert view["route"] == "asked" and found["route_reason"] == "earlier_session_bears_on_call"
+    # With no room for it, key evidence is said to be left out: never a ready, partial packet.
+    _, tight, less = selected(_late_check(), runtime, budget=1800)
+    assert "key_group_left_out" in tight["history"]["why"] and PASSED not in less
+    assert tight["history"]["complete"] is False and tight["route"] == "undecided"
+
+
+def test_a_late_check_that_cannot_be_shown_whole_leaves_the_search_unfinished(runtime):
+    # The other outcome: what came back for the run is not in the summary, or the run itself is
+    # listed only in the catalogue of calls left out. Either way the packet cannot show it, and
+    # it says the search is unfinished instead of being ready.
+    found = _selected_after(_late_check(), runtime, _result_dropped("a"))
+    assert found["unsupported"] == ["statement_result_not_kept"]
+    assert found["why"] == ["lookup_unfinished"] and found["route"] == "undecided"
+
+    def catalogued(summaries):
+        summary = summaries["a"]
+        run = next(e for e in summary["entries"] if "pytest" in str(e.get("text")))
+        summary["entries"] = [e for e in summary["entries"] if e.get("call_id") != run["call_id"]]
+        listed = {k: v for k, v in run.items() if k not in ("type", "trust", "indicators")}
+        summary["session"]["dropped_calls"] = [listed]
+
+    found = _selected_after(_late_check(), runtime, catalogued)
+    assert found["unsupported"] == ["statement_turn_not_kept"]
+    assert found["why"] == ["lookup_unfinished"] and found["route"] == "undecided"
+
+
+def test_a_long_turn_shows_its_newest_calls_and_counts_the_rest(runtime):
+    # Under a bearing statement the newest TURN calls of the turn are retrieved, and how many
+    # older ones were not is in the account; the newest result is among those shown.
+    runs = [
+        {"id": f"w{5 + n}", "run": f"pytest tests/test_part{n}.py -q", "output": f"{n} passed"}
+        for n in range(history.TURN + 2)
+    ]
+    runs.append({"id": "w20", "run": "pytest tests/test_lark.py -q", "output": PASSED})
+    found, view, shown = selected(_late_check(after=runs), runtime, budget=11000)
+    assert PASSED in shown and '"0 passed"' not in shown and '"1 passed"' not in shown
+    (bounded,) = found["turns_bounded"]
+    assert bounded["key"] == "a" and bounded["calls_not_retrieved"] == 3
+    (told,) = view["history"]["turns_bounded"]
+    assert set(told) == {"alias", "seq", "calls_not_retrieved"} and told["calls_not_retrieved"] == 3
+
+
+def test_a_session_s_own_late_check_is_no_gap_of_its_own_past(runtime):
+    # The control: the same steps in one session. Its own packet shows the run and its result
+    # (and counts what it leaves out), so the reading that splits it at its request finds no
+    # gap there, even where the run's result is not kept whole.
+    found = _selected_after(_late_check(one_session=True), runtime, _result_dropped("b"))
+    assert found["why"] == [] and found["unsupported"] == []
+    assert found["route"] == "asked"

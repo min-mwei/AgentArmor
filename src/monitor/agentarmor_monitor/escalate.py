@@ -53,7 +53,7 @@ from .kai import (
     request,
     wire_bytes,
 )
-from .policy import LAYOUT, layout, load_rules, state, writable
+from .policy import LAYOUT, layout, load_rules, packet_room, state, writable
 from .route import chosen_for
 
 SCHEMA = "agentarmor-detection/v1"
@@ -530,7 +530,7 @@ def detect(
         observed = observed["lines"]
     # What the rules and the call leave. The observation section is outside this budget, so a
     # packet is the same with the option on as off (observe.py).
-    size = max_chars - len(state(rules, "", call))
+    size = packet_room(rules, call, max_chars)
     counts = dict.fromkeys(COUNTED, 0)
     record |= {"requests_sent": 0, "requests": counts}
     # The requests this one decision had refused, when no record of earlier ones is given (a

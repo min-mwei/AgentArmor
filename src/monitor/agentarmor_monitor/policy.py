@@ -152,3 +152,12 @@ def state(rules, packet, call=None, observations=None):
     were the call. Whatever the session held, the state can be written as UTF-8 (writable()).
     """
     return "".join(text for _, _, text in layout(rules, packet, call, observations))
+
+
+def packet_room(rules, call, max_chars):
+    """The characters a packet may take in a state of at most max_chars: what the rules, the host
+    facts and the call, all shown whole, leave of it. The one rule for a packet's budget, for the
+    server's requests (escalate.detect) and for packets built elsewhere and put in the same state
+    (training/summarizer/campaign_arms.py, then panels): a packet that is ready in one is ready in
+    the other. It can be less than nothing; the caller refuses a request then, it does not cut."""
+    return max_chars - len(state(rules, "", call))

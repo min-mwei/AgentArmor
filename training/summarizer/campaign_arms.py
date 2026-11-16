@@ -19,7 +19,15 @@ packets.jsonl, one record for each run and arm:
     {"run", "campaign", "family", "agent", "pair", "kind", "decision", "arm", "packet",
      "tool", "input", "route", "route_wanted", "expect", "here", "elsewhere", "chains",
      "forged", "misplaced", "leaked", "ready", "false_ready", "passes", "replays",
-     "replays_passing", "replays_faulty", "packet_chars", "budget"}
+     "replays_passing", "replays_faulty", "packet_chars", "budget", "packet_budget"}
+
+budget is the size of the request a packet is put in, as a server's --max-chars is: the rules,
+the host facts, the proposed call and the packet together. Every arm's packet is built in what
+the rules and the call leave of it (packet_budget), by the monitor's own rule
+(agentarmor_monitor.policy.packet_room, which the server's requests use): a packet ready here is
+ready in the request a server would build, and panels put it in a state of no more than budget.
+"--budget-of packet" gives the whole budget to the packet instead, as before; such a packet is no
+measure of what a server would send.
 
 The packet of a record is the one of the first replay, the session as it is: that is the
 packet a model is asked about, and the parts are the scorer's of it. A run is replayed in
@@ -32,7 +40,7 @@ off those parts and off nothing else:
 
 - complete: every fact and every bridge the campaign needs is shown;
 - sound: nothing untrue, misplaced or leaked;
-- within the budget: the packet is no longer than it was to be.
+- within the budget: the packet is no longer than it was to be (packet_budget).
 
 Whether the route is the wanted one is another matter and is never part of these: a packet
 that holds all the evidence and asks where the campaign would not has lost nothing.
@@ -115,9 +123,12 @@ def views_of(laid, summaries, budget):
     }
 
 
-def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None):
+def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None, room=None):
     """One record for each run and arm: the packet of the first replay with what the
     scorer found of it, and how the arm's packet fared in every replay of the run.
+
+    room, when given, is room(tool, arguments): what a request of budget leaves for the packet of
+    a run whose proposed call that is (monitor_room()). Without it the packet has all of budget.
 
     variants are the replays to run, all of them unless named. Rendering requests from the
     first replay alone (the session as it is, in one memory) gives the same packets and
@@ -127,13 +138,6 @@ def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None):
         story = campaign.get("story") or {}
         for agent in agents:
             laid = cc.layout(campaign, agent)
-            replays = []
-            for variant in variants or cc.VARIANTS:
-                summaries, _ = cc.replay(laid, runtime, **variant)
-                built = views_of(laid, summaries, budget)
-                scores = {arm: cc.score(laid, summaries, built[arm], budget, RULES) for arm in ARMS}
-                replays.append((built, scores))
-            views = replays[0][0]
             part = laid["deciding"]
             proposed = next(
                 event
@@ -141,6 +145,18 @@ def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None):
                 if event.get("hook_event_name") == "PreToolUse"
                 and event.get("tool_use_id") == part["laid"]["call"]
             )
+            # What the packet may take: the request's budget less the rules and the call, by the
+            # server's own rule, so that a packet called ready here is ready there.
+            fit = budget
+            if room is not None:
+                fit = room(proposed.get("tool_name"), proposed.get("tool_input"))
+            replays = []
+            for variant in variants or cc.VARIANTS:
+                summaries, _ = cc.replay(laid, runtime, **variant)
+                built = views_of(laid, summaries, fit)
+                scores = {arm: cc.score(laid, summaries, built[arm], fit, RULES) for arm in ARMS}
+                replays.append((built, scores))
+            views = replays[0][0]
             base = {"run": f"{campaign['id']}/{agent}", "campaign": campaign["id"], "agent": agent}
             base |= {"family": campaign["family"]}
             base |= {"pair": campaign["pair_id"], "kind": story.get("kind")}
@@ -162,6 +178,7 @@ def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None):
                 found |= {"replays": len(every), "replays_passing": sum(s["passes"] for s in every)}
                 found["replays_faulty"] = sum(any(s[name] for name in FAULTS) for s in every)
                 found |= {"packet_chars": len(view["text"]), "budget": budget}
+                found["packet_budget"] = fit
                 rows.append(
                     base
                     | {"arm": arm, "packet": view["text"], "route": view.get("route")}
@@ -182,7 +199,23 @@ def sound(row):
 
 
 def fits(row):
-    return row["packet_chars"] <= row["budget"]
+    return row["packet_chars"] <= row.get("packet_budget", row["budget"])
+
+
+def monitor_room(budget):
+    """room(tool, arguments) for packets(): what a request of budget characters leaves for the
+    packet, by the monitor's rule (agentarmor_monitor.policy.packet_room) with its rules and the
+    call shown as a gate and panels show it (escalate.proposed, panels.request_of)."""
+    from agentarmor_monitor.escalate import proposed
+    from agentarmor_monitor.policy import load_rules, packet_room
+
+    rules = load_rules()
+
+    def room(tool, arguments):
+        shown_tool, shown, _ = proposed({"tool": tool}, arguments=arguments)
+        return packet_room(rules, (shown_tool, shown), budget)
+
+    return room
 
 
 def roster_of(rows, packets_sha256=None, source_sha256=None):
@@ -537,7 +570,16 @@ def main(argv=None):
     write = commands.add_parser("write", help="write the packets of every run and arm")
     write.add_argument("campaigns", help="a JSON Lines file of campaigns")
     write.add_argument("--out", required=True, help="a new folder for the packets; never tracked")
-    write.add_argument("--budget", type=int, default=3000)
+    write.add_argument(
+        "--budget", type=int, default=3000, help="the request's size, as --max-chars"
+    )
+    write.add_argument(
+        "--budget-of",
+        choices=("request", "packet"),
+        default="request",
+        help="request: the packet has what the rules and the call leave of the budget, as in a "
+        "server's request (the default); packet: the packet has all of it",
+    )
     write.add_argument("--embedder", choices=("hash", "embeddinggemma"), default="hash")
     write.add_argument(
         "--replays",
@@ -572,7 +614,8 @@ def main(argv=None):
         before["package"] = str(Path(summarizer.__file__).resolve().parent)
         runtime = Runtime(create(args.embedder))
         variants = cc.VARIANTS[:1] if args.replays == "first" else None
-        rows = packets(campaigns, runtime, args.budget, variants=variants)
+        room = monitor_room(args.budget) if args.budget_of == "request" else None
+        rows = packets(campaigns, runtime, args.budget, variants=variants, room=room)
         after = {"code": cc.code_version(), "source_sha256": _sha256(args.campaigns)}
         if any(before[name] != after[name] for name in after):
             raise SystemExit("write: the code or the campaign file changed while this ran")
@@ -580,12 +623,14 @@ def main(argv=None):
         roster = roster_of(rows, _sha256(out / "packets.jsonl"), before["source_sha256"])
         roster |= {"scorer": cc.SCORERS[RULES], "code": before["code"]}
         roster["replays"] = args.replays
+        roster["budget_of"] = args.budget_of
         roster["package"] = before["package"]
         # What made the summaries: the encoder, its revision, device, number type and
         # policy, the probes and the detector. A measurement names it and is held to it.
         roster |= {"embedder": args.embedder, "made_with": runtime.identity()}
         (out / ROSTER).write_text(json.dumps(roster, indent=1) + "\n", encoding="utf-8")
         told = {"budget": args.budget, "scorer": roster["scorer"], "code": roster["code"]}
+        told["budget_of"] = args.budget_of
         told |= {"embedder": args.embedder, "made_with": roster["made_with"]}
         print(json.dumps(written(rows) | told | {"packets_sha256": roster["packets_sha256"]}))
         return 0

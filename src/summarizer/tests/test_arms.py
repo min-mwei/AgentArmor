@@ -306,8 +306,11 @@ def test_end_to_end_a_run_that_is_not_asked_is_allowed_and_an_undecided_one_is_n
 
 def test_the_commands_bind_the_packets_to_a_roster_and_print_counts_only(tmp_path, capsys):
     out = tmp_path / "private"
-    assert arms.main(["write", str(STARTER), "--out", str(out)]) == 0
+    # The packet has all of the budget here: the server's room (the default, monitor_room()) is
+    # the monitor's rule and is tested where the monitor is (tests/test_packet_room.py).
+    assert arms.main(["write", str(STARTER), "--out", str(out), "--budget-of", "packet"]) == 0
     told = json.loads(capsys.readouterr().out)
+    assert told["budget_of"] == "packet"
     assert told["runs"] == 34 and told["records"] == 136 and told["history"]["complete"] == 34
     assert told["reference"]["complete"] == 34 and told["scorer"] == "campaign-contract/16"
     roster = json.loads((out / "roster.json").read_text())

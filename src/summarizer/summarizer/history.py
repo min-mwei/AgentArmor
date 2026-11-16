@@ -460,6 +460,9 @@ PLACES = ("domain", "url", "ip", "email")  # observables that are somewhere a ca
 # Labels content gets from the calls that followed it, not from what it says.
 _FROM_CALLS = frozenset({"action_source", "destination_source"})
 UNDER = 3  # writes shown of what a session did under a bound the user stated
+# Under a statement that bears on the call, the newest other calls of that turn shown with all that
+# came back (a test run, a status check); any more are counted, never dropped in silence (_under).
+TURN = 4
 OBJECT_EVENTS = 8  # recorded events listed in an object's account, the newest; the rest counted
 EARLIER = 3  # other requests of the project's earlier sessions shown as context, the newest
 
@@ -1407,8 +1410,10 @@ def select(mine, call_id, others, home, within=True):
          "unresolved": {key: reason},        sources searched without knowing they are near
          "searched": [...], "excluded": {key: reason},
          "route": "asked" | "unasked" | "undecided", "route_reason": ...,
-         "prior": [{"key", "seq", "type", "placement"}, ...]}   what came before the current
+         "prior": [{"key", "seq", "type", "placement"}, ...],   what came before the current
                                              request and bears on the call (prior_events())
+         "turns_bounded": [{"key", "seq", "calls_not_retrieved"}, ...]}   older calls of the
+                                             turn under a bearing statement, not retrieved
 
     What this session itself did before the current request is held to the call by the very same
     reading: the session is taken as the two it would be after a restart at that request
@@ -1572,6 +1577,7 @@ def select(mine, call_id, others, home, within=True):
         tokens |= _tokens(prompt)
     bearing = list(stated)  # the user's statements that bear on the call, here and earlier
     waits = []  # (session, request, words): the conditions those of other sessions set
+    turns = []  # turns under a bearing statement with older calls not retrieved (_under)
     for other, acted in sources:
         summary, there = other["summary"], other["cwd"]
         if not summary["session"]["coverage"]["scanned_all_captured"]:
@@ -1632,6 +1638,14 @@ def select(mine, call_id, others, home, within=True):
             under = _under(other, prompt, taken, key=same_project and named)
             items += under["items"]
             groups += under["groups"]
+            # What that turn did not show leaves the search unfinished. Not so for this session's
+            # own part before its request (within=False, _restarted()): its own packet shows
+            # those calls and counts what it leaves out.
+            if within:
+                unsupported += [gap for gap in under["gaps"] if gap not in unsupported]
+                if under["bounded"]:
+                    turns.append({"key": other["key"], "seq": prompt["seq"]})
+                    turns[-1]["calls_not_retrieved"] = under["bounded"]
             taken |= {(item["seq"], item["type"]): item for item in under["items"]}
     # What was observed elsewhere of a thing a bearing statement names by its identifier:
     # "until ticket RV-44 is closed" is held against whatever a session saw of RV-44.
@@ -1849,6 +1863,7 @@ def select(mine, call_id, others, home, within=True):
         "route": route,
         "route_reason": reason,
         "objects": objects,
+        "turns_bounded": turns,
     }
 
 
@@ -2861,7 +2876,17 @@ def _under(other, prompt, taken, key=False):
     request, each with the lower-trust content shown before it in that turn and what came
     back. In a group of its own, and tied to nothing: "recent" and "shown". It is context,
     except under a statement that bears on the call: how a limit was read at the time, and
-    what that session was told below the user while it stood, is then key evidence."""
+    what that session was told below the user while it stood, is then key evidence.
+
+    Under a statement that bears on the call (key), what the session then did is key evidence
+    whatever the tool: a test run or a status check made after the request is what was known of
+    it when that session moved on, and a call that is no write was left out of the packet while
+    the packet said it was complete. So the newest TURN other calls of that turn are shown as
+    well, each with all that came back, in the same group. Older calls of a longer turn are not
+    retrieved, as older writes are not (UNDER); how many is counted ("bounded") and the account
+    says so. What cannot be shown of those newest calls leaves the search unfinished (gaps): a
+    call the summary lists only in its catalogue ("statement_turn_not_kept"), or a result it does
+    not keep whole ("statement_result_not_kept"). Nothing here says what a result means."""
     entries = other["summary"]["entries"]
     later = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] > prompt["seq"]]
     end = min(later, default=float("inf"))
@@ -2869,7 +2894,29 @@ def _under(other, prompt, taken, key=False):
     writes = [e for e in turn if e["type"] == "action" and e.get("tool") in WRITES]
     writes = [e for e in writes if (e["seq"], "action") not in taken][:UNDER]
     group = f"{other['key']}:under:{prompt['seq']}"
-    items, seen = [], set(taken)
+    items, seen, gaps, rest, bounded = [], set(taken), set(), [], 0
+    if key:
+        chosen = {e["seq"] for e in writes}
+        rest = [
+            e
+            for e in turn
+            if e["type"] == "action"
+            and e["seq"] not in chosen
+            and (e["seq"], "action") not in taken
+        ]
+        # The calls of the turn the summary lists only in its catalogue stand in the window too: one
+        # among the newest is a call of the turn that cannot be shown.
+        session = other["summary"]["session"]
+        listed = [
+            {"seq": c["seq"], "listed": True}
+            for c in session.get("dropped_calls") or ()
+            if prompt["seq"] < (c.get("seq") or 0) < end
+        ]
+        window = sorted([*rest, *listed], key=lambda e: e["seq"])
+        bounded, window = max(0, len(window) - TURN), window[-TURN:]
+        if any(e.get("listed") for e in window) or session.get("dropped_calls_not_listed"):
+            gaps.add("statement_turn_not_kept")  # not kept, or kept where it is not known
+        rest = [e for e in window if not e.get("listed")]
     calls = {e["call_id"]: e for e in entries if e["type"] == "action" and e.get("call_id")}
     for write in writes:
         linked = (write.get("resembles") or {}).get("seq")
@@ -2893,8 +2940,23 @@ def _under(other, prompt, taken, key=False):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
                 items.append(_item(other, entry, "shown", groups=[group]))
+    for made in rest:
+        # Every piece that came back for it, one the session had seen before included (_arrived).
+        came = [
+            content
+            for content in _lower(entries)
+            for by, seq, aside in _arrived(content)
+            if by == made.get("call_id") and seq > made["seq"] and not aside
+        ]
+        back = list({id(content): content for content in came}.values())
+        if made.get("result_pieces") not in (None, len(back)):
+            gaps.add("statement_result_not_kept")
+        for entry, relation in ((made, "recent"), *((e, "shown") for e in back)):
+            if (entry["seq"], entry["type"]) not in seen:
+                seen.add((entry["seq"], entry["type"]))
+                items.append(_item(other, entry, relation, groups=[group]))
     found = [{"id": group, "kind": "recent", "key": bool(key), "bears": False}] if items else []
-    return {"items": items, "groups": found}
+    return {"items": items, "groups": found, "gaps": sorted(gaps), "bounded": bounded}
 
 
 def _fits(path, patterns):
@@ -3214,6 +3276,12 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
             account[name] = value
     if found["by_name"]:
         account["by_name"] = found["by_name"]
+    if found["turns_bounded"]:  # older calls of a bearing statement's turn, not retrieved (_under)
+        account["turns_bounded"] = [
+            {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}
+            | {"calls_not_retrieved": one["calls_not_retrieved"]}
+            for one in found["turns_bounded"]
+        ]
     if passed:  # read by an earlier session and shown not to apply: where, and why
         account["controls_not_applying"] = [
             {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}
