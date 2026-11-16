@@ -284,11 +284,13 @@ class LoraPackage:
     @staticmethod
     def _check_evidence(evidence):
         """None for a package without an evidence head ("unavailable"), else what it says of
-        its head: the readout that runs it and the SHA-256 of that readout's source. The head
-        file is one of the package's bound files. Naming a head qualifies nothing."""
+        its head: the readout that runs it, the SHA-256 of that readout's source and, when the
+        readout decodes with them, the decoder's threshold and span budget (both or neither).
+        The head file is one of the package's bound files. Naming a head qualifies nothing."""
         if evidence == "unavailable":
             return None
-        named = isinstance(evidence, dict) and set(evidence) == {"readout", "impl_sha256"}
+        decoder = {"threshold", "max_spans"}
+        named = isinstance(evidence, dict) and set(evidence) - decoder == {"readout", "impl_sha256"}
         if (
             not named
             or not isinstance(evidence["readout"], str)
@@ -296,6 +298,15 @@ class LoraPackage:
             or not _digests({"impl": evidence["impl_sha256"]})
         ):
             raise ValueError("unknown evidence qualification")
+        if set(evidence) & decoder:
+            threshold, budget = evidence.get("threshold"), evidence.get("max_spans")
+            if (
+                type(threshold) not in (int, float)
+                or not math.isfinite(threshold)
+                or type(budget) is not int
+                or not 1 <= budget <= 32
+            ):
+                raise ValueError("invalid evidence decoder settings")
         return dict(evidence)
 
     @staticmethod

@@ -556,5 +556,63 @@ def test_a_head_that_is_unbound_changed_or_without_its_readout_is_refused(made, 
         engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)
 
 
-def test_no_readout_is_registered_in_this_build():
-    assert engine.EVIDENCE == {}
+def pair_head(made, **evidence):
+    """A head of the published readout's layout (random tensors: nothing is trained)."""
+    from agentarmor_vllm import pairs
+
+    rng = np.random.default_rng(0)
+    shapes = {"k": (4, 2560), "q": (4, 2560), "pair_memory.hidden": (2, 12)}
+    shapes |= {"pair_memory.start": (2, 2), "pair_memory.end": (2, 2), "pair_memory.bias": (1, 4)}
+    tensors = {}
+    for name, shape in shapes.items():
+        tensors[f"{name}.weight"] = rng.standard_normal(shape).astype(np.float32)
+        tensors[f"{name}.bias"] = rng.standard_normal(shape[0]).astype(np.float32)
+    save_file(tensors, made.root / "evidence_head.safetensors")
+    made.meta["files"]["evidence_head.safetensors"] = sha256(
+        made.root / "evidence_head.safetensors"
+    )
+    told = {"readout": pairs.PairReadout.name, "impl_sha256": sha256(Path(pairs.__file__))}
+    made.meta["evidence"] = told | {"threshold": 0.0, "max_spans": 32} | evidence
+    made.write()
+
+
+def test_the_published_readout_loads_a_head_of_its_layout_with_the_packages_decoder(
+    made, monkeypatch
+):
+    stub_tokenizer(monkeypatch, made.base)
+    pair_head(made, threshold=1.5, max_spans=8)
+    service = engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)
+    assert (service.evidence.threshold, service.evidence.max_spans) == (1.5, 8)
+    assert (service.evidence.dim, service.evidence.width) == (4, 2)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"impl_sha256": "0" * 64},  # another source than this build's
+        {"threshold": None},
+        {"max_spans": 0},
+        {"max_spans": 33},
+        {"threshold": "0"},
+        {"threshold": float("inf")},
+    ],
+)
+def test_the_published_readout_refuses_another_source_or_decoder_settings(
+    made, monkeypatch, evidence
+):
+    stub_tokenizer(monkeypatch, made.base)
+    pair_head(made, **evidence)
+    with pytest.raises(ValueError):
+        engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)
+
+
+def test_the_published_readout_refuses_a_head_of_another_layout(made, monkeypatch):
+    stub_tokenizer(monkeypatch, made.base)
+    pair_head(made)
+    with_head(
+        made, readout="joint_pairs_memory_v1", impl_sha256=made.meta["evidence"]["impl_sha256"]
+    )
+    made.meta["evidence"] |= {"threshold": 0.0, "max_spans": 32}
+    made.write()
+    with pytest.raises(ValueError):
+        engine.load_service(made.root, backend="mlx", base_dir=made.base, allocate=False)

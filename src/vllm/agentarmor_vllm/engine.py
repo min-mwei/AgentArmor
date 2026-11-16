@@ -8,6 +8,7 @@ import numpy as np
 
 from .api import to_answers, to_record
 from .encode import SPECIAL, encode, pause_token, rows_of, state_offsets, tokenizer_sha256
+from .pairs import PairReadout
 from .requests import MAX_TOTAL_TOKENS, validate_request
 from .wire import read_json
 
@@ -277,9 +278,10 @@ class MlxLoraBackbone(MlxBackbone):
 # package) from the package's evidence head file and has spans(hidden, row, offsets, state):
 # hidden is the whole row's raw states, row its layout ("ids", "decide", "opts"), offsets the
 # state rows' places in state (encode.state_offsets), and the result a list of [start, end]
-# code-point intervals of state. None is registered here: no trained head is published, and
-# a package that names a readout this build does not have is refused, not answered without.
-EVIDENCE = {}
+# code-point intervals of state. One is published: Kai's span-pair scorer and decoder
+# (pairs.py). No trained head is published with it, and a package that names a readout this
+# build does not have is refused, not answered without.
+EVIDENCE = {PairReadout.name: PairReadout}
 MAX_SPANS, MAX_EVIDENCE_STATE = 32, 4096
 
 

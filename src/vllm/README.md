@@ -261,14 +261,46 @@ or deployment qualification, and it says nothing for vLLM. `policy_ready` stays 
 ### Evidence spans
 
 No trained evidence head exists and none is published. What exists is the path a head's spans
-take, tested with a stand-in readout: it is unqualified, and `policy_ready` stays `false`.
+take and one readout to run a head with; both are unqualified, and `policy_ready` stays
+`false`.
 
-An unmerged package may carry a head. Its `evidence` field is then
-`{"readout": NAME, "impl_sha256": SHA256}` instead of `"unavailable"`, and
-`evidence_head.safetensors` is a third bound file. NAME must be a readout this build has
-(`agentarmor_vllm.engine.EVIDENCE`, empty in this tree) whose source file has that hash; a
-package that names another is refused at load, never served without its head. A head reads
-at most 4,096 state tokens.
+An unmerged package may carry a head. Its `evidence` field then names the readout instead of
+being `"unavailable"`, and `evidence_head.safetensors` (safetensors, never a pickle) is a
+third bound file:
+
+```json
+"evidence": {"readout": "joint_pairs_memory_v1", "impl_sha256": "SHA256 of agentarmor_vllm/pairs.py",
+             "threshold": 0.0, "max_spans": 32}
+```
+
+`readout` must be one this build has (`agentarmor_vllm.engine.EVIDENCE`) whose source file has
+that hash; a package that names another, or another source, is refused at load, never served
+without its head. A head reads at most 4,096 state tokens.
+
+One readout is published, `joint_pairs_memory_v1` (`agentarmor_vllm/pairs.py`): the span-pair
+scorer and decoder of the Kai project, in NumPy, published by that project's owner. It is
+arithmetic only: no weights, no data and no training code.
+
+| What the package gives | Rule |
+|---|---|
+| `evidence_head.safetensors` | Exactly twelve float32 tensors: `k`, `q` (`[P, 2560]`, `[P]`), `pair_memory.hidden` (`[W, 3P]`, `[W]`), `pair_memory.start` and `.end` (`[W, W]`, `[W]`), `pair_memory.bias` (`[1, P]`, `[1]`); `W` even; all finite |
+| `threshold` | The score a token pair must exceed to be evidence. The package states it; this code chooses none |
+| `max_spans` | 1 to 32 disjoint intervals a question may return |
+
+For each question the readout takes the row's raw hidden states: the state's rows (the state
+marker first), the question's own branch and its deciding state. It scores every pair of
+state tokens, keeps those above the threshold, and returns the disjoint intervals of greatest
+total score as character intervals without white space at their ends. A branch longer than
+1,024 tokens is an `error` for that question.
+
+Measured on random tensors (no trained head): against Kai's own module in float32 the scores
+agree to 0.00003 at 300 rows and 0.0007 at 2,048 to 4,096 rows, where float32 rotary angles
+are themselves that coarse, and the decoder returns the same intervals from the same scores.
+On Apple GPUs MLX by default runs float32 matrix products at reduced precision
+(`MLX_ENABLE_TF32` unset); the same scorer run that way differed from float32 by 0.07 in
+that test. A head fitted under that arithmetic and read here in float32 can therefore mark
+different spans near the threshold. Agreement of decoded intervals with the training reader,
+by a rule set before the read, is still to be measured for any real head.
 
 With a head loaded, `/health` and every reply say `evidence_available: true`, a reply names
 what its evidence is of, and each answer carries its own:
