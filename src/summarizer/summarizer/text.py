@@ -359,7 +359,13 @@ def _bearing(summary, target):
     request, resembled = target.get("request", {}), target.get("resembles", {})
     asked = request.get("seq") if request.get("sim", 0) > 0 else None
     read = resembled.get("sha256") if resembled.get("sim", 0) > 0 else None
-    named = set(target.get("iocs", ()))
+
+    # What it names: its shown observables and every place it names (_places), so a request or
+    # a piece that names its ninth recipient is tied as one naming its first is (MR308 P1).
+    def names(entry):
+        return set(entry.get("iocs", ())) | _places(entry)
+
+    named = names(target)
     introduced = set()  # (observable, seq) of its first mention in lower-trust content
     for ioc in summary.get("iocs", ()):
         name = f"{ioc['kind']}:{ioc['value']}"
@@ -368,7 +374,7 @@ def _bearing(summary, target):
             introduced.add((name, min(lower)))
 
     def key(entry):
-        shared = named & set(entry.get("iocs", ()))
+        shared = named & names(entry)
         if entry["type"] == "prompt":
             return entry["seq"] == asked or bool(shared)
         if entry["type"] == "content":
@@ -377,7 +383,7 @@ def _bearing(summary, target):
         return entry["type"] == "action" and entry["text"] == target["text"]
 
     def related(entry):
-        return entry["type"] == "action" and bool(named & set(entry.get("iocs", ())))
+        return entry["type"] == "action" and bool(named & names(entry))
 
     return key, related
 
@@ -386,10 +392,44 @@ PLACES = ("domain", "url", "ip", "email")  # observables that name somewhere a c
 
 
 def _places(record):
-    """The places an entry or a catalogued call names ("email:alice@x.example"): an entry lists
-    them among its observables, a catalogue record under places."""
-    named = [*(record.get("iocs") or ()), *(record.get("places") or ())]
+    """The places an entry or a catalogued call names ("email:alice@x.example"), as the summary
+    lists them whole for matching (places), never the few observables shown with the entry
+    (iocs, ENTRY_IOCS): a call that names nine recipients is tied to a check of the ninth. A
+    record from a summary that kept no such list falls back to its observables (_places_whole
+    then says whether those can be all of them)."""
+    named = record["places"] if "places" in record else record.get("iocs") or ()
     return {one for one in named if str(one).split(":", 1)[0] in PLACES}
+
+
+def _places_whole(record, cap=8):
+    """Whether _places() is every place the record names: the list is not cut at its bound and
+    the record's words were all there to read; for a record with no list, its shown observables
+    are fewer than an entry shows (cap, events.ENTRY_IOCS)."""
+    if record.get("places_complete") is False:
+        return False
+    return "places" in record or len(record.get("iocs") or ()) < cap
+
+
+def _related_unlinked(summary, target):
+    """How many calls the tie of earlier calls to the places of the call under decision cannot be
+    told for: the call itself when its places are not all listed (an earlier check of one that is
+    not listed would be missed), and each earlier call, kept or catalogued, whose places are not
+    all listed (it may name one of the call's). Each is key evidence that may be missing: never
+    a ready packet with a destination left unlinked (MR308 P1). Only places are counted here; a
+    call that names no place has nothing to tie."""
+    if target is None:
+        return 0
+    if not _places_whole(target):
+        return 1
+    if not _places(target):
+        return 0
+    earlier = [
+        e
+        for e in summary["entries"]
+        if e["type"] == "action" and e is not target and e["seq"] < target["seq"]
+    ]
+    earlier += [r for r in summary["session"].get("dropped_calls", ()) if r["seq"] < target["seq"]]
+    return sum(1 for record in earlier if not _places_whole(record))
 
 
 def _related_results(summary, target):
@@ -799,7 +839,9 @@ def condition_line_for(conditions, elsewhere=()):
 CUT_KINDS = ("prompt", "action", "message")  # a piece of content is never cut
 
 
-def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False, missing=0, partial=0):
+def _footer(
+    summary, dropped, key, clipped=0, cut=None, as_before=False, missing=0, partial=0, unlinked=0
+):
     """The packet's last line: what the summary and the budget left out, and what is cut.
 
     cut counts the lines that show less of their entry's text than there is, by kind. With
@@ -821,6 +863,11 @@ def _footer(summary, dropped, key, clipped=0, cut=None, as_before=False, missing
         for name in ("echoed_fields", "redactions", "sightings_not_listed")
         if coverage.get(name)
     ]
+    if unlinked:  # places not all listed: a tie to an earlier call cannot be ruled out
+        parts.append(
+            f"places of {unlinked} calls are not all listed: earlier calls on what this call "
+            "names may be left out"
+        )
     if missing:  # key evidence the summary itself does not hold (_related_results)
         parts.append(
             f"results of {missing} earlier calls on what this call names are not in this summary"
@@ -854,7 +901,8 @@ def digest(summary, max_chars=3000, focus=None, measure=len, call_sha256=None):
     and are then shown in session order.
 
     Returns {"text", "call", "later_events", "proposal_observed", "fits", "dropped",
-    "key_dropped", "key_clipped", "related_results_missing", "related_results_partial", "cut",
+    "key_dropped", "key_clipped", "related_results_missing", "related_results_partial",
+    "related_unlinked", "cut",
     "conditions",
     "unresolved_conditions", "shown"}:
 
@@ -877,6 +925,9 @@ def digest(summary, max_chars=3000, focus=None, measure=len, call_sha256=None):
       medium or high, the evidence that bears on the focus call (what it resembles, who
       named what it uses, earlier attempts), and what earlier calls returned of a file the focus
       call names. It also counts related_results_missing.
+    - related_unlinked counts the calls whose places are not all listed (the focus call, or an
+      earlier call when the focus call names a place): a tie between them cannot be ruled out,
+      so each is counted in key_dropped and the last line says so (_related_unlinked).
     - related_results_partial counts the earlier calls on a file the focus call names whose
       result the summary holds only in part (head and tail of a long one): counted in key_clipped.
     - related_results_missing counts the earlier calls on a file the focus call names whose
@@ -937,7 +988,16 @@ def _build(summary, lines, target, state, max_chars, measure):
     missing = _related_results(summary, target)[1]
     partial = _related_partial(summary, target)
     used = measure(
-        _footer(summary, worst, 9999, 9999, as_before=True, missing=missing, partial=partial)
+        _footer(
+            summary,
+            worst,
+            9999,
+            9999,
+            as_before=True,
+            missing=missing,
+            partial=partial,
+            unlinked=_related_unlinked(summary, target),
+        )
     )
     used += 1
     used += measure(reserved) + 1 if reserved else 0
@@ -979,6 +1039,8 @@ def _write(summary, lines, kept, target, state, fits, missing=0, partial=0):
     key = omitted.get("noted_prompts", omitted.get("prompts", 0))
     key += omitted.get("key_messages", 0)  # marked messages the summary could not keep
     key += missing  # results of earlier calls on what the call names that are not in the summary
+    unlinked = _related_unlinked(summary, target)
+    key += unlinked  # calls whose places are not all listed: a tie cannot be ruled out
     emitted = []  # the entries the text shows, and how much of each
     for index, (rank, is_key, section, text, *rest) in enumerate(lines):
         if index not in kept:
@@ -1000,7 +1062,11 @@ def _write(summary, lines, kept, target, state, fits, missing=0, partial=0):
         out.insert(min(3, len(out)), _condition_line(conditions))
     cut = {name: count for name, count in cut.items() if count}
     clipped += partial  # a related result held only in part is key evidence cut short
-    out.append(_footer(summary, dropped, key, clipped, cut, missing=missing, partial=partial))
+    out.append(
+        _footer(
+            summary, dropped, key, clipped, cut, missing=missing, partial=partial, unlinked=unlinked
+        )
+    )
     return {
         "text": "\n".join(out),
         "call": state,
@@ -1013,6 +1079,7 @@ def _write(summary, lines, kept, target, state, fits, missing=0, partial=0):
         "key_dropped": key,
         "key_clipped": clipped,
         "related_results_missing": missing,
+        "related_unlinked": unlinked,
         "related_results_partial": partial,
         "cut": cut,
         "conditions": conditions,

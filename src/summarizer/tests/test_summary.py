@@ -21,6 +21,7 @@ from sessions import (
 )
 from standins import word_embedder
 
+from summarizer import summarize as summarize_module
 from summarizer import text as text_module
 from summarizer.embedder import HashEmbedder, control_pattern, controls_of, inert
 from summarizer.events import agent_home, call_words, describe_call, field_text
@@ -2480,6 +2481,89 @@ def test_an_earlier_call_on_the_addresses_a_call_sends_to_is_shown_or_missed(
     for budget in range(700, 3200, 100):
         tight = digest(summary, budget, focus=call, call_sha256=identity)
         assert MAILBOXES in tight["text"] or tight["key_dropped"] > 0, budget
+
+
+def many_recipients(count, agent="claude_code", noise=14, check=None):
+    """The reviewer's control (MR308 P1): an address book, a check of one recipient (by default
+    the last of count), the draft the send is made from, other work, then a send to all count.
+    Returns (events, call id, identity, the check's call id)."""
+    addresses = [f"user{index}@dept{index}.example" for index in range(count)]
+    checked = addresses[-1 if check is None else check]
+    script = Script(agent=agent, cwd=DEV_CWD).start()
+    script.prompt("Send the weekly report to the listed recipients after review.")
+    book = "\n".join(f"address={a} label=team-{i}" for i, a in enumerate(addresses))
+    script.tool("Bash", {"command": "cat mail/directory.txt"}, book)
+    script.tool(
+        "Bash",
+        {"command": f"python tools/check_recipients.py {checked}"},
+        "recipient=mb-809; status=verified",
+    )
+    check_id = f"call-{script.calls}"
+    draft = f"to: {' '.join(addresses)}\nsubject: Weekly report\nbody_file: out/report.md"
+    script.tool("Bash", {"command": "cat out/draft.txt"}, draft)
+    for index in range(noise):
+        script.tool("Bash", {"command": f"python tools/lint_{index}.py"}, f"lint {index} fine")
+    final = {"to": addresses, "subject": "Weekly report", "body_file": "out/report.md"}
+    script.tool("mcp__mail__send", final)
+    return script.events, f"call-{script.calls}", call_sha256("mcp__mail__send", final), check_id
+
+
+def _target(summary, call):
+    return next(e for e in summary["entries"] if e.get("call_id") == call and e["type"] == "action")
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("count", [2, 9, 40])
+def test_a_check_of_any_recipient_of_a_send_is_linked_however_many_it_names(runtime, agent, count):
+    # MR308 P1: an entry shows eight observables, and the dependency index was that display list.
+    # A send to nine recipients was not tied to an earlier check of the ninth: at 4,000 characters
+    # the packet left the check out and was ready. Ties now use every place the call names.
+    events, call, identity, check = many_recipients(count, agent)
+    summary = summarize(events, runtime, agent)
+    target = _target(summary, call)
+    assert len(target["iocs"]) <= 8 and len(text_module._places(target)) == count  # shown, whole
+    calls, missing = text_module._related_results(summary, target)
+    assert check in calls and missing == 0
+    roomy = digest(summary, 20000, focus=call, call_sha256=identity)
+    assert "mb-809" in roomy["text"] and roomy.get("related_unlinked", 0) == 0
+    for budget in (2500, 3000, 4000, 6000):
+        tight = digest(summary, budget, focus=call, call_sha256=identity)
+        assert "mb-809" in tight["text"] or tight["key_dropped"] > 0, budget
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_a_check_of_the_ninth_recipient_in_the_catalogue_only_is_counted(agent):
+    # The check's call is one the summary does not keep, catalogued with the places it named. The
+    # catalogue's list was cut at eight as well: its result was neither shown nor counted.
+    config = Config(max_actions=4, max_related=0, max_marked=0, max_content=0)
+    runtime = Runtime(HashEmbedder(), strict=True, config=config)
+    events, call, identity, check = many_recipients(9, agent, noise=30)
+    summary = summarize(events, runtime, agent)
+    (record,) = [r for r in summary["session"]["dropped_calls"] if r["call_id"] == check]
+    assert "email:user8@dept8.example" in record["places"]
+    assert not any("mb-809" in str(e.get("text")) for e in summary["entries"])  # not kept
+    shown = digest(summary, 20000, focus=call, call_sha256=identity)
+    assert shown["related_results_missing"] >= 1  # counted as key evidence that is not there
+    assert shown["key_dropped"] >= shown["related_results_missing"]
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_places_past_their_bound_are_a_gap_and_never_a_ready_packet(monkeypatch, runtime, agent):
+    # Where the list of places is cut at its bound, a tie to a place it leaves out cannot be made
+    # or ruled out: the packet says so and counts it as key evidence that may be missing.
+    monkeypatch.setattr(summarize_module, "MAX_PLACES", 4)
+    events, call, identity, _ = many_recipients(9, agent)
+    summary = summarize(events, runtime, agent)
+    target = _target(summary, call)
+    assert target["places_complete"] is False and target["places_not_listed"] == 5
+    shown = digest(summary, 20000, focus=call, call_sha256=identity)
+    assert shown["related_unlinked"] >= 1 and shown["key_dropped"] >= 1
+    assert "are not all listed" in shown["text"].split("\n")[-1]
+    # A call that names few places is not held back by an earlier call whose list was cut.
+    events, call, identity, _ = many_recipients(2, agent)
+    monkeypatch.setattr(summarize_module, "MAX_PLACES", 256)
+    clean = digest(summarize(events, runtime, agent), 20000, focus=call, call_sha256=identity)
+    assert clean["related_unlinked"] == 0
 
 
 def test_a_call_sending_to_other_addresses_does_not_take_the_check_as_its_own(runtime):

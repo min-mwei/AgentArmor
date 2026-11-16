@@ -1571,7 +1571,7 @@ def select(mine, call_id, others, home, within=True):
                 stepped |= said - mine_uses["named"]
                 mine_uses["named"] |= said
                 places |= _places(body)
-                cut = cut or len(body.get("iocs") or ()) >= ENTRY_IOCS
+                cut = cut or not _places_whole(body)  # a place it names may not be listed
             if cut and "program_text_cut" not in unsupported:
                 unsupported.append("program_text_cut")
     # A file the call names whose use its words do not tell (a configuration handed to a program
@@ -1806,6 +1806,23 @@ def select(mine, call_id, others, home, within=True):
     # "after the readiness check passes". A lead and no more, shown with who said it and when;
     # key evidence as a statement's own context is: shown whole, or left out and said.
     told = _told(others, shown_in, cwd, home, call, command, tokens, places, mine_uses, bearing)
+    # Ties by place are made on each entry's whole list of places. Where a list is not whole (cut
+    # at its bound, or words the hook clipped), a tie to a place it leaves out can be neither
+    # made nor ruled out: the search is unfinished, never complete with a place unlinked (MR308).
+    if not _places_whole(call) and "call_places_not_listed" not in unsupported:
+        unsupported.append("call_places_not_listed")
+    if places or any(_places(p) for p in bearing):
+        cut = any(
+            not _places_whole(record)
+            for other in others
+            if other["key"] in shown_in and other["cwd"] == cwd
+            for record in (
+                *other["summary"]["entries"],
+                *(other["summary"]["session"].get("dropped_calls") or ()),
+            )
+        )
+        if cut and "places_not_listed" not in unsupported:
+            unsupported.append("places_not_listed")
     for other, content, action in told:
         taken = shown_in[other["key"]]
         group = f"{other['key']}:told:{content['seq']}"
@@ -2402,7 +2419,7 @@ def _bodies(sources, paths):
                     if e["seq"] > entry["seq"] and not e.get("aside")
                 ]
                 cut = entry.get("result_pieces") != len(back)
-                cut = cut or any(len(e.get("iocs") or ()) >= ENTRY_IOCS for e in back)
+                cut = cut or any(not _places_whole(e) for e in back)
                 found += [(e, cut, path) for e in back] or ([(None, True, path)] if cut else [])
     return found
 
@@ -2903,8 +2920,20 @@ def _lower(entries):
 
 
 def _places(entry):
-    """The places an entry names that a call can send to, as a summary lists them."""
-    return {one for one in entry.get("iocs") or () if str(one).split(":", 1)[0] in PLACES}
+    """The places an entry names that a call can send to, as a summary lists them whole for
+    matching (places), never the few observables shown with it (iocs, ENTRY_IOCS: MR308 P1). An
+    entry of a summary that kept no such list falls back to its observables (_places_whole)."""
+    named = entry["places"] if "places" in entry else entry.get("iocs") or ()
+    return {one for one in named if str(one).split(":", 1)[0] in PLACES}
+
+
+def _places_whole(entry):
+    """Whether _places() is every place the entry names: its list is not cut at its bound and its
+    words were all there to read; for an entry with no list, it shows fewer observables than an
+    entry can (ENTRY_IOCS)."""
+    if entry.get("places_complete") is False:
+        return False
+    return "places" in entry or len(entry.get("iocs") or ()) < ENTRY_IOCS
 
 
 _VARIABLES = re.compile(r"\$(?:\{(PWD|HOME)\}|(PWD|HOME)\b)")

@@ -89,6 +89,11 @@ MESSAGE_CHARS = 2000  # of an agent message kept; all of it is scanned
 MAX_NOTED = 4  # excerpts kept around the wording that marked a long message
 NOTED_CHARS = 240  # of each excerpt, as a packet shows it
 MAX_OBSERVABLES = 4096  # tracked per session; later new ones are counted, not kept
+# The places (addresses, hosts, URLs) one entry names, listed whole for matching one entry with
+# another (text._places, history._places), apart from the few observables shown with it
+# (ENTRY_IOCS). Past this many the list is cut and says so ("places_complete": false), and a
+# reader then cannot rule out a tie to a place that is not listed.
+MAX_PLACES = 256
 # What each agent's hooks never deliver. A summary cannot know what happened on these surfaces.
 NOT_CAPTURED = {
     "claude_code": [
@@ -126,9 +131,22 @@ class Config:
     max_dropped_calls: int = 1024
 
 
-def _places(unit):
-    """The places a call names, as "kind:value" (text.PLACES): what it sends to or reaches."""
-    return {f"{kind}:{value}" for kind, value in unit.iocs if kind in PLACES}
+def place_names(pairs):
+    """ "kind:value" for each place among (kind, value) observables (text.PLACES), in order."""
+    return list(dict.fromkeys(f"{kind}:{value}" for kind, value in pairs if kind in PLACES))
+
+
+def places_record(places, whole=True):
+    """How an entry or a catalogued call carries the places it names: all of them up to
+    MAX_PLACES, and "places_complete": false (with how many are not listed) when that is not all
+    of them, or when its words were not all there to read (whole False: the hook clipped them)."""
+    record = {"places": places[:MAX_PLACES]} if places else {}
+    unlisted = max(0, len(places) - MAX_PLACES)
+    if unlisted or not whole:
+        record["places_complete"] = False
+        if unlisted:
+            record["places_not_listed"] = unlisted
+    return record
 
 
 def effects_record(unit):
@@ -309,6 +327,10 @@ class Session:
         self.counts = Counter()
         self.unhandled = Counter()  # hook events this version does not interpret, by name
         self.prompts = []
+        # The places each unit names, from its own whole text, whether or not the session's
+        # register of observables (MAX_OBSERVABLES) had room for them: what dependencies are
+        # matched on. unit.iocs is what is shown, and may be shorter.
+        self.places = {}
         self.context = []  # session-shaping events: resumes, compactions, subagents, config
         self.sources = {}  # (source, origin) of lower-trust input -> first seq, chunk count
         self.iocs = {}  # (kind, value) -> where an observable was named and how it was used
@@ -527,8 +549,10 @@ class Session:
                             if path is not None:
                                 path.setdefault("referenced", flag)
                                 unit.iocs.append(("path", basis))
-                for at, kind, value in named:
-                    if start <= at < end and self._observe(kind, value, seq, trust, index):
+                inside = [(kind, value) for at, kind, value in named if start <= at < end]
+                self.places[index] = place_names(inside)
+                for kind, value in inside:
+                    if self._observe(kind, value, seq, trust, index):
                         unit.iocs.append((kind, value))
                 for token in dotted_tokens(piece):
                     self.seen.setdefault(token, index)
@@ -614,6 +638,7 @@ class Session:
         named = {(kind, value) for _, kind, value in observables(body)}
         named |= {("domain", host) for host in call["hosts"] if ("ip", host) not in named}
         beside = {(kind, value) for _, kind, value in observables(call["extra"])} - named
+        self.places[index] = place_names(sorted(named | beside))
         for kind, value in sorted(named | beside):
             used = (kind, value) in named
             origin = self.seen.get(value) if kind in ("domain", "ip") else None
@@ -690,6 +715,7 @@ class Session:
         prompt["iocs"] = [
             pair for pair in dict.fromkeys(named) if self._observe(*pair, seq, "user")
         ]
+        prompt["places"] = place_names(named)
         spans, unscanned = chunk_spans(text)
         self.counts["unscanned_chars"] += unscanned
         for start, end in spans:
@@ -1179,6 +1205,7 @@ class Session:
         if unit.iocs:
             named = [f"{kind}:{value}" for kind, value in dict.fromkeys(unit.iocs)]
             entry["iocs"] = named[:ENTRY_IOCS]
+        entry |= places_record(self.places.get(index) or [], not unit.input_clipped)
         return entry
 
     @staticmethod
@@ -1202,6 +1229,7 @@ class Session:
                 entry["noted"] = prompt["noted"]
             if prompt["iocs"]:
                 entry["iocs"] = [f"{kind}:{value}" for kind, value in prompt["iocs"]][:ENTRY_IOCS]
+            entry |= places_record(prompt.get("places") or [])
             entries.append(entry)
         return entries
 
@@ -1335,12 +1363,12 @@ class Session:
         named = {path for action in actions[-8:] for path in units[action].named}
         # And what an earlier call returned that named a place one of them reaches (an address, a
         # host, a URL): a check of the recipients a send is about to use is that send's story too.
-        reached = {ioc for action in actions[-8:] for ioc in _places(units[action])}
+        reached = {one for action in actions[-8:] for one in self.places.get(action) or ()}
         related = [
             action
             for action in actions[:-8]
             if (named and any(named & set(paths) for paths in units[action].effects.values()))
-            or (reached and reached & _places(units[action]))
+            or (reached and reached & set(self.places.get(action) or ()))
         ]
         related = related[-config.max_related :] if config.max_related else []
         for action in set(actions[-8:]) | (kept & set(actions)) | set(since) | set(related):
@@ -1432,7 +1460,7 @@ class Session:
             | {"call_id": units[i].call_id, "result": result_seq(units[i])}
             | {"lifecycle": [{"state": s, "seq": q, "ts": t} for s, q, t in units[i].lifecycle]}
             | effects_record(units[i])
-            | ({"places": sorted(_places(units[i]))[:ENTRY_IOCS]} if _places(units[i]) else {})
+            | places_record(self.places.get(i) or [], not units[i].input_clipped)
             for i in actions
             if i not in shown
         ]

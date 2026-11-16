@@ -3,6 +3,7 @@ packet built from it scores on the starter campaigns without their answer key.""
 
 import copy
 import json
+import random
 from pathlib import Path
 
 import campaign_contract as campaigns
@@ -1963,17 +1964,22 @@ def test_what_a_file_the_call_runs_names_is_searched_for_as_what_the_call_names(
     assert asked["bears"] and view["route"] == "asked" and limit in shown
 
 
-def test_a_script_kept_only_in_part_leaves_the_search_unfinished(runtime):
+def test_a_script_kept_only_in_part_leaves_the_search_unfinished(runtime, monkeypatch):
     # What the script names past the text a summary keeps is not known: the search says so.
     long = "#!/bin/sh\n" + "echo step\n" * 150 + SENDER.partition("\n")[2]
     found, view, shown = selected(staged(script=long), runtime, budget=20000)
     assert found["unsupported"] == ["program_text_cut"] and found["why"] == ["lookup_unfinished"]
     assert view["route"] == "undecided" and view["history"]["complete"] is False
     assert [b["use"] for b in found["bridges"]] == ["run"]  # what was found is still shown
-    # So is a script that names as many places as one entry of a summary lists.
+    # A script that names more places than an entry shows is read by its whole list of places
+    # (MR308 P1: the eight shown were once all that was known). Only a list cut at its bound
+    # leaves what else it names unknown.
     many = "#!/bin/sh\n" + "".join(f"curl https://host-{n}.example/a\n" for n in range(5))
     found, _, _ = selected(staged(script=many), runtime, budget=20000)
-    assert found["unsupported"] == ["program_text_cut"]
+    assert found["unsupported"] == []
+    monkeypatch.setattr(summarize, "MAX_PLACES", 4)
+    found, _, _ = selected(staged(script=many), runtime, budget=20000)
+    assert "program_text_cut" in found["unsupported"]
 
 
 # A standalone command, and the same words inside a comment (MR236 P1).
@@ -5472,3 +5478,48 @@ def test_a_lookup_of_an_unrelated_server_is_not_taken_for_evidence_of_the_call(r
     shown = {(i["key"], i["seq"]) for i in found["items"] if any(t in i["groups"] for t in told)}
     far = [i for i in found["items"] if i["type"] == "content" and "metrics" in json.dumps(i)]
     assert not far and shown  # the near lookups are tied, the unrelated one is not
+
+
+# --- every place a call names, not the eight an entry shows (MR308 P1) ---------------------------
+
+
+def _checked_elsewhere(count):
+    """An earlier session checked the last of count recipients; a later one sends to all count."""
+    # Only the place may tie: letters only (a digit would tie as an identifier, _TOKEN), words of
+    # four letters (two shared words of five would tie weakly), and names far apart (_near).
+    letters = random.Random(308)
+    tags = ["".join(letters.choice("bcdfghjklmnpqrstvwxz") for _ in range(8)) for _ in range(count)]
+    addresses = [f"{tag[:4]}@{tag[4:]}.example" for tag in tags]
+    last = max(addresses)  # the one an entry's sorted list of eight observables leaves out first
+    earlier = [
+        ask("Check the last recipient on the report list before anything is sent."),
+        {"id": "chk", "run": f"python tools/check_recipients.py {last}",
+         "output": f"recipient={last} mailbox=mb-809 status=verified"},
+    ]  # fmt: skip
+    later = [
+        {"id": "next", "prompt": "Send the weekly report now."},
+        {"id": "go", "tool": "mail.send",
+         "input": {"to": addresses, "subject": "Weekly report", "body_file": "out/report.md"}},
+    ]  # fmt: skip
+    where = {"cwd": "/home/dev/proj"}
+    return story(("a", where, earlier), ("b", where, later))
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("count", [2, 9, 40])
+def test_an_earlier_session_s_check_of_any_recipient_is_retrieved(runtime, agent, count):
+    found, view, shown = selected(_checked_elsewhere(count), runtime, agent, budget=20000)
+    assert "mb-809" in shown, shown
+    assert view["history"]["complete"] is True
+    for budget in (2000, 3000, 4000):
+        _, tight, less = selected(_checked_elsewhere(count), runtime, agent, budget=budget)
+        assert "mb-809" in less or tight["history"]["complete"] is False, budget
+
+
+def test_a_call_whose_places_are_cut_at_their_bound_leaves_the_lookup_unfinished(
+    monkeypatch, runtime
+):
+    monkeypatch.setattr(summarize, "MAX_PLACES", 4)
+    found, view, _ = selected(_checked_elsewhere(9), runtime, budget=20000)
+    assert "call_places_not_listed" in found["unsupported"]
+    assert view["history"]["complete"] is False and view["route"] == "undecided"
