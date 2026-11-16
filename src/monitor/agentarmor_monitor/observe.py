@@ -697,20 +697,19 @@ def _where(binding):
     return out
 
 
-def _time(ts):
-    if not isinstance(ts, (int, float)):
+def _place_in_order(index, count, mention):
+    """Where a mention stands among its comparison's mentions by host time. The order, never
+    the clock: a request must not differ by when it was replayed (the record keeps the time)."""
+    if not isinstance(mention.get("ts"), (int, float)):
         return "no recorded time"
-    import datetime
-
-    when = datetime.datetime.fromtimestamp(ts, datetime.UTC)
-    return "host time " + when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"mention {index} of {count} by host time"
 
 
-def _mention_line(mention, printed):
+def _mention_line(mention, printed, order="no recorded time"):
     where = "this session" if mention["session"] == "this session" else f"[s:{mention['session']}]"
     key = (mention["session"], mention["seq"], mention["sentence"])
     words = "; ".join(f"{k} {', '.join(dict.fromkeys(v))}" for k, v in mention["cues"].items())
-    out = f"      said by the user in {where} #{mention['seq']} at {_time(mention.get('ts'))} "
+    out = f"      said by the user in {where} #{mention['seq']}, {order} "
     out += f"({mention['field']}"
     if mention.get("directory"):
         out += f", joined with that session's recorded directory {_literal(mention['directory'])}"
@@ -783,7 +782,12 @@ def render(account):
             earlier = len(candidate["mentions"]) - MAX_MENTIONS
             if earlier > 0:  # the latest are kept; what came before them is counted
                 lines.append(f"      {earlier} earlier mention(s) not shown")
-            lines += [_mention_line(m, printed) for m in candidate["mentions"][-MAX_MENTIONS:]]
+            count = len(candidate["mentions"])
+            first = max(0, count - MAX_MENTIONS)
+            for index, mention in enumerate(candidate["mentions"][first:], start=first + 1):
+                lines.append(
+                    _mention_line(mention, printed, _place_in_order(index, count, mention))
+                )
         blocks.append(lines)
     coverage = account["coverage"]
     tail = (
@@ -801,7 +805,8 @@ def render(account):
         from . import quantities as part_b
 
         caps = part_b.render(measured)
-        tail += f"; caps stated {len(caps) + measured['caps_left_out']}"
+        if caps or measured["caps_left_out"]:  # no cap stated: part B adds nothing at all
+            tail += f"; caps stated {len(caps) + measured['caps_left_out']}"
     room = MAX_CHARS - sum(len(line) + 1 for line in head) - len(tail) - 60
     kept, left = [], 0
     if measured is not None:

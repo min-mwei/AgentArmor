@@ -242,3 +242,10 @@ def test_scope_words_are_kept_as_said_and_the_window_is_not_resolved():
     _, text = text_of(session([said(2, CAP), *SENT]))
     assert 'scope words "Across this incident" (window not resolved)' in text
     assert "observed effects: none established by this server" in text
+
+
+def test_no_cap_stated_adds_nothing_to_the_section():
+    mine = session([said(2, "Send the next group of records."), *SENT])
+    plain = observe.observe(mine, CALL, SEND, "log", [])
+    with_b = observe.observe(mine, CALL, SEND, "log", [], quantities=True)
+    assert observe.render(plain) == observe.render(with_b)

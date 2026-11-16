@@ -578,7 +578,7 @@ def render(account):
         op = f"{cap['op']} (from {_o._literal(cap['op_word'])})" if cap["op"] else "not stated"
         scope = _o._literal(cap["scope"]) if cap["scope"] else "none"
         lines = [
-            f"- cap stated by the user in {_place(cap)} #{cap['seq']} at {_o._time(cap.get('ts'))} "
+            f"- cap stated by the user in {_place(cap)} #{cap['seq']} "
             f"(prompt{', clipped' if cap['clipped'] else ''}): number {cap['n']}; unit "
             f"{_o._literal(cap['unit'])}; operation {op}; scope words {scope} (window not "
             f"resolved): {_o._literal(cap['sentence'], _o.SENTENCE_CHARS)}"
@@ -591,7 +591,7 @@ def render(account):
             if later["revocation_words"]:
                 words = ", ".join(later["revocation_words"])
                 what.append(f"names the unit with revocation cue words: {words}")
-            where = f"{_place(later)} #{later['seq']} at {_o._time(later.get('ts'))}"
+            where = f"{_place(later)} #{later['seq']}"
             lines.append(f"    later user statement {where}: " + "; ".join(what))
         if cap["op"] is None:
             lines.append(f"    nothing counted: {cap['not_counted']}")
@@ -601,7 +601,7 @@ def render(account):
         if left > 0:
             lines.append(f"    {left} earlier report(s) not listed")
         for c in cap["contributions"][-MAX_LISTED:]:
-            where = f"{_place(c)} #{c['seq']} at {_o._time(c.get('ts'))}, {c['of']}"
+            where = f"{_place(c)} #{c['seq']}, {c['of']}"
             if c["call_seq"] is not None:
                 where += f" #{c['call_seq']} ({c['call_status']})"
             note = "" if c["counted_here"] else "; another working directory: not counted"
@@ -625,7 +625,8 @@ def render(account):
             f"    reported before the call: at least {total['at_least']}, at most {most}; "
             f"reports tied to {total['calls_with_reports']} call(s) of the operation, "
             f"{total['reports_not_tied_to_a_call']} not tied to one (may repeat another); "
-            "observed effects: none established by this server; sessions it did not record are "
+            "reports listed in host-time order; observed effects: none established by this server; "
+            "sessions it did not record are "
             "outside both bounds"
         )
         proposed = cap["proposed"]

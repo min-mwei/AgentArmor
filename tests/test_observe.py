@@ -277,7 +277,26 @@ def test_mentions_keep_host_time_order_across_sessions_and_show_it():
     assert candidate["order"] == "host time"
     text = "\n".join(observe.render(account))
     assert text.index("[s:0ld0]") < text.index("this session #2")
-    assert "host time 1970-01-01T00:15:00Z" in text
+    assert "#4, mention 1 of 2 by host time" in text and "#2, mention 2 of 2 by host time" in text
+    assert "1970" not in text  # the order, never the clock: a replay at another time is the same
+    later = observe.observe(
+        mine
+        | {
+            "summary": mine["summary"]
+            | {"entries": [stated(2, 5002.0, "Deliver to vault.example now.")]}
+        },
+        call | {"ts": 5010.0},
+        {"url": "https://vault.example/x"},
+        "log",
+        [
+            old
+            | {
+                "summary": old["summary"]
+                | {"entries": [stated(4, 4900.0, "Cancel vault.example: no longer approved.")]}
+            }
+        ],
+    )
+    assert "\n".join(observe.render(later)) == text
 
 
 def test_the_latest_mentions_are_kept_under_the_cap_and_the_rest_are_counted():
