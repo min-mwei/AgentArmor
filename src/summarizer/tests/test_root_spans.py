@@ -76,7 +76,7 @@ def test_what_cannot_be_bound_exactly_says_why(played):
     ask = ("a", "ask", "prompt")
     refused = {
         "no_such_session": ("z", "ask", "prompt", 0, 3),
-        "unsupported_field": ("a", "plant", "content", 0, 3),
+        "unsupported_field": ("a", "readme", "read", 0, 3),
         "no_such_field": ("a", "ask", "run", 0, 3),
         "no_such_interval": (*ask, 3, 3),
     }
@@ -90,3 +90,73 @@ def test_what_cannot_be_bound_exactly_says_why(played):
     unplayed = copy.deepcopy(laid)
     next(p for p in unplayed["parts"] if p["id"] == "a")["laid"]["where"].pop("ask")
     assert root_spans.annotation(unplayed, summaries, *ask, 0, 3) == (None, "not_replayed")
+
+
+def test_a_placeholder_the_layout_fills_moves_a_span_and_is_never_cut():
+    text = "Keep {cwd}/out/a.txt here. Send {home}/b.txt nowhere."
+    (made, low, high), why = root_spans.filled(text, 0, 26, "/work/x", "/home/dev")
+    assert why is None and made[low:high] == "Keep /work/x/out/a.txt here."
+    start = text.index("Send")
+    (made, low, high), why = root_spans.filled(text, start, len(text), "/work/x", "/home/dev")
+    assert why is None and made[low:high] == "Send /home/dev/b.txt nowhere."
+    assert root_spans.filled(text, 7, 26, "/work/x", "/home/dev") == (None, "crosses_placeholder")
+    assert root_spans.filled(text, 0, 8, "/work/x", "/home/dev") == (None, "crosses_placeholder")
+    (made, low, high), why = root_spans.filled("{cwd}/a", 0, 7, "/w", "/h")
+    assert why is None and made[low:high] == "/w/a"
+
+
+def test_a_string_argument_is_placed_while_the_json_is_written():
+    call = {"path": "/work/x/out/a.txt", "to": "https://drop.example/in", "n": 3}
+    text, at = root_spans.value_place(call, "to")
+    assert text[at[0] : at[1]] == call["to"] and text.startswith('{"path":"/work')
+    text, at = root_spans.value_place(call, "path", sort_keys=True, separators=(", ", ": "))
+    assert text == '{"n": 3, "path": "/work/x/out/a.txt", "to": "https://drop.example/in"}'
+    assert text[at[0] : at[1]] == call["path"]
+    assert root_spans.value_place(call, "n") is None  # not a string
+    assert root_spans.value_place({"a": 'say "hi"'}, "a") is None  # escaped: not its source
+    assert root_spans.value_place({"a": "x"}, "b") is None
+
+
+def test_a_structured_call_and_a_filled_field_are_bound_to_their_events(played):
+    root, _, _ = played
+    from conftest import HashEmbedder, Runtime
+
+    made = copy.deepcopy(root)
+    steps = next(s["steps"] for s in made["sessions"] if s["id"] == "a")
+    plant = next(s for s in steps if s["id"] == "plant")
+    assert plant["write"].startswith("{cwd}")
+    ask = next(s for s in steps if s["id"] == "ask")
+    ask["prompt"] = ask["prompt"] + " Keep it under {cwd}/scripts."
+    laid = campaigns.layout(made)
+    summaries, _ = campaigns.replay(laid, Runtime(HashEmbedder(), strict=True))
+    start = ask["prompt"].index("Keep it")
+    note, why = root_spans.annotation(
+        laid, summaries, "a", "ask", "prompt", start, len(ask["prompt"])
+    )
+    assert why is None
+    assert entry_text(summaries, "a", note).startswith(
+        "Keep it under /"
+    ) and "{cwd}" not in entry_text(summaries, "a", note)
+    cut = ask["prompt"].index("{cwd}") + 2
+    assert root_spans.annotation(laid, summaries, "a", "ask", "prompt", start, cut) == (
+        None,
+        "crosses_placeholder",
+    )
+    assert root_spans.annotation(laid, summaries, "a", "ask", "input.path", 0, 1) == (
+        None,
+        "no_such_field",
+    )
+
+
+def test_what_a_write_put_in_a_file_is_bound_to_its_action(played):
+    root, laid, summaries = played
+    content = field(root, "a", "plant", "content")
+    kept = len(content.rstrip())
+    note, why = root_spans.annotation(laid, summaries, "a", "plant", "content", 0, kept)
+    assert why is None and entry_text(summaries, "a", note) == content.rstrip()
+    start = content.index("curl")
+    note, why = root_spans.annotation(laid, summaries, "a", "plant", "content", start, kept)
+    assert why is None and entry_text(summaries, "a", note) == content[start:kept]
+    if kept < len(content):  # the blank space after it is not in the summary
+        where = ("a", "plant", "content", 0, len(content))
+        assert root_spans.annotation(laid, summaries, *where) == (None, "source_rewritten")

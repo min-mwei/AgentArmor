@@ -168,3 +168,19 @@ def test_the_layout_names_only_marks_the_renderer_wrote(runtime):
         pass
     else:
         raise AssertionError("a map of another state was believed")
+
+
+def test_the_calls_own_value_quotes_are_wrappers_only_when_asked_for(runtime):
+    _, state, found, arguments = with_call(runtime)
+    plain = span_targets.layout(found, state)
+    asked = span_targets.layout(found, state, call_values=True)
+    assert plain["wrapper_sources"] == ["quote"]
+    assert asked["wrapper_sources"] == ["quote", "call-argument-value"]
+    assert asked["structural"] == plain["structural"] and asked["map_sha256"] == plain["map_sha256"]
+    more = [w for w in asked["wrappers"] if w not in plain["wrappers"]]
+    low = len(state) - len(arguments)
+    values = [v for v in json.loads(arguments).values() if isinstance(v, str) and v]
+    assert values and len(more) == 2 * len(values)  # an opening and a closing mark for each
+    for mark, start, end in more:
+        assert low <= mark < len(state) and state[mark] == '"' and mark in (start - 1, end)
+        assert json.loads('"' + state[start:end] + '"') in values  # a value, never a key

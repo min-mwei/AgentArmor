@@ -128,7 +128,7 @@ def project(found, annotations, policy=SELECT):
     return out
 
 
-def layout(found, state):
+def layout(found, state, call_values=False):
     """The renderer's own marks in this state, for a tokenizer that joins a value to them:
 
         structural   positions of the { } [ ] , the proposed call's arguments are written with,
@@ -136,6 +136,11 @@ def layout(found, state):
         wrappers     [mark, start, end] for the quotation marks text.quote() wrote around one
                      value: the mark's position and the value's interval. A quotation that
                      was cut has no closing wrapper: the cut sign stands before the mark.
+                     With call_values, also the two quotation marks this server's JSON put
+                     around each string VALUE of the proposed call's arguments (never a key,
+                     never a mark escaped inside a value): the same kind of mark around the
+                     same kind of thing, in the one piece of a state that is JSON this server
+                     serialized. Off unless asked for, and a layout says which it is.
 
     Taken from the map, never from the look of the text: a quotation mark or a brace inside
     session text, a rule or an unmapped literal is content. Bound to the state by hash; a
@@ -150,6 +155,7 @@ def layout(found, state):
             "exact"
         ):
             quoted = escaped = False
+            opened, strings = None, []
             for at in range(low, high):
                 char = state[at]
                 if quoted:
@@ -157,10 +163,16 @@ def layout(found, state):
                         not (char == '"' and not escaped),
                         char == "\\" and not escaped,
                     )
+                    if not quoted:
+                        strings.append((opened, at))
                 elif char == '"':
-                    quoted = True
+                    quoted, opened = True, at
                 elif char in "{}[],":
                     structural.append(at)
+            for first, last in strings if call_values else ():
+                rest = state[last + 1 : high].lstrip(" ")
+                if not rest.startswith(":") and last > first + 1:  # a value, and not an empty one
+                    wrappers += [[first, first + 1, last], [last, first + 1, last]]
         if segment.get("role") != "quote" or state[low:high] != '"':
             continue
         after = segments[index + 1 :]
@@ -182,7 +194,8 @@ def layout(found, state):
         "state_sha256": digest,
         "map_sha256": hashlib.sha256(told.encode("utf-8")).hexdigest(),
         "structural": structural,
-        "wrappers": wrappers,
+        "wrappers": sorted(wrappers),
+        "wrapper_sources": ["quote", "call-argument-value"] if call_values else ["quote"],
     }
 
 
