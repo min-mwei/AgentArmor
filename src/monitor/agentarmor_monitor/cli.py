@@ -761,7 +761,7 @@ def main(argv=None):
         choices=("off", "on"),
         default="off",
         help="on (with --session-observations on): add the cumulative quantities "
-        "(agentarmor-quantities/v1: caps the user stated with a number and a unit, what recorded "
+        "(agentarmor-quantities/v2: caps the user stated with a number and a unit, what recorded "
         "results report against them, bounds and unknowns; never a verdict). Off by default",
     )
     serve.add_argument(

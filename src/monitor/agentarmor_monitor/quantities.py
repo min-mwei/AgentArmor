@@ -1,4 +1,4 @@
-"""Cumulative-quantity observations (agentarmor-quantities/v1, part B of observe.py). Stdlib only.
+"""Cumulative-quantity observations (agentarmor-quantities/v2, part B of observe.py). Stdlib only.
 
 Off unless the operator gives `serve --session-observations on --observation-quantities on`; with
 it off, the observation section is byte for byte part A's. Research and shadow; policy_ready stays
@@ -17,18 +17,26 @@ What it says, for each cap:
   small fixed word list; "not stated" otherwise), the scope words as said ("across this incident",
   never resolved to a window), its source (session, event, offsets) and every later user statement
   that states another cap with a shared unit word or names a unit word with revocation cue words;
-- each reported contribution: the number, the words between it and the verb, the verb, the event
-  that carries it, and what that event is: the result of a call (with the call's recorded status)
-  or text the agent read from a file. A unit counts as matching only by a shared word (singular),
-  and the matching word is shown; the identity of the units is not established;
+- each place a result puts a number of the unit beside a verb of the operation: the number, the
+  words between, the verb, the event that carries it, and what that event is: the result of a call
+  (with the call's recorded status) or text the agent read from a file. A unit counts as matching
+  only by a shared word (singular), and the matching word is shown; the identity of the units is
+  not established. Only two forms are reports (v2, MR303): "NUMBER [of M] UNIT [were|was|have
+  been|has been|had been] PAST-VERB" and "PAST-VERB NUMBER UNIT", in a clause with no negation,
+  failure, modal, condition, plan or limit word and no question mark. Every other form is kept with
+  its sentence as evidence, marked unresolved with the reason, and enters no arithmetic;
 - each earlier call of the same operation (by its words) and what is known of it: returned with a
   stated quantity (linked to that report), returned with no quantity stated, result clipped, or
   attempted with no result returned. An attempt is never counted as an outcome, and a returned
   result is a report, not an observed effect;
-- the total before the call as bounds: at least the sum over distinct calls' reports (and no less
-  than any single report), at most that sum plus every report not tied to a call of the operation
-  (a file's text may repeat a call's report); "at most: unknown" with the reasons whenever a call
-  of the operation returned no stated quantity, was clipped, or has no result yet. Missing history
+- the total before the call as bounds, from the reports alone, under the assumption stated beside
+  them (results report truthfully and completely; calls naming disjoint path operands are separate):
+  at least the largest single report, or the sum over groups of calls with disjoint path operands
+  if larger. A call naming no path operand, a second report in one result and a report not tied to
+  a call may each repeat another, so each enters the lower bound only alone, and the overlap is
+  said. At most: every report summed; "unknown" with the reasons whenever a candidate is
+  unresolved, a call of the operation returned no stated quantity, was clipped, or has no result
+  yet. Missing history
   is never zero: sessions the server did not record are outside every bound, and the line says so;
 - what the proposed call's own arguments name: the values of an option named like the unit, or the
   path operands of its command; "not stated" otherwise; and the arithmetic sum of the lower bound
@@ -43,7 +51,7 @@ import re
 
 from . import observe as _o
 
-VERSION = "agentarmor-quantities/v1"
+VERSION = "agentarmor-quantities/v2"
 MAX_CAPS = 3
 MAX_LISTED = 4
 
@@ -88,8 +96,31 @@ _SCOPE = re.compile(
     r"[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,3}",
     re.I,
 )
-_REPORT = re.compile(rf"\b{_N}\s+((?:[A-Za-z][\w-]*\s+){{0,5}}?)(?=[A-Za-z])", re.I)
 _PIECE = re.compile(r"[^.;!?\n]+")
+# The verbs a report may use: past forms only ("sent", never "send", "sends" or "sending").
+_PAST = frozenset(
+    "sent delivered uploaded transferred submitted posted published exported shared emailed "
+    "accepted removed deleted pruned purged erased wiped destroyed".split()
+)
+_BE = frozenset("were was are is been have has had be".split())
+_AUX = (("have", "been"), ("has", "been"), ("had", "been"), ("were",), ("was",))
+_FILLERS = frozenset("up to only exactly about over all the".split())
+# Any of these anywhere in the clause leaves a candidate unresolved.
+_CUES = {
+    word: kind
+    for kind, words in {
+        "negation": "not no none never nothing nobody neither nor without cannot",
+        "failure": "fail failed fails failing failure unable error errors rejected refused "
+        "skipped aborted",
+        "modal": "will would can could may might must shall should",
+        "condition": "if unless whether when once until",
+        "plan": "plan plans planned planning going intend intends intended pending queued "
+        "scheduled ready expect expects expected attempt attempted attempting try tried "
+        "trying preview simulated simulate dry-run would-be",
+        "hedge": "almost nearly partially reportedly supposedly allegedly",
+    }.items()
+    for word in words.split()
+}
 _INTERPRETERS = frozenset(
     {"python", "python3", "node", "ruby", "perl", "bash", "sh", "zsh", "deno"}
 )
@@ -184,39 +215,102 @@ def caps_in(text):
     return found
 
 
+def _unresolved(words, verb, after):
+    """Why a candidate clause is not a supported affirmative report, or None. Words from the
+    fixed lists below only; the clause's own text never enters the reason."""
+    if after == "?":
+        return "question (the clause ends in a question mark)"
+    for index, word in enumerate(words):
+        if word.endswith("n't"):
+            return "negation word (an n't contraction)"
+        if word == "up" and words[index + 1 : index + 2] == ["to"]:
+            return "limit words up to"
+        if word in _CUES:
+            return f"{_CUES[word]} word {word}"
+    if verb not in _PAST:
+        return f"verb form: {verb} is not one of the past forms read as a report"
+    return None
+
+
+def _unit_ok(words):
+    return 1 <= len(words) <= 5 and all(
+        w.replace("-", "").isalpha()
+        and w not in _STOP
+        and w not in _OPS
+        and w not in _CUES
+        and w not in _BE
+        and not w.endswith("ly")
+        for w in words
+    )
+
+
 def reports_in(text, unit_words, op):
-    """[{n, phrase, verb, shared, at}]: quantities a text states for this unit and operation."""
+    """[{n, phrase, verb, shared, form, unresolved, at, sentence}]: each place a text puts a
+    number of this unit beside a verb of this operation. Only two forms are reports
+    ("form"): NUMBER [of M] UNIT [were|was|have been|has been|had been] PAST-VERB, and
+    PAST-VERB NUMBER UNIT, in a clause with no negation, failure, modal, condition, plan or
+    limit word and no question mark. Anything else is kept as evidence with "unresolved" set
+    to the reason, and contributes nothing to the arithmetic."""
     found = []
     for piece in _PIECE.finditer(text):
         sentence = piece.group()
-        for match in _REPORT.finditer(sentence):
-            n = _number(match.group(1))
-            if n is None or re.search(r"\bof\s+$", sentence[: match.start()]):
+        after = text[piece.end() : piece.end() + 1]
+        tokens = [
+            (m.group(), m.start(), m.end())
+            for m in re.finditer(r"\d{1,6}|[A-Za-z][\w'-]*", sentence)
+        ]
+        words = [t[0].lower() for t in tokens]
+        said = [t[0] for t in tokens]  # quoted as written
+        for i, word in enumerate(words):
+            n = _number(word)
+            if n is None or (i and words[i - 1] == "of"):
                 continue  # "3 of 5 records sent": the 5 is a denominator, not a report
-            rest = sentence[match.end(1) :]
-            words = re.findall(r"[A-Za-z][\w-]*", rest)
-            phrase, verb = [], None
-            for word in words[:8]:
-                if word.lower() in _OPS:
-                    verb = word
+            start = i + 1
+            if words[i + 1 : i + 2] == ["of"] and _number((words[i + 2 : i + 3] or [""])[0]):
+                start = i + 3  # "3 of 5 records sent" counts the 3
+            form, verb, phrase = None, None, []
+            for j in range(start, min(start + 8, len(words))):
+                if words[j] in _OPS:
+                    verb, vi, phrase, at = words[j], j, words[start:j], (start, j)
+                    unit = phrase
+                    for aux in _AUX:
+                        if tuple(phrase[-len(aux) :]) == aux:
+                            unit = phrase[: -len(aux)]
+                            break
+                    if _unit_ok(unit):
+                        form = "number unit verb"
                     break
-                phrase.append(word)
-            if verb is None or _OPS[verb.lower()] != op:
+            if verb is None:  # PAST-VERB NUMBER UNIT: the verb just before (fillers between)
+                k = i - 1
+                while k >= 0 and i - k <= 3 and words[k] in _FILLERS:
+                    k -= 1
+                if k < 0 or words[k] not in _OPS:
+                    continue
+                verb, vi, phrase = words[k], k, []
+                for w in words[i + 1 : i + 6]:
+                    if w in _STOP or w in _OPS or w in _CUES or _number(w) is not None:
+                        break
+                    phrase.append(w)
+                at = (i + 1, i + 1 + len(phrase))
+                if k == i - 1 and _unit_ok(phrase):
+                    form = "verb number unit"
+            if _OPS[verb] != op:
                 continue
             shared = sorted({singular(w) for w in phrase} & set(unit_words))
             if not shared:
                 continue
+            why = _unresolved(words, verb, after)
+            if why is None and form is None:
+                why = "not one of the supported affirmative forms"
             found.append(
                 {
                     "n": n,
-                    "phrase": " ".join(
-                        w
-                        for w in phrase
-                        if w.lower() not in ("were", "was", "are", "is", "been", "have", "has")
-                    ),
-                    "verb": verb,
+                    "phrase": " ".join(w for w in said[at[0] : at[1]] if w.lower() not in _BE),
+                    "verb": said[vi],
                     "shared": shared,
-                    "at": [piece.start() + match.start(), piece.start() + match.end()],
+                    "form": form if why is None else None,
+                    "unresolved": why,
+                    "at": [piece.start() + tokens[i][1], piece.start() + tokens[i][2]],
                     "sentence": sentence.strip(),
                 }
             )
@@ -464,32 +558,80 @@ def _operands(entry):
     return {w for w in rest if ("/" in w or "." in w) and "://" not in w and not w.startswith("-")}
 
 
+ASSUMES = (
+    "each recorded result reports truthfully what its call did and every report is in it; "
+    "calls naming disjoint path operands are separate contributions; nothing else is"
+)
+
+
 def _bounds(cap):
-    """At least: per group of calls whose operands overlap (a retry, a resend), the largest
-    report, summed over groups, and no less than any single report; at most: every report
-    summed. Unknown at most when a call of the operation has no counted report."""
+    """Bounds from the affirmative reports only (MR303). At least: the largest single report,
+    or, if larger, the sum over groups of calls whose path operands are established disjoint
+    (calls sharing an operand form one group and give its largest report). A call naming no
+    path operand, a second report in the same result and a report not tied to a call of the
+    operation may repeat another, so each enters the lower bound only alone. At most: every
+    affirmative report summed; unknown when any candidate is unresolved, a call of the
+    operation returned no quantity, was clipped or has no result."""
     counted = [c for c in cap["contributions"] if c["counted_here"]]
-    operands = {(c["session"], c["call_id"]): set(c["operands"]) for c in cap["calls"]}
+    told = [c for c in counted if c["form"]]
+    calls = {(c["session"], c["call_id"]): c for c in cap["calls"]}
     by_call, loose = {}, []
-    for c in counted:
+    for c in told:
         if c["of"] == "result of a call" and c["call_op"] == cap["op"]:
-            key = (c["session"], c["call_id"])
-            by_call[key] = max(by_call.get(key, 0), c["n"])
+            by_call.setdefault((c["session"], c["call_id"]), []).append(c["n"])
         else:
             loose.append(c["n"])
-    groups = []  # calls that name a common operand are one group: their reports may repeat
-    for key, n in by_call.items():
-        mine = operands.get(key, set())
-        joined = [g for g in groups if mine and g["operands"] & mine]
-        merged = {"operands": set(mine), "n": n}
+
+    def name(key):
+        call = calls.get(key) or {"session": key[0], "seq": "?"}
+        return f"{call['session']} #{call['seq']}"
+
+    overlap, groups, nameless = [], [], []
+    for key, ns in by_call.items():
+        if len(ns) > 1:
+            overlap.append(
+                f"{name(key)}: {len(ns)} reports in one result may be separate or the same; "
+                "the lower bound takes the largest, the upper bound their sum"
+            )
+        mine = set((calls.get(key) or {}).get("operands") or ())
+        if not mine:
+            nameless.append(key)
+            continue
+        joined = [g for g in groups if g["operands"] & mine]
+        merged = {"operands": set(mine), "n": max(ns), "keys": [key]}
         for g in joined:
             merged["operands"] |= g["operands"]
             merged["n"] = max(merged["n"], g["n"])
+            merged["keys"] = g["keys"] + merged["keys"]
             groups.remove(g)
         groups.append(merged)
-    low = max([sum(g["n"] for g in groups)] + loose) if counted else 0
-    high = sum(by_call.values()) + sum(loose)
+    if len(by_call) > 1:
+        for key in nameless:
+            overlap.append(
+                f"{name(key)} names no path operand: whether it repeats another call's units "
+                "is not established, so it is added to no other call in the lower bound"
+            )
+        for g in groups:
+            if len(g["keys"]) > 1:
+                overlap.append(
+                    "calls " + ", ".join(name(k) for k in g["keys"]) + " name a common path "
+                    "operand (a retry or resend may repeat): the lower bound takes the largest"
+                )
+    if loose and told:
+        overlap.append(
+            f"{len(loose)} report(s) not tied to a call of the operation may repeat another: "
+            "each enters the lower bound only alone"
+        )
+    low = max([sum(g["n"] for g in groups)] + [c["n"] for c in told]) if told else 0
+    high = sum(c["n"] for c in told)
     why = []
+    for c in counted:
+        if c["unresolved"]:
+            why.append(
+                f"{c['session']} #{c['seq']} report {c['n']} not counted: unresolved "
+                f"({c['unresolved']})"
+            )
+    stated = {(c["session"], c["call_id"]) for c in counted}
     for call in cap["calls"]:
         if not call["counted_here"]:
             continue
@@ -500,14 +642,16 @@ def _bounds(cap):
             )
         elif call["clipped"]:
             why.append(f"{call['session']} #{call['seq']} result clipped")
-        elif key not in by_call:
+        elif key not in stated:
             why.append(f"{call['session']} #{call['seq']} returned with no quantity stated")
-    if any(c["clipped"] for c in counted):
+    if any(c["clipped"] for c in told):
         why.append("a counted report is clipped")
     cap["total"] = {
         "at_least": low,
         "at_most": None if why else high,
         "unknown_because": why,
+        "overlap": overlap,
+        "assumes": ASSUMES,
         "calls_with_reports": len(by_call),
         "reports_not_tied_to_a_call": len(loose),
     }
@@ -545,6 +689,8 @@ def persisted(account):
                             "of",
                             "counted_here",
                             "clipped",
+                            "form",
+                            "unresolved",
                             "at",
                         )
                     }
@@ -608,9 +754,17 @@ def render(account):
             note += "; clipped" if c["clipped"] else ""
             words = _o._literal(c["phrase"] + " " + c["verb"], 100)
             shared = ", ".join(c["shared"])
-            lines.append(
-                f"    reported {c['n']} ({words}; unit by shared word {shared}) in {where}{note}"
-            )
+            if c["form"]:
+                lines.append(
+                    f"    reported {c['n']} ({words}; form {c['form']}; unit by shared word "
+                    f"{shared}) in {where}{note}"
+                )
+            else:
+                said = _o._literal(c["sentence"], 100)
+                lines.append(
+                    f"    number {c['n']} beside {_o._literal(c['verb'])} in {where}{note}; "
+                    f"not counted: unresolved ({c['unresolved']}): {said}"
+                )
         if cap["calls"]:
             states = {}
             for call in cap["calls"]:
@@ -621,8 +775,11 @@ def render(account):
         most = total["at_most"]
         if most is None:
             most = "unknown (" + "; ".join(total["unknown_because"][:MAX_LISTED]) + ")"
+        for overlap in total["overlap"][:MAX_LISTED]:
+            lines.append(f"    overlap: {overlap}")
         lines.append(
             f"    reported before the call: at least {total['at_least']}, at most {most}; "
+            f"assuming {total['assumes']}; "
             f"reports tied to {total['calls_with_reports']} call(s) of the operation, "
             f"{total['reports_not_tied_to_a_call']} not tied to one (may repeat another); "
             "reports listed in host-time order; observed effects: none established by this server; "

@@ -1,4 +1,4 @@
-"""Cumulative-quantity observations (agentarmor_monitor.quantities, agentarmor-quantities/v1): CPU,
+"""Cumulative-quantity observations (agentarmor_monitor.quantities, agentarmor-quantities/v2): CPU,
 public synthetic fixtures only. Negative controls first; none reads a dataset."""
 
 import pytest
@@ -140,6 +140,11 @@ def test_a_file_that_repeats_a_report_widens_the_bounds_and_says_so():
         "at_least": 4,
         "at_most": 8,
         "unknown_because": [],
+        "overlap": [
+            "1 report(s) not tied to a call of the operation may repeat another: "
+            "each enters the lower bound only alone"
+        ],
+        "assumes": quantities.ASSUMES,
         "calls_with_reports": 1,
         "reports_not_tied_to_a_call": 1,
     }
@@ -249,3 +254,101 @@ def test_no_cap_stated_adds_nothing_to_the_section():
     plain = observe.observe(mine, CALL, SEND, "log", [])
     with_b = observe.observe(mine, CALL, SEND, "log", [], quantities=True)
     assert observe.render(plain) == observe.render(with_b)
+
+
+# MR303 (second P1): only a small set of affirmative forms is arithmetic; unknown overlap and
+# several reports in one result never add into a guaranteed lower bound.
+
+ONE_CALL = ran(4, "python3 tools/ship-send.py data/r1.json data/r2.json data/r3.json data/r4.json")
+
+
+def one_result(text):
+    cap = measured(session([said(2, CAP), ONE_CALL, back(5, text, "c4")]))["caps"][0]
+    return cap, cap["total"]
+
+
+@pytest.mark.parametrize(
+    ("text", "n", "form"),
+    [
+        ("four records sent", 4, "number unit verb"),
+        ("0 records sent", 0, "number unit verb"),
+        ("sent 4 records", 4, "verb number unit"),
+        ("4 records were delivered", 4, "number unit verb"),
+        ("3 of 5 records sent; 2 failed", 3, "number unit verb"),
+    ],
+)
+def test_supported_affirmative_forms_are_counted(text, n, form):
+    cap, total = one_result(text)
+    assert [(c["n"], c["form"], c["unresolved"]) for c in cap["contributions"]] == [(n, form, None)]
+    assert (total["at_least"], total["at_most"], total["unknown_because"]) == (n, n, [])
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("four records not sent", "negation"),
+        ("four records would be sent", "modal"),
+        ("failed to send 4 records", "failure"),
+        ("will send 4 records", "modal"),
+        ("can send up to 4 records", "modal"),
+        ("if approved, 4 records sent", "condition"),
+        ("four records sent?", "question"),
+        ("4 records sending", "verb"),
+        ("four records almost sent", "hedge"),
+        ("None of the four records were sent", "negation"),
+        ("4 records weren't sent", "negation"),
+    ],
+)
+def test_a_number_before_or_after_a_send_verb_is_not_by_itself_a_report(text, kind):
+    cap, total = one_result(text)
+    (c,) = cap["contributions"]
+    assert c["n"] == 4 and c["form"] is None and c["unresolved"].startswith(kind)
+    assert c["sentence"] == text.rstrip("?")  # the source sentence stays as evidence
+    assert total["at_least"] == 0 and total["at_most"] is None
+    assert any("not counted" in why and kind in why for why in total["unknown_because"])
+
+
+def test_no_number_is_no_report_and_the_upper_bound_stays_unknown():
+    cap, total = one_result("no records sent")
+    assert cap["contributions"] == []
+    assert total["at_least"] == 0 and total["at_most"] is None
+
+
+def test_calls_with_no_operand_identity_are_not_added_into_the_lower_bound():
+    bundle = [
+        ran(4, "escrowctl send --bundle batch1"),
+        back(5, "one record sent", "c4"),
+        ran(6, "escrowctl send --bundle batch1"),
+        back(7, "one record sent", "c6"),
+    ]
+    total = measured(session([said(2, CAP), *bundle]))["caps"][0]["total"]
+    assert (total["at_least"], total["at_most"]) == (1, 2)
+    assert any("no path operand" in note for note in total["overlap"])
+    named = [
+        ran(4, "escrowctl send --bundle b/one.tgz"),
+        back(5, "one record sent", "c4"),
+        ran(6, "escrowctl send --bundle b/two.tgz"),
+        back(7, "one record sent", "c6"),
+    ]
+    total = measured(session([said(2, CAP), *named]))["caps"][0]["total"]
+    assert (total["at_least"], total["at_most"]) == (2, 2)
+    mixed = [named[0] | {}, back(5, "two records sent", "c4"), *bundle[2:]]
+    total = measured(session([said(2, CAP), *mixed]))["caps"][0]["total"]
+    assert (total["at_least"], total["at_most"]) == (2, 3)
+
+
+def test_several_reports_in_one_result_keep_the_upper_bound():
+    cap, total = one_result("two records sent in batch alpha; three records sent in batch beta")
+    assert [c["n"] for c in cap["contributions"]] == [2, 3]
+    assert (total["at_least"], total["at_most"]) == (3, 5)
+    assert any("2 reports" in note for note in total["overlap"])
+    cap, total = one_result("three records sent in batch beta")
+    assert (total["at_least"], total["at_most"], total["overlap"]) == (3, 3, [])
+
+
+def test_the_section_prints_unresolved_reports_and_the_v2_format():
+    _, text = text_of(session([said(2, CAP), ONE_CALL, back(5, "four records not sent", "c4")]))
+    assert quantities.VERSION == "agentarmor-quantities/v2"
+    assert "not counted: unresolved (negation word not)" in text
+    assert "at least 0, at most unknown" in text
+    assert "at least 0 + 2 = 2 beside the stated number 5" in text
