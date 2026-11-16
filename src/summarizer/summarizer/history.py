@@ -1692,7 +1692,8 @@ def select(mine, call_id, others, home, within=True):
                 if same_project:  # said earlier in this project, of something else
                     plain.append((other, prompt, group))
                 continue
-            under = _under(other, prompt, taken, key=same_project and named)
+            keyed = {group["id"] for group in groups if group.get("key")}
+            under = _under(other, prompt, taken, key=same_project and named, keyed=keyed)
             items += under["items"]
             groups += under["groups"]
             # What that turn did not show leaves the search unfinished. Not so for this session's
@@ -2931,7 +2932,7 @@ def _alike(prompt, there, named, cwd, home):
     return False
 
 
-def _under(other, prompt, taken, key=False):
+def _under(other, prompt, taken, key=False, keyed=frozenset()):
     """What that session did under a request: the first writes it proposed before the next
     request, each with the lower-trust content shown before it in that turn and what came
     back. In a group of its own, and tied to nothing: "recent" and "shown". It is context,
@@ -2949,7 +2950,14 @@ def _under(other, prompt, taken, key=False):
     beside the point, so that leaves the search unfinished ("statement_turn_bounded", MR303 P1),
     as does a call among the newest that the summary lists only in its catalogue
     ("statement_turn_not_kept") or one whose result it does not keep whole
-    ("statement_result_not_kept"). Nothing here says what a result means."""
+    ("statement_result_not_kept"). Nothing here says what a result means.
+
+    A call of the turn that select() already shows only in context groups (keyed names the key
+    ones), a classifier run on the call's file say, is a call of the turn all the same: it joins
+    this group with all that came back, so that under a budget the newest calls of the turn never
+    take its room (development file 003 r5: a classifier's verdict was left out as context while
+    later calls of the turn were shown as key). Like a check the condition names it is shown
+    whatever came after it and is not counted against TURN."""
     entries = other["summary"]["entries"]
     later = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] > prompt["seq"]]
     end = min(later, default=float("inf"))
@@ -2958,7 +2966,15 @@ def _under(other, prompt, taken, key=False):
     writes = [e for e in writes if (e["seq"], "action") not in taken][:UNDER]
     group = f"{other['key']}:under:{prompt['seq']}"
     items, seen, gaps, rest, bounded = [], set(taken), set(), [], 0
+    joined = []  # calls of the turn shown only as context so far: key evidence here
     if key:
+        joined = [
+            e
+            for e in turn
+            if e["type"] == "action"
+            and (e["seq"], "action") in taken
+            and not set(taken[(e["seq"], "action")]["groups"]) & keyed
+        ]
         chosen = {e["seq"] for e in writes}
         chosen |= {e["seq"] for e in _condition_checks(entries, prompt["seq"], _checks(prompt))}
         rest = [
@@ -3021,7 +3037,28 @@ def _under(other, prompt, taken, key=False):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
                 items.append(_item(other, entry, relation, groups=[group]))
-    found = [{"id": group, "kind": "recent", "key": bool(key), "bears": False}] if items else []
+    shared = False
+    for made in joined:
+        came = [
+            content
+            for content in _lower(entries)
+            for by, seq, aside in _arrived(content)
+            if by == made.get("call_id") and seq > made["seq"] and not aside
+        ]
+        back = list({id(content): content for content in came}.values())
+        if made.get("result_pieces") not in (None, len(back)):
+            gaps.add("statement_result_not_kept")
+        for entry, relation in ((made, "recent"), *((e, "shown") for e in back)):
+            at = (entry["seq"], entry["type"])
+            if at in taken:  # shown already: it is in this group as well
+                if group not in taken[at]["groups"]:
+                    taken[at]["groups"].append(group)
+                shared = True
+            elif at not in seen:
+                seen.add(at)
+                items.append(_item(other, entry, relation, groups=[group]))
+    found = [{"id": group, "kind": "recent", "key": bool(key), "bears": False}]
+    found = found if items or shared else []
     return {"items": items, "groups": found, "gaps": sorted(gaps), "bounded": bounded}
 
 
