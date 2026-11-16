@@ -13,6 +13,7 @@ import json
 import re
 
 from .hostfacts_profile import compile_profile, resolve, section
+from .observe import VERSION as OBSERVATIONS
 
 # The layout of the state built here. Kai reads it, so once Kai is trained or measured on it a
 # change to state() below is a change to Kai's input and needs a new version.
@@ -99,8 +100,12 @@ def writable(text):
     return _HALF.sub(lambda found: f"\\u{ord(found.group()):04x}", text)
 
 
-def layout(rules, packet, call=None):
+def layout(rules, packet, call=None, observations=None):
     """[(kind, about, text)]: the pieces of state(), in order. Joined they are the state.
+
+    observations, when given, are the lines of a "Session observations" section
+    (observe.render(), agentarmor-observations/v1): one piece of kind "observation" after the
+    host facts and before the conversation. Without them the state is byte for byte what it was.
 
     kind says whose words a piece is, for a source map of the state (summarizer.sourcemap):
     "policy" (a rule, with its id, or the interpretation), "host_fact" (what this server
@@ -124,6 +129,9 @@ def layout(rules, packet, call=None):
     add("policy", {"rule": None}, INTERPRETATION)
     add(own, None, "\n\n")
     add("host_fact", None, "\n".join(section(resolve(rules, call))))
+    if observations:
+        add(own, None, "\n\n")
+        add("observation", {"version": OBSERVATIONS}, "\n".join(observations))
     add(own, None, "\n\nConversation so far:\n")
     add(None, None, packet)
     if call is not None:
@@ -136,11 +144,11 @@ def layout(rules, packet, call=None):
     return pieces
 
 
-def state(rules, packet, call=None):
+def state(rules, packet, call=None, observations=None):
     """The state for one packet; call is (tool, arguments as JSON text) for a decision.
 
     Nothing is cut here. The caller budgets the packet around the call, shows the call whole or
     says in its record how much of it is missing, and never sends a call it had to cut as if it
     were the call. Whatever the session held, the state can be written as UTF-8 (writable()).
     """
-    return "".join(text for _, _, text in layout(rules, packet, call))
+    return "".join(text for _, _, text in layout(rules, packet, call, observations))

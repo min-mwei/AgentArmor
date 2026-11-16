@@ -157,7 +157,7 @@ def packet(summary, entry, max_chars, sessions=None):
     return text, about, shown["shown"]
 
 
-def source_map(rules, summary, entry, max_chars, sessions, call, body):
+def source_map(rules, summary, entry, max_chars, sessions, call, body, observed=None):
     """The map of one state to its sources (summarizer.sourcemap), or None.
 
     For the state `body` as detect() built it from these same arguments: which characters
@@ -174,7 +174,7 @@ def source_map(rules, summary, entry, max_chars, sessions, call, body):
         lambda: packet(summary, entry, max_chars, sessions)[0],
         plain=text,
         cutoff={"session": summary["session"].get("session_id"), "seq": entry["seq"]},
-        frame=lambda shown: layout(rules, shown, call),
+        frame=lambda shown: layout(rules, shown, call, observed),
     )
     same = found is not None and found.sha256 == hashlib.sha256(body.encode()).hexdigest()
     return found if same else None
@@ -233,6 +233,10 @@ def spans_record(told, mapped, state=None):
                 placed = {sourcemap.order(piece, source) for piece in pieces}
                 if any(piece["kind"] == "unmapped" for piece in pieces):
                     why = "unmapped_source"
+                elif any(piece["kind"] == "observation" for piece in pieces):
+                    # The observation section copies session text without a source map of its
+                    # own: a span in it is unavailable, never a quote of the session.
+                    why = "observation_text_unmapped"
                 elif "after" in placed:
                     why = "evidence_after_the_call"
                 elif "unknown" in placed:
@@ -432,8 +436,15 @@ def detect(
     explain=False,
     sessions=None,
     maps=None,
+    observations=False,
 ):
     """Send one trigger's packet to Kai and return the detection record.
+
+    observations (the operator's `serve --session-observations on`) adds to a decision
+    request the section of session observations this server computes for the call
+    (observe.py, agentarmor-observations/v1). The packet is budgeted exactly as without it,
+    so the session's lines and the call are unchanged; the record keeps the typed account
+    under "observations" and names the version under layout.
 
     maps, when given, receives source_map() for each request made up, under its
     request_sha256, before anything is sent: for a caller that needs to know where a
@@ -505,7 +516,15 @@ def detect(
         logged = logged_call(directory, entry) if arguments is None else None
         tool, shown, account = proposed(entry, arguments, logged)
         call, questions = (tool, shown), (DECISION, XPIA)
-    size = max_chars - len(state(rules, "", call))  # what the rules and the call leave
+    observed = None
+    if observations and call is not None:
+        observed = _observations(summary, entry, shown, account, sessions)
+        record["observations"] = observed["account"]
+        record["layout"]["observations"] = observed["account"]["version"]
+        observed = observed["lines"]
+    # What the rules and the call leave. The observation section is outside this budget, so a
+    # packet is the same with the option on as off (observe.py).
+    size = max_chars - len(state(rules, "", call))
     counts = dict.fromkeys(COUNTED, 0)
     record |= {"requests_sent": 0, "requests": counts}
     # The requests this one decision had refused, when no record of earlier ones is given (a
@@ -529,14 +548,14 @@ def detect(
         if size < MIN_CHARS:  # no room for the session: refused, not cut
             fits_alone = max_chars - len(state(rules, "")) >= MIN_CHARS
             return record | {"status": "call_too_large" if fits_alone else "policy_too_large"}
-        body = state(rules, text, call)
+        body = state(rules, text, call, observed)
         key = request_sha256(body, questions)
         record["packet"] |= {"state_chars": len(body), "request_sha256": key}
 
         room = max(size, MIN_CHARS)
 
         def mapped(body=body, room=room):
-            return source_map(rules, summary, entry, room, sessions, call, body)
+            return source_map(rules, summary, entry, room, sessions, call, body, observed)
 
         if maps is not None:
             maps[key] = mapped()
@@ -563,7 +582,8 @@ def detect(
             status = "too_large_to_send" if here else "kai_rejected"
             # What must be sent whole (the rules and the call) may alone be too many bytes:
             # then no smaller packet will pass either, and none is tried.
-            alone = here and wire_bytes(request(state(rules, "", call), questions)) > MAX_BYTES
+            alone = here and wire_bytes(request(state(rules, "", call, observed), questions))
+            alone = alone > MAX_BYTES
             if size <= MIN_CHARS or alone:
                 return record | {"status": status}
             size = max(MIN_CHARS, size // 2)
@@ -596,6 +616,30 @@ def detect(
         marked = LEVELS.get(entry.get("level"), 0) >= LEVELS["medium"]
         record["disagreement"] = bool(marked and not record["flagged"])
         return record | {"status": "scored"}
+
+
+def _observations(summary, entry, shown, account, sessions):
+    """{"account", "lines"}: observe.observe() for the call as the request shows it, over this
+    session up to the call and the other sessions as they stood at the call's time."""
+    from summarizer import history
+
+    from . import observe
+
+    try:
+        arguments = json.loads(shown)
+    except ValueError:
+        arguments = None
+    if sessions is not None:
+        mine = sessions["mine"]
+        others = history.cut_at(sessions["others"], float(entry.get("ts") or 0))
+    else:
+        mine = {"summary": summary, "cwd": str(summary["session"].get("cwd") or ""), "alias": None}
+        others = []
+    found = observe.observe(mine, entry, arguments, account.get("call_source"), others)
+    if sessions is None:
+        found["coverage"]["other_sessions"] = "not read (earlier sessions off)"
+    lines = observe.render(found)
+    return {"account": found, "lines": lines}
 
 
 # What can happen to a request, each counted apart (see detect).

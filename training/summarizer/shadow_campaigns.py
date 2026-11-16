@@ -513,6 +513,8 @@ class Server:
             if getattr(args, "kai_session_prior_events", False):  # the candidate route, as asked
                 command += ["--kai-session-prior-events"]
         command += ["--kai-timeout", str(args.kai_timeout), "--wait", str(args.wait)]
+        if getattr(args, "session_observations", "off") != "off":  # the server's option, as asked
+            command += ["--session-observations", args.session_observations]
         command += ["--port", str(self.port)]
         if args.policy:
             command += ["--policy", args.policy]
@@ -1558,6 +1560,12 @@ def parse(argv=None):
         default="on",
         help="the server's lookup of other sessions; off measures what a session's own "
         "statements do without it (no EARLIER SESSIONS section, no session route)",
+    )
+    go.add_argument(
+        "--session-observations",
+        choices=("off", "on"),
+        default="off",
+        help="the server's --session-observations (passed only when on)",
     )
     go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body")
     go.add_argument(

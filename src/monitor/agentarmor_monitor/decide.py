@@ -36,6 +36,7 @@ from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
 from .hostfacts_profile import allows, resolve
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
+from .observe import VERSION as OBSERVATIONS
 from .policy import LAYOUT, load_rules
 
 SLOTS = 4  # calls decided at once; a caller beyond that is told so, and never queued unseen
@@ -159,8 +160,11 @@ def judge(
     made_with=None,
     earlier=None,
     with_earlier=False,
+    observations=False,
 ):
     """(verdict, record, why) for one proposed call, named as a hook event names it.
+
+    observations: put this server's session observations in the request (escalate.detect).
 
     identity is the hash of the call its asker holds. The call itself is taken from the
     session's event log, where the hook put it, and counts only with that hash. client is
@@ -312,6 +316,7 @@ def judge(
         directory=directory,
         explain=explain,
         sessions=sessions,
+        observations=observations,
     )
     counts = record.get("requests") or {}
     sent = counts.get("transport_attempts", 0)
@@ -371,6 +376,7 @@ class Decider:
         made_with=None,
         earlier=None,
         include_earlier=False,
+        observations=False,
     ):
         if mode not in MODES:
             raise ValueError(f"a server's mode is one of {MODES}")
@@ -384,6 +390,8 @@ class Decider:
         if include_earlier and earlier is not None:
             raise ValueError("earlier sessions are either measured in shadow or sent, not both")
         self.include_earlier = include_earlier
+        # Whether a decision request carries this server's session observations (observe.py).
+        self.observations = bool(observations)
         self.client = client
         self.rules = load_rules() if rules is None else rules
         self.level, self.max_chars, self.wait = level, max_chars, wait
@@ -404,7 +412,7 @@ class Decider:
             "earlier_sessions": "on"
             if self.include_earlier
             else (self.earlier.about() if self.earlier else "off"),
-        }
+        } | ({"session_observations": OBSERVATIONS} if self.observations else {})
 
     def decide(self, asked):
         """The receipt for one question. Never raises: a check that failed is not a pass.
@@ -436,6 +444,7 @@ class Decider:
                     made_with=self.made_with,
                     earlier=ticket,
                     with_earlier=self.include_earlier,
+                    observations=self.observations,
                 )
             except Exception as error:
                 note(asked["agent"], error, "failed")

@@ -269,6 +269,7 @@ def _serve(args):
         made_with=runtime.identity(),
         earlier=Shadow(args.max_chars) if args.earlier_sessions == "shadow" else None,
         include_earlier=args.earlier_sessions == "on",
+        observations=args.session_observations == "on",
     )
     try:
         api, _ = listen(front, decider, args.port, monitor, args.model_api)
@@ -745,6 +746,14 @@ def main(argv=None):
         "Summarizer's EARLIER SESSIONS section in the state Kai reads, within --max-chars; an "
         "allow then needs that history complete and every other session read. Only for a "
         "decision model trained and served for such states (Kai's 4,096-token state)",
+    )
+    serve.add_argument(
+        "--session-observations",
+        choices=("off", "on"),
+        default="off",
+        help="on: put in each decision request a section of comparisons this server computes "
+        "for the call (agentarmor-observations/v1: the call's targets against those the user "
+        "named, with sources and unknowns; never a verdict). Research; off by default",
     )
     serve.add_argument(
         "--wait", type=float, default=3.0, help="seconds a decision waits for the summary"
