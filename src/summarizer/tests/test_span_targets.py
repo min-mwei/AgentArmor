@@ -184,3 +184,39 @@ def test_the_calls_own_value_quotes_are_wrappers_only_when_asked_for(runtime):
     for mark, start, end in more:
         assert low <= mark < len(state) and state[mark] == '"' and mark in (start - 1, end)
         assert json.loads('"' + state[start:end] + '"') in values  # a value, never a key
+
+
+def with_escapes(runtime):
+    """A prompt whose text holds a newline, a tab and a content backslash before an n."""
+    script = Script("claude_code", "public-example-3").start()
+    script.prompt("Keep the notes local.\nqueues: [ops]\tok and C:\\notes stays")
+    script.prompt("ok")
+    script.tool("Bash", {"command": "ls"})
+    summary = summarize(script.events, runtime)
+    render = lambda: digest(summary, 6000)["text"]  # noqa: E731
+    found = SourceMap.read(map_of(render).told())
+    return summary, render(), found
+
+
+def test_escapes_are_the_control_escapes_the_map_says_quote_wrote(runtime):
+    summary, state, found = with_escapes(runtime)
+    told = span_targets.escapes(found, state)
+    assert told["state_sha256"] == found.sha256 and len(told["map_sha256"]) == 64
+    assert told["map_sha256"] == span_targets.layout(found, state)["map_sha256"]
+    first = next(e for e in summary["entries"] if e["type"] == "prompt")
+    (at,) = found.locate("public-example-3", first["seq"], "text", 0, len(first["text"]))
+    shown = [state[a:b] for a, b, _, _ in told["escapes"]]
+    assert shown == ["\\n", "\\t"]  # the newline and the tab, nothing else
+    for start, end, low, high in told["escapes"]:
+        assert [low, high] == at and low <= start < end <= high  # inside that one quotation
+    # The content backslash is spelled as an escape of a backslash; neither it nor the
+    # content letter after it is a control escape.
+    content = state.index("C:\\\\notes")
+    assert not any(a <= content + 3 < b for a, b, _, _ in told["escapes"])
+    assert not any(a <= content + 4 < b for a, b, _, _ in told["escapes"])
+    try:
+        span_targets.escapes(found, state + " ")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a map of another state was believed")

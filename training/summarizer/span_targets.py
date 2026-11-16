@@ -199,6 +199,72 @@ def layout(found, state, call_values=False):
     }
 
 
+def _control_escape(text):
+    """Whether text is the JSON escape quote() writes for one control character (\\n, \\t, \\u0001)."""
+    if not text.startswith("\\") or len(text) < 2:
+        return False
+    try:
+        char = json.loads('"' + text + '"')
+    except ValueError:
+        return False
+    return len(char) == 1 and ord(char) < 0x20 and json.dumps(char)[1:-1] == text
+
+
+def escapes(found, state):
+    """The serializer escapes text.quote() wrote inside mapped session values of this state:
+
+        escapes      [start, end, value_start, value_end]: one control character of a session
+                     field (a newline, a tab) that the JSON spelling wrote as an escape over
+                     [start, end), and the interval of the one quotation of that field it
+                     stands in (the unbroken run of that field's mapped characters between
+                     its marks)
+
+    For a tokenizer that joins part of an escape to the value's next or previous word: the
+    `n` of `\\n` with the letter after it. Taken from the map, never from the look of the
+    text: an escape is a piece the map says spells ONE source character in more than one
+    character of the state, and only when those characters are the canonical JSON escape of
+    a control character. A backslash or a quotation mark of the content (spelled `\\\\`,
+    `\\"`), a spelled-out invisible character, the letters after a content backslash, the
+    proposed call's own JSON and any unmapped or synthesized text are never escapes here.
+    Bound to the state by hash; a state the map is not of raises."""
+    digest = hashlib.sha256(state.encode("utf-8", "surrogatepass")).hexdigest()
+    if digest != found.sha256 or len(state) != found.chars:
+        raise ValueError("this map is of another state")
+    out, run = [], []
+
+    def close():
+        if run:
+            low, high = run[0]["at"][0], run[-1]["at"][1]
+            for piece in run:
+                start, end = piece["at"]
+                if not piece.get("exact") and _control_escape(state[start:end]):
+                    out.append([start, end, low, high])
+
+    for segment in [*found.segments, {"kind": None}]:
+        mapped = segment["kind"] == SESSION and "source" in segment
+        same = (
+            mapped
+            and run
+            and all(
+                segment.get(key) == run[-1].get(key) for key in ("session", "seq", "field", "ref")
+            )
+            and run[-1]["source"][1] == segment["source"][0]
+            and run[-1]["at"][1] == segment["at"][0]
+        )
+        if same:
+            run.append(segment)
+            continue
+        close()
+        run = [segment] if mapped else []
+    told = json.dumps(found.told(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return {
+        "schema": "kai-span-escapes/v1",
+        "state_sha256": digest,
+        "map_sha256": hashlib.sha256(told.encode("utf-8")).hexdigest(),
+        "escapes": sorted(out),
+    }
+
+
 def main(argv):
     policy = SELECT
     if "--policy" in argv:
