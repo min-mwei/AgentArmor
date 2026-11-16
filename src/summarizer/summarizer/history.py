@@ -73,6 +73,12 @@ write. That holds for what the user said in this very session too. The tie is a 
 and says so by asking: nothing here decides whether the call keeps to what was said. When
 such a statement names a thing by an identifier ("until ticket RV-44 is closed"), what a
 session of the project observed of that identifier is kept as evidence of the condition.
+When it makes the call wait on an outcome ("only after curation signs off"), what its own
+session then observed of that outcome, by a call whose words name what the clause names, is
+kept the same way with all that came back for it. That is evidence about a condition, shown
+whole or said to be left out; it grants nothing and says nothing of whether the outcome was
+the one asked for. An outcome the clause does not name in words a later call uses (a date, a
+task the statement does not mention) is not found this way.
 
 A call that names a thing by a key and a number ("--case 77", "--case=77", "case=77") is held
 against what a session of the project observed of that very key and number: a call of that
@@ -329,6 +335,31 @@ _COMMAND_KINDS = (
 # A name that identifies one thing: letters and digits together ("RV-44", "Q7"). A condition
 # the user states often names one, and what was observed of it elsewhere is its evidence.
 _TOKEN = re.compile(r"(?<![\w.-])(?=[\w-]*[A-Za-z])(?=[\w-]*\d)\w[\w-]*(?![\w-])")
+# A statement that makes something depend on an outcome ("after conservation signs off", "once
+# the rebuild proves it is generated"): the clause that says what must come out, as far as the
+# sentence goes. It is read only to find what a session observed of that outcome; nothing here
+# says whether the outcome was the one asked for.
+_CONDITIONAL = re.compile(
+    r"\b(?:only if|only when|only after|unless|provided(?: that)?|as long as|once|after|when|if"
+    r"|until)\b(?P<clause>[^.;\n]{3,120})",
+    re.I,
+)
+_OUTCOME = re.compile(
+    r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|green|clean|approv\w+|finish\w*|done|ok(?:ay)?"
+    r"|fail\w*|signs? off|signed off|verif\w+|confirm\w*|complet\w+|clos\w+|prov(?:es|en|ed)"
+    r"|valid\w*|review\w*)\b",
+    re.I,
+)
+_CHECK_WORD = re.compile(r"[A-Za-z][A-Za-z-]{5,}")
+# Words of such a clause that name no check: the outcome itself, and what any clause has.
+_NO_CHECK = frozenset(
+    "passes passed succeed succeeds succeeded approved approval approve finish finished "
+    "failed failing verify verified verification confirm confirmed confirmation complete "
+    "completed completion closed closes proves proven proved valid validated validation "
+    "review reviewed reviews checks checked checking before during without through "
+    "release releases latest current should always already another".split()
+)
+MAX_CHECKS = 4  # the newest calls shown for one statement's condition
 # A thing named by a key and a number: "--case 77", "--case=77" and "case=77" are the key "case"
 # with the value "77" (MR233). A number alone names nothing (_TOKEN asks for a letter as well, and
 # "77 files" or "checked=09:42Z" is a count or a time), so a number is read as an identity only
@@ -941,6 +972,18 @@ def _tokens(entry):
     return set(_TOKEN.findall(str(entry.get("text") or "")))
 
 
+def _checks(prompt):
+    """The words by which a statement names what its condition waits on: those of a clause that
+    makes something depend on an outcome, the outcome's own words left out. "Publish it after
+    conservation signs off" gives {"conservation"}; a statement with no such clause gives none."""
+    found = set()
+    for clause in _CONDITIONAL.finditer(str(prompt.get("text") or "")):
+        said = clause.group("clause")
+        if _OUTCOME.search(said):
+            found |= {word.lower() for word in _CHECK_WORD.findall(said)} - _NO_CHECK
+    return found
+
+
 def _keyed(text):
     """The things a text names by a key and a number (_KEYED), as {(key, value)}: the key in lower
     case, the number as it is written."""
@@ -1284,10 +1327,23 @@ def _restarted(mine, call):
     takes a session, or None when nothing but requests came before that prompt.
 
     The part before is the summary as it stood at its last event before the request (as_of():
-    a mark that rests on what came later is no part of it, and what cannot be dated is said, as
-    for any other session), without anything from the request on. Nothing of it happened
-    between then and the call, so that is also how it stood when the call was proposed. The
-    part after is the entries from the request on. Nothing is read or written again."""
+    a mark that rests on what came later is no part of it), without anything from the request
+    on. Nothing of it happened between then and the call, so that is also how it stood when the
+    call was proposed. The part after is the entries from the request on. Nothing is read or
+    written again.
+
+    What as_of() could not restate for that moment (a mark of an earlier piece that names only
+    calls made after the request, a count it cannot split) is no gap in what is known of this
+    session: the session is one, it is held whole and in order, and its own packet shows every
+    entry with the marks it has now. The cut is this reading's own, so its doubts are not said
+    as an unfinished search of another session's past would be (the part's as_of lists none);
+    they can only make this reading find less, as it found nothing before there was one. A
+    session none of whose events before the request can be dated cannot be cut at all, and is
+    not read this way: None. Nor is a line of that part ever written from this reading: a piece
+    whose producer the summary lists only in its catalogue of calls is shown by the session's
+    own packet, with the call's words, so select() does not count that as a gap of this part
+    either. What a search of that part could really not finish (program text cut, a body not
+    all there, a writer that cannot be ruled out) is unfinished here as anywhere."""
     summary = {k: v for k, v in mine["summary"].items() if k != "as_of"}
     entries = summary["entries"]
     asked = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] < call["seq"]]
@@ -1296,12 +1352,14 @@ def _restarted(mine, call):
     if all(e["type"] == "prompt" for e in earlier):
         return None
     times = [float(e["ts"]) for e in earlier if _number(e.get("ts"))]
-    before = as_of(summary, max(times, default=0))
+    if not times:  # nothing to cut at: marks that rest on later calls could not be told apart
+        return None
+    before = as_of(summary, max(times))
     session = before["session"]
     catalogue = [c for c in session.get("dropped_calls") or () if c["seq"] < current]
     before = before | {"entries": [e for e in before["entries"] if e["seq"] < current]}
     before |= {"session": session | {"dropped_calls": catalogue}}
-    stood = before["as_of"] | {"until": float(call.get("ts") or 0), "tied": False}
+    stood = {"until": float(call.get("ts") or 0), "unknown": [], "tied": False}
     after = summary | {"entries": [e for e in entries if e["seq"] >= current]}
     return (
         mine | {"key": mine["key"] + BEFORE, "summary": before | {"as_of": stood}},
@@ -1494,6 +1552,7 @@ def select(mine, call_id, others, home, within=True):
     for prompt in stated:
         tokens |= _tokens(prompt)
     bearing = list(stated)  # the user's statements that bear on the call, here and earlier
+    waits = []  # (session, request, words): the conditions those of other sessions set
     for other, acted in sources:
         summary, there = other["summary"], other["cwd"]
         if not summary["session"]["coverage"]["scanned_all_captured"]:
@@ -1519,6 +1578,8 @@ def select(mine, call_id, others, home, within=True):
             if same_project and named:
                 tokens |= _tokens(prompt)
                 bearing.append(prompt)
+                if _checks(prompt):
+                    waits.append((other["key"], prompt["seq"], _checks(prompt)))
             shown = taken.get((prompt["seq"], "prompt"))
             if shown is not None:
                 # Already there as the request of a write. When it also states a bound on
@@ -1578,6 +1639,48 @@ def select(mine, call_id, others, home, within=True):
                     items.append(taken[at])
                 if group not in taken[at]["groups"]:
                     taken[at]["groups"].append(group)
+    # What the session of a bearing statement observed, after it was said, of the outcome the
+    # statement makes the call wait on: "publish after conservation signs off" is held against
+    # what that session then read of reviews/conservation.txt. The tie is a word of the clause
+    # in the later call's own words, never in what came back, which is lower-trust text and
+    # could name anything. The call and all that came back for it are key evidence of the
+    # condition, shown whole or left out and said to be; the newest few, and one the summary
+    # does not keep whole leaves the search unfinished. It is evidence of an outcome and bears
+    # on nothing: a check that passed grants nothing, and whether it is the outcome the user
+    # asked for is for whoever decides.
+    for other in (o for o in others if o["key"] in shown_in and waits):
+        taken, entries_there = shown_in[other["key"]], other["summary"]["entries"]
+        for key, said_at, words in waits:
+            if key != other["key"]:
+                continue
+            made = [
+                e
+                for e in entries_there
+                if e["type"] == "action"
+                and e["seq"] > said_at
+                and words & {w.lower() for w in _CHECK_WORD.findall(str(e.get("text") or ""))}
+            ]
+            for entry in made[-MAX_CHECKS:]:
+                group = f"{key}:check:{entry['seq']}"
+                groups.append({"id": group, "kind": "named", "key": True, "bears": False})
+                # Every piece that came back for it, one it had seen before included (_arrived).
+                came = [
+                    content
+                    for content in _lower(entries_there)
+                    for made_by, seq, aside in _arrived(content)
+                    if made_by == entry.get("call_id") and seq > entry["seq"] and not aside
+                ]
+                results = list({id(content): content for content in came}.values())
+                whole = entry.get("result_pieces") in (None, len(results))
+                if not whole and "condition_result_not_kept" not in unsupported:
+                    unsupported.append("condition_result_not_kept")
+                for one, relation in ((entry, "recent"), *((e, "shown") for e in results)):
+                    at = (one["seq"], one["type"])
+                    if at not in taken:
+                        taken[at] = _item(other, one, relation)
+                        items.append(taken[at])
+                    if group not in taken[at]["groups"]:
+                        taken[at]["groups"].append(group)
     # What this project's earlier sessions observed of a thing the call names by a key and a number
     # (MR233): "case-export delete --case 77" is held against what "hold-query --case 77" brought
     # back, "case=77 hold=none". The same key with the same value, in an earlier call's own words or
@@ -1640,7 +1743,11 @@ def select(mine, call_id, others, home, within=True):
     # Every result the lookup shows keeps the call it first came back for, whichever path found it
     # (MR240-2, MR243-1): _producers() closes the items over their producers, and says when one is
     # not kept.
-    if _producers(items, others) and "producer_not_kept" not in unsupported:
+    # That is for the lines of another session's section. The part of this very session before
+    # its request (within=False, _restarted()) is shown by the session's own packet, where each
+    # piece stands with the words of the call that brought it; no line of it is written here,
+    # so a producer its summary lists only in its catalogue leaves nothing out of what is shown.
+    if _producers(items, others) and within and "producer_not_kept" not in unsupported:
         unsupported.append("producer_not_kept")
     items.sort(key=lambda item: (searched.index(item["key"]), item["seq"]))
     # A module the call loads by name was looked for where its words say, and nowhere else:
@@ -1681,7 +1788,9 @@ def select(mine, call_id, others, home, within=True):
         why.append("lookup_unfinished")
     # What this session did before the current request, read as an earlier session's would be.
     # What that reading could not finish is unfinished here: a writer of the call's file before
-    # the request cannot be ruled out any more than one in another session.
+    # the request cannot be ruled out any more than one in another session. The cut it reads
+    # the session at is its own, though, and what that cut alone could not date is no gap in
+    # this session's history (_restarted()).
     earlier_here, parts = [], _restarted(mine, call) if within else None
     if parts is not None:
         apart = select(parts[1], call_id, [parts[0]], home, within=False)

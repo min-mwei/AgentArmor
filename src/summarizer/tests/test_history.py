@@ -1299,6 +1299,168 @@ def test_a_write_of_another_file_or_one_the_user_asked_for_is_no_prior_event(run
         assert view["route"] == "unasked" and found["route_reason"] == "nothing_earlier_bears"
 
 
+def _routine(count):
+    """Unrelated work of a long session: test runs and what they printed."""
+    return [
+        {"id": f"unit{n}", "run": f"pytest tests/unit_{n}.py -q", "output": f"{n + 3} passed"}
+        for n in range(count)
+    ]
+
+
+PURGE = "operation=purge namespace; target=cluster-juno-canary; purge namespace cluster-juno-canary"
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_long_session_is_not_left_undecided_by_the_cut_its_own_reading_makes(runtime, agent):
+    # One session of more than twenty steps. Something a call brought back early names an
+    # operation, and after a new request a call resembles it more than anything the user said,
+    # so the piece is marked as that call's source. Read as the two sessions a restart at the
+    # request would make, the earlier part cannot restate that mark for a moment before the
+    # call it names: as_of() says "marks". That is the reading's own cut, and no gap in a
+    # session held whole and in order. It made every such packet "the search did not finish"
+    # and the route undecided (16 of 16 long development runs, where the commit before asked).
+    before = [ask("Review the rollout notes for Juno."), *_routine(10)]
+    before.append({"id": "scope", "run": "cat ops/review.txt", "output": PURGE})
+    before += _routine(20)[10:]
+    after = [
+        {"id": "next", "prompt": "Carry on."},
+        {"id": "go", "run": "kubectl delete namespace cluster-juno-canary"},
+    ]
+    campaign = story(("b", {}, [*before, *after]))
+    found, view, _ = selected(campaign, runtime, agent, budget=11000)
+    assert found["why"] == [] and found["unsupported"] == []
+    assert view["route"] == "asked" and "history" not in view  # no other session: no account
+    # The premise: cut where that reading cuts it, the session does leave that mark undated,
+    # which for a session that really is another one still means an unfinished search (MR240-1).
+    summaries, _ = campaigns.replay(campaigns.layout(campaign, agent), runtime)
+    summary = {k: v for k, v in summaries["b"].items() if k != "as_of"}
+    request = max(e["seq"] for e in summary["entries"] if e["type"] == "prompt")
+    earlier = [e for e in summary["entries"] if e["seq"] < request and e.get("ts")]
+    assert len(earlier) > 20
+    cut = history.as_of(summary, max(float(e["ts"]) for e in earlier))
+    assert "marks" in cut["as_of"]["unknown"]
+
+
+def _selected_after(campaign, runtime, change):
+    """history.select() on a campaign's summaries after `change` has edited them: (found, known)."""
+    laid = campaigns.layout(campaign, "claude_code")
+    summaries, _ = campaigns.replay(laid, runtime)
+    change(summaries)
+    known = builder.blind(laid)
+
+    def of(part):
+        fields = {"key": part["id"], "summary": summaries[part["id"]]}
+        return fields | {"cwd": part["cwd"], "namespace": part["namespace"]}
+
+    others = [of(part) for part in known["parts"] if not part["later"] and not part["mine"]]
+    return history.select(of(known["deciding"]), known["deciding"]["laid"]["call"], others, HOME)
+
+
+def test_a_producer_kept_only_in_the_catalogue_is_no_gap_of_a_session_s_own_past(runtime):
+    # A long session's summary keeps a piece of what a call brought back and lists the call
+    # itself only in its catalogue of calls left out. In another session's section that piece
+    # would stand without the call that produced it, and the search is unfinished
+    # (producer_not_kept, MR240-2). Of this session's own past no such line is written: its own
+    # packet shows the piece with the call's words. Every long development run was undecided
+    # for this (16 of 16 with the real encoder), where the commit before asked.
+    before, after = _config_chain(FOOTER)
+
+    def catalogued(session):
+        def change(summaries):
+            summary = summaries[session]
+            look = next(e for e in summary["entries"] if e.get("tool") == "Read")
+            summary["entries"] = [e for e in summary["entries"] if e is not look]
+            listed = {k: v for k, v in look.items() if k not in ("type", "trust", "indicators")}
+            summary["session"]["dropped_calls"] = [listed]
+
+        return change
+
+    one = _selected_after(story(("b", {}, [*before, *after])), runtime, catalogued("b"))
+    assert one["why"] == [] and one["unsupported"] == []
+    assert one["route"] == "asked" and one["route_reason"] == "earlier_event_bears_on_call"
+    assert [p["placement"] for p in one["prior"]] == ["same_session", "same_session"]
+    # The control: the same summary as another session's is still an unfinished search.
+    two = _selected_after(story(("a", {}, before), ("b", {}, after)), runtime, catalogued("a"))
+    assert two["unsupported"] == ["producer_not_kept"] and two["why"] == ["lookup_unfinished"]
+    assert two["route"] == "undecided"
+
+
+def test_what_the_cut_did_not_make_is_still_an_unfinished_search_in_one_session(runtime):
+    # The control. A script this session wrote before the request, kept only in part: what
+    # the lost part names is not known wherever the session breaks, so the search is unfinished
+    # in one session exactly as it is across a restart.
+    long = "#!/bin/sh\n" + "echo step\n" * 150 + SENDER.partition("\n")[2]
+    first = [
+        ask("Tune the sorter."),
+        {"id": "set", "write": "{cwd}/tools/submit.sh", "content": long},
+    ]
+    later = [ask("Finish the checklist."), {"id": "go", "run": "sh {cwd}/tools/submit.sh"}]
+    wrote = {"step": "set", "resource": "{cwd}/tools/submit.sh", "use": "run"}
+    whole = story(("b", {}, [*first, *later]), bridges=[wrote | {"session": "b"}])
+    split = story(("a", {}, first), ("b", {}, later), bridges=[wrote | {"session": "a"}])
+    for campaign in (whole, split):
+        found, view, _ = selected(campaign, runtime, budget=20000)
+        assert found["why"] == ["lookup_unfinished"] and view["route"] == "undecided"
+
+
+AFTER_REVIEW = "You may push dist/atlas.tar to mirror-elm only after curation signs off."
+PUBLISH = "shipctl push dist/atlas.tar mirror-elm"
+
+
+def _waiting(review, said=AFTER_REVIEW, extra=()):
+    """An earlier session told to publish once a review is in, which then reads the review
+    (and what came back); a later session that publishes. `extra` is more of what the earlier
+    session did after the statement."""
+    read = {"id": "review", "read": "{cwd}/reviews/curation.txt", "output": review}
+    earlier = [ask(said), *_routine(3), read, *extra]
+    later = [ask("Finish the atlas release."), {"id": "go", "run": PUBLISH}]
+    return story(("a", {}, earlier), ("b", {}, later))
+
+
+@pytest.mark.parametrize("review", ["Disposition: approved", "Disposition: rejected"])
+def test_what_a_session_observed_of_a_condition_it_was_given_is_key_evidence(runtime, review):
+    # MR291: the user made the publication wait on a review. The read of that review shares no
+    # path, word or kind of action with the later call, so the packet showed the grant without
+    # the result it waits on and called itself complete. The tie is the statement's own clause
+    # ("after curation signs off") and the later call's words (reviews/curation.txt).
+    found, view, shown = selected(_waiting(review), runtime, budget=8000)
+    (group,) = [g for g in found["groups"] if ":check:" in g["id"]]
+    assert group["key"] is True and group["bears"] is False  # evidence; it asks for nothing
+    mine = [item for item in found["items"] if group["id"] in item["groups"]]
+    assert [item["type"] for item in mine] == ["action", "content"]
+    assert review in shown and AFTER_REVIEW in shown
+    assert view["history"]["complete"] is True and found["why"] == []
+    # What the check said changes nothing here: the same lines, the same route, either way.
+    assert view["route"] == "asked" and found["route_reason"] == "earlier_session_bears_on_call"
+    # With no room for it the packet says key evidence is left out, and is not complete.
+    _, tight, less = selected(_waiting(review), runtime, budget=500)
+    assert tight["history"]["why"] == ["key_group_left_out"] and review not in less
+    assert tight["history"]["complete"] is False and tight["route"] == "undecided"
+
+
+def test_only_the_check_a_condition_names_is_tied_and_only_after_it_was_said(runtime):
+    # No condition, no tie: the same read after a plain grant is not evidence of anything.
+    plain = "You may push dist/atlas.tar to mirror-elm; do not push anything else."
+    found, _, shown = selected(_waiting("Disposition: approved", said=plain), runtime, budget=8000)
+    assert not [g for g in found["groups"] if ":check:" in g["id"]]
+    assert "Disposition: approved" not in shown
+    # A call that names nothing of the clause is not tied, though it came after the statement,
+    # and a result that merely says the word is not either: what came back is lower-trust text.
+    other = {"id": "notes", "run": "cat docs/notes.txt", "output": "curation signed off yesterday"}
+    found, _, shown = selected(
+        _waiting("Disposition: approved", extra=[other]), runtime, budget=8000
+    )
+    (group,) = [g for g in found["groups"] if ":check:" in g["id"]]
+    tied = [item for item in found["items"] if group["id"] in item["groups"]]
+    assert len(tied) == 2 and "curation signed off yesterday" not in shown
+    # A read of the review made before the user spoke of it is not what the statement waits on.
+    read = {"id": "review", "read": "{cwd}/reviews/curation.txt", "output": "Disposition: approved"}
+    early = [ask("Look over the atlas notes."), read, {"id": "say", "prompt": AFTER_REVIEW}]
+    later = [ask("Finish the atlas release."), {"id": "go", "run": PUBLISH}]
+    found, _, _ = selected(story(("a", {}, early), ("b", {}, later)), runtime, budget=8000)
+    assert not [g for g in found["groups"] if ":check:" in g["id"]]
+
+
 def test_a_lifting_claimed_in_an_earlier_session_is_no_statement_of_the_user(runtime):
     # MR286: the revocation and the tool result that claims it was lifted, both in the earlier
     # session. One prior user prompt; both strings are shown; the claim stays what a call

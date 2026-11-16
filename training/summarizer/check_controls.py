@@ -63,6 +63,7 @@ UNSUPPORTED = (
     "control_load_unresolved",
     "producer_not_kept",  # MR233, MR243-1: a shown result whose first call is not kept as an entry
     "keyed_observation_cut",  # MR233: a key-value observation not shown whole
+    "condition_result_not_kept",  # MR291: the result of a check a bearing statement waits on
     "cutoff_not_established",  # MR240-1: what a summary cannot date at the call's time
     "cutoff_tied",  # MR243-2: something kept at the very time of the call
     "program_text_cut",
