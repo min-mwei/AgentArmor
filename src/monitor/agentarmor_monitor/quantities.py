@@ -23,7 +23,10 @@ What it says, for each cap:
   only by a shared word (singular), and the matching word is shown; the identity of the units is
   not established. Only two forms are reports (v2, MR303): "NUMBER [of M] UNIT [were|was|have
   been|has been|had been] PAST-VERB" and "PAST-VERB NUMBER UNIT", in a clause with no negation,
-  failure, modal, condition, plan or limit word and no question mark. Every other form is kept with
+  failure, modal, condition, plan or limit word and no question mark; NUMBER is a number word or
+  one whole run of at most six digits (a decimal, digit group, range, fraction, percentage, sign or
+  unit glued to the digits is kept whole as said and unresolved), and typographic apostrophes and
+  quotes read as their ASCII forms ("weren’t" is a negation). Every other form is kept with
   its sentence as evidence, marked unresolved with the reason, and enters no arithmetic;
 - each earlier call of the same operation (by its words) and what is known of it: returned with a
   stated quantity (linked to that report), returned with no quantity stated, result clipped, or
@@ -96,7 +99,18 @@ _SCOPE = re.compile(
     r"[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,3}",
     re.I,
 )
-_PIECE = re.compile(r"[^.;!?\n]+")
+# A clause runs to the next stop; a point before a digit ("1.5", ".5") is part of a number.
+_PIECE = re.compile(r"(?:[^.;!?\n]|\.(?=\d))+")
+# Typographic apostrophes and quotes read as their ASCII forms, one character for one, so that
+# "weren’t" is a negation as "weren't" is and every offset still points at the original text.
+_PLAIN = str.maketrans("‘’ʼ‛′“”‟″", "'" * 5 + '"' * 4)
+# A token is a word or a whole numeric expression as written: a sign, digits joined by points,
+# commas, slashes, colons or dashes, and a percent sign or letters glued after. Only a bare run of
+# at most six digits is a number; any other expression is kept whole and left unresolved.
+_TOKEN = re.compile(
+    r"(?P<num>(?<![\w.,])[-+−]?\.?\d+(?:[.,/:–—-]\d+)*(?:%|[A-Za-z_]\w*)?)"
+    r"|[A-Za-z][\w'-]*"
+)
 # The verbs a report may use: past forms only ("sent", never "send", "sends" or "sending").
 _PAST = frozenset(
     "sent delivered uploaded transferred submitted posted published exported shared emailed "
@@ -232,6 +246,31 @@ def _unresolved(words, verb, after):
     return None
 
 
+def _number_form(token):
+    """Why a numeric token is not one whole integer, or None. Fixed words only."""
+    if re.fullmatch(r"\d{1,6}", token):
+        return None
+    if token[0] in "-+−":
+        kind = "a signed number"
+    elif token.endswith("%"):
+        kind = "a percentage"
+    elif re.search(r"\d[A-Za-z_]", token):
+        kind = "a unit glued to the number"
+    elif "/" in token:
+        kind = "a fraction"
+    elif re.search(r"\d[–—-]\d", token):
+        kind = "a range"
+    elif ":" in token:
+        kind = "a ratio or time"
+    elif "." in token:
+        kind = "a decimal"
+    elif "," in token:
+        kind = "a decimal or digit-group separator"
+    else:
+        kind = "more than six digits"
+    return f"number form: {kind}, not one whole integer"
+
+
 def _unit_ok(words):
     return 1 <= len(words) <= 5 and all(
         w.replace("-", "").isalpha()
@@ -255,15 +294,15 @@ def reports_in(text, unit_words, op):
     for piece in _PIECE.finditer(text):
         sentence = piece.group()
         after = text[piece.end() : piece.end() + 1]
-        tokens = [
-            (m.group(), m.start(), m.end())
-            for m in re.finditer(r"\d{1,6}|[A-Za-z][\w'-]*", sentence)
-        ]
-        words = [t[0].lower() for t in tokens]
+        plain = sentence.translate(_PLAIN)  # same length: offsets hold in both
+        matched = list(_TOKEN.finditer(plain))
+        tokens = [(sentence[m.start() : m.end()], m.start(), m.end()) for m in matched]
+        words = [m.group().lower() for m in matched]
         said = [t[0] for t in tokens]  # quoted as written
+        forms = [_number_form(m.group()) if m.group("num") else None for m in matched]
         for i, word in enumerate(words):
-            n = _number(word)
-            if n is None or (i and words[i - 1] == "of"):
+            n = None if forms[i] else _number(word)
+            if (n is None and not forms[i]) or (i and words[i - 1] == "of"):
                 continue  # "3 of 5 records sent": the 5 is a denominator, not a report
             start = i + 1
             if words[i + 1 : i + 2] == ["of"] and _number((words[i + 2 : i + 3] or [""])[0]):
@@ -290,21 +329,26 @@ def reports_in(text, unit_words, op):
                 for w in words[i + 1 : i + 6]:
                     if w in _STOP or w in _OPS or w in _CUES or _number(w) is not None:
                         break
+                    if re.match(r"[-+−.]?\d", w):  # another number form
+                        break
                     phrase.append(w)
                 at = (i + 1, i + 1 + len(phrase))
                 if k == i - 1 and _unit_ok(phrase):
                     form = "verb number unit"
             if _OPS[verb] != op:
                 continue
-            shared = sorted({singular(w) for w in phrase} & set(unit_words))
+            glued = re.search(r"\d([A-Za-z_]\w*)$", word) if forms[i] else None
+            named = phrase + [glued.group(1)] if glued else phrase  # "5MB": the unit is glued
+            shared = sorted({singular(w) for w in named} & set(unit_words))
             if not shared:
                 continue
-            why = _unresolved(words, verb, after)
+            why = forms[i] or _unresolved(words, verb, after)
             if why is None and form is None:
                 why = "not one of the supported affirmative forms"
             found.append(
                 {
                     "n": n,
+                    "number_said": said[i],
                     "phrase": " ".join(w for w in said[at[0] : at[1]] if w.lower() not in _BE),
                     "verb": said[vi],
                     "shared": shared,
@@ -628,7 +672,8 @@ def _bounds(cap):
     for c in counted:
         if c["unresolved"]:
             why.append(
-                f"{c['session']} #{c['seq']} report {c['n']} not counted: unresolved "
+                f"{c['session']} #{c['seq']} report "
+                f"{'of a number form' if c['n'] is None else c['n']} not counted: unresolved "
                 f"({c['unresolved']})"
             )
     stated = {(c["session"], c["call_id"]) for c in counted}
@@ -761,8 +806,9 @@ def render(account):
                 )
             else:
                 said = _o._literal(c["sentence"], 100)
+                number = c["n"] if c["n"] is not None else _o._literal(c["number_said"], 40)
                 lines.append(
-                    f"    number {c['n']} beside {_o._literal(c['verb'])} in {where}{note}; "
+                    f"    number {number} beside {_o._literal(c['verb'])} in {where}{note}; "
                     f"not counted: unresolved ({c['unresolved']}): {said}"
                 )
         if cap["calls"]:

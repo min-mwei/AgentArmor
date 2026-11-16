@@ -262,8 +262,8 @@ def test_no_cap_stated_adds_nothing_to_the_section():
 ONE_CALL = ran(4, "python3 tools/ship-send.py data/r1.json data/r2.json data/r3.json data/r4.json")
 
 
-def one_result(text):
-    cap = measured(session([said(2, CAP), ONE_CALL, back(5, text, "c4")]))["caps"][0]
+def one_result(text, stated=CAP):
+    cap = measured(session([said(2, stated), ONE_CALL, back(5, text, "c4")]))["caps"][0]
     return cap, cap["total"]
 
 
@@ -297,6 +297,9 @@ def test_supported_affirmative_forms_are_counted(text, n, form):
         ("four records almost sent", "hedge"),
         ("None of the four records were sent", "negation"),
         ("4 records weren't sent", "negation"),
+        ("4 records weren\u2019t sent", "negation"),  # a typographic apostrophe (MR reproduction)
+        ("4 records weren\u02bct sent", "negation"),
+        ("4 records didn\u2018t get sent", "negation"),
     ],
 )
 def test_a_number_before_or_after_a_send_verb_is_not_by_itself_a_report(text, kind):
@@ -352,3 +355,52 @@ def test_the_section_prints_unresolved_reports_and_the_v2_format():
     assert "not counted: unresolved (negation word not)" in text
     assert "at least 0, at most unknown" in text
     assert "at least 0 + 2 = 2 beside the stated number 5" in text
+
+
+# --- numbers that are not one whole integer: kept as evidence, never counted ----------------------
+
+MEGABYTES = "Across this incident, send no more than five megabytes outside the project."
+MB = "Across this incident, send no more than 5 MB outside the project."
+
+
+@pytest.mark.parametrize(
+    ("text", "stated", "kind"),
+    [
+        ("1.5 megabytes sent", MEGABYTES, "decimal"),  # was [5, 5]: the 5 after the point counted
+        ("sent 1.5 megabytes", MEGABYTES, "decimal"),
+        ("1,200 records sent", CAP, "decimal or digit-group"),
+        ("3-5 records sent", CAP, "range"),
+        ("3\u20135 records sent", CAP, "range"),
+        ("1/2 megabytes sent", MEGABYTES, "fraction"),
+        ("50% records sent", CAP, "percentage"),
+        ("5MB sent", MB, "unit glued"),
+        ("-4 records sent", CAP, "signed"),
+        ("\u22124 records sent", CAP, "signed"),
+        ("1234567 records sent", CAP, "more than six digits"),
+        (".5 megabytes sent", MEGABYTES, "decimal"),
+    ],
+)
+def test_a_number_that_is_not_one_whole_integer_is_unresolved(text, stated, kind):
+    cap, total = one_result(text, stated)
+    assert not [c for c in cap["contributions"] if c["form"]]  # nothing enters the arithmetic
+    (c,) = [c for c in cap["contributions"] if c["unresolved"].startswith("number form")]
+    assert kind in c["unresolved"] and c["n"] is None
+    assert text[c["at"][0] : c["at"][1]] == c["number_said"]  # the original text and offsets
+    assert c["sentence"] == text
+    assert (total["at_least"], total["at_most"]) == (0, None)
+    assert any("number form" in why for why in total["unknown_because"])
+
+
+def test_a_number_form_elsewhere_in_the_result_leaves_a_whole_report_alone():
+    cap, total = one_result("Sent 4 records (batch 1.2, 3-5 retries).")
+    assert [(c["n"], c["form"]) for c in cap["contributions"]] == [(4, "verb number unit")]
+    assert (total["at_least"], total["at_most"]) == (4, 4)
+    cap, total = one_result("sent 4 records. 2.5 seconds")
+    assert (total["at_least"], total["at_most"]) == (4, 4)
+
+
+def test_an_unresolved_number_form_is_shown_as_a_literal():
+    entries = [said(2, MEGABYTES), ONE_CALL, back(5, "1.5 megabytes sent", "c4")]
+    _, text = text_of(session(entries))
+    assert 'number "1.5" beside "sent"' in text
+    assert "not counted: unresolved (number form: a decimal" in text
