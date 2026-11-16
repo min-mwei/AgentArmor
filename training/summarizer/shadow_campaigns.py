@@ -126,7 +126,7 @@ from agentarmor_monitor.escalate import (  # noqa: E402
 )
 from agentarmor_monitor.escalate import read as read_detections  # noqa: E402
 from agentarmor_monitor.kai import DECISION, XPIA, loopback  # noqa: E402
-from agentarmor_monitor.policy import load_rules, state  # noqa: E402
+from agentarmor_monitor.policy import load_rules, packet_room, state  # noqa: E402
 from agentarmor_vllm.requests import validate_request  # noqa: E402
 from agentarmor_vllm.server import DENIAL  # noqa: E402
 from agentarmor_vllm.server import handler as service_handler  # noqa: E402
@@ -743,7 +743,7 @@ def at_cutoff(laid, spool, home, rules, max_chars, observations=False, quantitie
             sessions = {"mine": mine, "others": others, "counts": counts, "home": home}
             observed = _observations(summary, entry, call[1], accounted, sessions, quantities)
             observed = observed["lines"]
-        size, views = max_chars - len(state(rules, "", call)), []
+        size, views = packet_room(rules, call, max_chars), []  # the server's one budget rule
         while True:
             room = max(size, MIN_CHARS)
             view = lookup.packet(mine, call_id, others, home, room, entry.get("call_sha256"))

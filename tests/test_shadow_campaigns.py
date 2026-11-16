@@ -440,3 +440,12 @@ def test_with_observations_on_the_recomputed_request_is_the_issued_one_and_is_sc
     recomputed = record["measures"]["a_evidence"]["recomputed"]
     assert recomputed["matches_issued_request"] is True
     assert record["measures"]["a_evidence"]["scored"]["evidence_ok"] is not None
+
+
+def test_the_cutoff_rebuild_takes_its_budget_from_the_servers_rule(written, tmp_path, monkeypatch):
+    """at_cutoff budgets the packet by policy.packet_room, the rule escalate.detect uses, and by
+    no arithmetic of its own: a different rule changes the rebuilt budget."""
+    monkeypatch.setattr(shadow, "packet_room", lambda rules, call, max_chars: 4321)
+    record, _ = one_run(written, tmp_path / "out", "--layouts", "claude_code")
+    recomputed = record["measures"]["a_evidence"]["recomputed"]
+    assert recomputed["budgets"][0] == 4321
