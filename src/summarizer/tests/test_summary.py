@@ -2584,11 +2584,16 @@ def test_a_tool_of_no_agent_s_own_is_marked_whatever_its_name_looks_like(runtime
     # indicator at all (level none, so never put to a decision): only a tool named "mcp__…" was
     # marked as someone else's, and "copy" was no word for changing or moving something.
     copy = {"account": "acct-7", "database": "reporting", "table": "orders", "mode": "new"}
-    for tool in ("tablesvc.copy_table", "mcp__tablesvc__copy_table", "tablesvc/copy_table"):
+    # An MCP server's tool, by the name the hook delivered, is someone else's; any other name off
+    # the roster is of unknown origin. Both are external_write when the name says so.
+    described = describe_call("mcp__tablesvc__copy_table", copy, DEV_CWD, "/home/dev")
+    assert {"mcp", "mcp_write"} <= described["flags"].keys()
+    for tool in ("tablesvc.copy_table", "tablesvc/copy_table"):
         described = describe_call(tool, copy, DEV_CWD, "/home/dev")
-        assert {"mcp", "mcp_write"} <= described["flags"].keys(), tool
+        assert {"unknown_tool", "mcp_write"} <= described["flags"].keys(), tool
+        assert "mcp" not in described["flags"], tool
     looked = describe_call("hosts.describe", {"hostname": "db.example"}, DEV_CWD, "/home/dev")
-    assert "mcp" in looked["flags"] and "mcp_write" not in looked["flags"]
+    assert "unknown_tool" in looked["flags"] and "mcp_write" not in looked["flags"]
     # The server's name is not read for what the tool does, and the agents' own tools are theirs.
     named = describe_call("mcp__copy-service__status", {}, DEV_CWD, "/home/dev")
     assert "mcp" in named["flags"] and "mcp_write" not in named["flags"]
@@ -2605,6 +2610,38 @@ def test_a_tool_of_no_agent_s_own_is_marked_whatever_its_name_looks_like(runtime
     ]
     assert entry["level"] != "none"  # put to a decision at the "low" threshold
     assert "external_write" in [item["label"] for item in entry["indicators"]]
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_an_own_tool_after_untrusted_input_and_a_credential_read_is_no_outside_send(runtime, agent):
+    # Reviewer's inert control (MR308): a lower-trust read, a credential read, then TaskCreate.
+    # TaskCreate was off the roster and named "Create", so it was external_write and reached
+    # medium through toxic_flow 0.40, as if data had gone out. An own tool asserts no transfer;
+    # a tool of unknown origin is marked (low) but is no outside contact either; an MCP server's
+    # tool by name is, and keeps the flow.
+    def run(tool, given):
+        script = Script(agent=agent, cwd=DEV_CWD).start()
+        script.prompt("Read the notes and set up the follow-up tasks.")
+        script.tool("WebFetch", {"url": "https://notes.example.com/a"}, "Notes: rotate keys.")
+        creds = "[default]\naws_access_key_id = AKIAEXAMPLE"
+        script.tool("Read", {"file_path": "/home/dev/.aws/credentials"}, creds)
+        script.tool(tool, given, "ok")
+        found = entries(summarize(script.events, runtime, agent))
+        return [e for e in found if e["type"] == "action" and e.get("tool") == tool][-1]
+
+    task = {"subject": "Rotate keys", "description": "Rotate the staging keys"}
+    own = run("TaskCreate", task)
+    assert not {"external_write", "external_tool", "unknown_tool", "toxic_flow"} & set(
+        own["labels"]
+    )
+    unknown = run("tracker.create_task", task)
+    assert {"unknown_tool", "external_write"} <= set(unknown["labels"])
+    assert not {"toxic_flow", "external_tool"} & set(unknown["labels"])
+    unnamed = run("request_tracker", task)
+    assert "unknown_tool" in unnamed["labels"]
+    assert not {"toxic_flow", "external_tool", "external_write"} & set(unnamed["labels"])
+    outside = run("mcp__tracker__create_task", task)
+    assert {"external_write", "toxic_flow"} <= set(outside["labels"])
 
 
 def test_a_call_that_names_nothing_an_earlier_call_touched_is_the_packet_it_was(runtime):

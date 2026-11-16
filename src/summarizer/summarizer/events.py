@@ -23,10 +23,23 @@ _SHELL = {"Bash", "PowerShell", "Monitor", "shell", "exec_command", "local_shell
 _READS = {"Read", "NotebookRead", "Glob", "Grep", "LS", "read_file", "list_dir", "view_image"}
 _WRITES = {"Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"}
 _SUBAGENT = {"Agent", "Task", "spawn_agent", "Workflow"}
-# The agents' own tools, whose result schema is theirs. Anything else is someone else's output.
-BUILTIN = _SHELL | _READS | _WRITES | _SUBAGENT
-BUILTIN |= {"WebFetch", "WebSearch", "AskUserQuestion", "ExitPlanMode", "TodoWrite", "Skill"}
-BUILTIN |= {"ToolSearch", "KillShell", "BashOutput", "SlashCommand", "update_plan", "write_stdin"}
+_BROWSE = {"webrun"}  # Codex's web browser (open, click, find), as its hooks name it
+_PUBLISH = {"Artifact", "ArtifactComments", "ArtifactData"}  # Claude Code's hosted pages
+# The agents' own tools, whose result schema is theirs. Anything else is someone else's output,
+# and is marked external_tool (see describe_call). The hooks deliver tool_name as the client
+# named the tool, unchanged: Claude Code's built-ins by their own names and MCP tools as
+# "mcp__server__tool"; Codex reports its shell as "Bash" (also "exec_command", "shell" and
+# "local_shell" in other versions), its patches as "apply_patch" and its browser as "webrun". A
+# built-in missing here is marked as someone else's tool, so the roster lists every built-in
+# seen in real sessions or in the clients' tool surfaces, including bookkeeping tools.
+BUILTIN = _SHELL | _READS | _WRITES | _SUBAGENT | _BROWSE | _PUBLISH
+BUILTIN |= {"WebFetch", "WebSearch", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode"}
+BUILTIN |= {"TodoWrite", "Skill", "ToolSearch", "KillShell", "BashOutput", "SlashCommand"}
+BUILTIN |= {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput"}
+BUILTIN |= {"SendMessage", "ListAgents", "ScheduleWakeup", "CronCreate", "CronDelete", "CronList"}
+BUILTIN |= {"EnterWorktree", "ExitWorktree", "LSP"}
+BUILTIN |= {"update_plan", "write_stdin", "request_user_input"}  # Codex
+BUILTIN |= {"send_input", "wait", "close_agent", "resume_agent"}  # Codex's agent tools
 _PATCH_FILE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* (Move) to: (.+)$", re.M)
 _PATCH_FRAME = ("*** Begin Patch", "*** End Patch", "*** End of File")  # headers naming no file
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
@@ -258,6 +271,22 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
         target = body = _string(args.get("query"))
         flags["network"] = "web search"
         text = f"WebSearch {json.dumps(target)}"
+    elif tool in _BROWSE:
+        body = _json(args)
+        call_hosts |= hosts(body)
+        target = ", ".join(sorted(call_hosts)) or clip(body, TARGET_CHARS)
+        flags["network"] = ", ".join(sorted(call_hosts)) or "web browser"
+        flags.update(host_flags(call_hosts))
+        text = f"{tool} {body}"
+    elif tool in _PUBLISH:
+        # A page hosted elsewhere: what the call sends there leaves the machine. Its own tool, so
+        # never external_tool; reading or listing pages is network access, anything else a send.
+        target, body, prose = _string(args.get("url")), _json(args), True
+        call_hosts |= hosts(body)
+        flags["network"] = target or "hosted artifact"
+        if args.get("action") not in ("read", "list", "open", "get", "query"):
+            flags["network_send"] = flags["network"]
+        text = f"{tool} {body}"
     elif tool in _SUBAGENT:
         target = _string(args.get("subagent_type") or args.get("agent_type") or args.get("name"))
         flags["subagent"] = target
@@ -267,16 +296,23 @@ def describe_call(tool, tool_input, cwd="", home="", real=None, root=None):
         target, body, prose = "", _json(args), True
         if tool.startswith("mcp__"):
             target = "/".join(tool.split("__")[1:3])
-        # A tool that is none of the agent's own is someone else's, whatever its name looks like:
-        # an MCP server's ("mcp__cloud__copy"), or one a client names otherwise ("cloud.copy").
-        # What it does is not read here, so it is marked as an outside tool, weakly, and as one
-        # that changes or moves something when its own name says so (the server's name is not
-        # read). Before, only an "mcp__" name was marked, and a call such as "tablesvc.copy_table"
-        # carried no indicator at all and was never put to a decision.
+        # A tool that is none of the agent's own is marked, weakly, whatever its name looks like;
+        # what it does is not read here. Its origin comes from the name the hook delivered, never
+        # from the call's text. An "mcp__server__tool" name is an MCP server's tool, someone
+        # else's (external_tool): the session contacted it. Any other name not on the roster is
+        # of unknown origin (unknown_tool): it may be a built-in missing from BUILTIN, so it is
+        # marked and asked about but asserts no outside contact and starts no flow chain. Either
+        # is also external_write when its own last name part says it changes or moves something
+        # (the server's name is not read). Before 0700814 only an "mcp__" name was marked, and a
+        # call such as "tablesvc.copy_table" carried no indicator at all. Marking an unknown name
+        # rather than passing it is the recall-first choice: a built-in left off the roster costs
+        # a weak indicator Kai can dismiss, while an outside tool taken for a built-in would
+        # carry none at all.
         if tool and tool not in BUILTIN:
-            flags["mcp"] = target or clip(tool, TARGET_CHARS)
+            known = tool.startswith("mcp__")
+            flags["mcp" if known else "unknown_tool"] = target or clip(tool, TARGET_CHARS)
             if _MCP_WRITE.search(re.split(r"__|[./]", tool)[-1]):
-                flags["mcp_write"] = flags["mcp"]  # by its name, it changes or sends something
+                flags["mcp_write"] = target or clip(tool, TARGET_CHARS)  # by its name
         text = f"{tool} {body}"
         call_hosts |= hosts(body)
     # Whatever else the agent wrote in the call (a command's description, the text an edit
@@ -539,7 +575,7 @@ def output_source(tool, tool_input, call):
     args = tool_input if isinstance(tool_input, dict) else {}
     if tool in _SUBAGENT:
         return "derived", "subagent", call["target"]
-    if tool in ("WebFetch", "WebSearch"):
+    if tool in ("WebFetch", "WebSearch") or tool in _BROWSE:
         return "untrusted", "web", next(iter(sorted(call["hosts"])), "search")
     if tool.startswith("mcp__"):
         return "untrusted", "mcp", call["target"]

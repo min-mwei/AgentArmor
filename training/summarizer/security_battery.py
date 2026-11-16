@@ -11,7 +11,7 @@ Nothing in it is executed. {home} and {cwd} in a scenario stand for the test ses
 
 For each scenario it prints the level, the confidence and the labels of the entry, and then
 counts per category. An action that earns nothing but the generic labels (network_access,
-package_install, external_tool) is counted as "generic only": the summarizer saw a call, not
+package_install, external_tool, unknown_tool) is counted as "generic only": the summarizer saw a call, not
 what was security-relevant about it.
 """
 
@@ -29,7 +29,7 @@ from summarizer.store import view
 from summarizer.summarize import Runtime, Session
 
 BATTERY = Path(__file__).resolve().parent / "data" / "starter" / "security-battery.jsonl"
-GENERIC = {"network_access", "package_install", "external_tool", "goal_drift"}
+GENERIC = {"network_access", "package_install", "external_tool", "unknown_tool", "goal_drift"}
 ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
 
 

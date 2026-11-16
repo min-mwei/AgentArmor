@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from summarizer import facts
-from summarizer.events import chunk_spans, describe_call, field_text, output_blocks
+from summarizer.events import (
+    chunk_spans,
+    describe_call,
+    field_text,
+    output_blocks,
+    output_source,
+)
 from summarizer.facts import (
     hidden_text,
     observables,
@@ -984,3 +990,47 @@ def test_redirections_are_read_as_redirections():
     assert list(shell_segments("2>& 1 a b >&2 c >& out.txt d", redirections=False)) == [
         ["a", "b", "c", "out.txt", "d"]]  # fmt: skip
     assert shell_words("echo hi >&2") == ["echo", "hi"] and shell_words("a 2>& 1 b") == ["a", "b"]
+
+
+# The built-in tools that real Claude Code and Codex sessions call, by the name their hooks deliver.
+# Codex reports its shell as "Bash" and its browser as "webrun"; the rest are Claude Code's.
+ROSTER = {
+    "claude_code": ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep",
+                    "LS", "WebFetch", "WebSearch", "Task", "Agent", "TodoWrite", "TaskCreate",
+                    "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput",
+                    "AskUserQuestion", "ExitPlanMode", "EnterPlanMode", "Skill", "ToolSearch",
+                    "SendMessage", "Monitor", "BashOutput", "KillShell", "SlashCommand",
+                    "ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "EnterWorktree",
+                    "ExitWorktree", "LSP", "ListAgents", "Workflow", "Artifact",
+                    "ArtifactComments", "ArtifactData"],
+    "codex_code": ["Bash", "exec_command", "shell", "local_shell", "apply_patch", "update_plan",
+                   "view_image", "write_stdin", "webrun"],
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("agent", sorted(ROSTER))
+def test_an_agent_s_own_tool_is_never_an_external_tool(agent):
+    # "webrun" (Codex's browser) and Claude Code's task, cron and worktree tools were marked as
+    # someone else's tools, and those named "...Create"/"...Update"/"...Delete" as external writes.
+    home, cwd = "/home/dev", "/home/dev/proj"
+    for tool in ROSTER[agent]:
+        flags = describe_call(tool, {"action": "list"}, cwd, home)["flags"]
+        assert not {"mcp", "mcp_write"} & flags.keys(), tool
+    # Codex's browser reaches the web; its results are lower-trust web content.
+    opened = describe_call(
+        "webrun", {"open": [{"ref_id": "https://docs.example.com/a"}]}, cwd, home
+    )
+    assert opened["flags"]["network"] == "docs.example.com"
+    assert output_source("webrun", {}, opened) == ("untrusted", "web", "docs.example.com")
+    assert describe_call("webrun", {"click": [{"id": 3}]}, cwd, home)["flags"]["network"]
+    # A hosted page is the agent's own tool, and publishing one sends what it holds elsewhere.
+    published = describe_call("Artifact", {"file_path": f"{cwd}/report.html"}, cwd, home)
+    assert {"network", "network_send"} <= published["flags"].keys()
+    listed = describe_call("Artifact", {"action": "list"}, cwd, home)["flags"]
+    assert "network" in listed and "network_send" not in listed
+    # A name that is not on the roster stays someone else's, weakly: recall first.
+    # An MCP server's tool is someone else's (external_tool); any other name is of unknown origin.
+    assert "mcp" in describe_call("mcp__tasks__TaskCreate", {}, cwd, home)["flags"]
+    for tool in ("TaskCreator", "bash", "tracker.create_task"):
+        flags = describe_call(tool, {}, cwd, home)["flags"]
+        assert "unknown_tool" in flags and "mcp" not in flags, tool

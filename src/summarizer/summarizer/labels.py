@@ -70,7 +70,8 @@ ACTION = {
     ),  # who and where am I: common, and the first step of most intrusions
     "network": ("network_access", 0.05),
     "outside_read": ("outside_workspace_read", 0.05),
-    "mcp": ("external_tool", 0.03),
+    "mcp": ("external_tool", 0.03),  # an MCP server's tool: someone else's, contacted
+    "unknown_tool": ("unknown_tool", 0.03),  # no tool the roster knows: origin unknown
 }
 # A flag here says nothing its stronger companion has not already said.
 IMPLIED = {"network": "network_send", "mcp": "mcp_write", "package_install": "untrusted_package"}
