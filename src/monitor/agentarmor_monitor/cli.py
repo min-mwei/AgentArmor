@@ -185,7 +185,10 @@ def _with_session(args, asks, place):
     from .server import Front, InProcess, Relay
 
     url, named = args.kai_session_url, args.kai_session_package_sha256
+    prior = getattr(args, "kai_session_prior_events", False) is True  # the operator's, or off
     if not url and not named:
+        if prior:
+            raise SystemExit("kai: --kai-session-prior-events is for a session model")
         return asks
     if not (url and named):
         raise SystemExit("kai: a session model is an address and its package, both")
@@ -195,7 +198,8 @@ def _with_session(args, asks, place):
         expected = kai_profile(named)
         token = bearer(args.kai_token_file, environment=not loopback(url))
         client = KaiClient(url, args.kai_timeout, args.allow_remote, token, expected)
-        both = Routed(asks, InProcess(Front(Relay(client), "remote", None, expected)))
+        session = InProcess(Front(Relay(client), "remote", None, expected))
+        both = Routed(asks, session, prior_events=prior)
     except ValueError as error:
         raise SystemExit(f"kai: {error}") from None
     try:
@@ -690,6 +694,13 @@ def main(argv=None):
     )
     serve.add_argument(
         "--kai-session-package-sha256", help="the package the model at --kai-session-url must be"
+    )
+    serve.add_argument(
+        "--kai-session-prior-events",
+        action="store_true",
+        help="research, a candidate route that is not adopted: the session checkpoint also "
+        "answers when an event before the current request bears on the call, in this session "
+        "or an earlier one (needs --earlier-sessions on for the account it reads)",
     )
     serve.add_argument("--kai-package", help="load Kai in this server from a local export")
     serve.add_argument(

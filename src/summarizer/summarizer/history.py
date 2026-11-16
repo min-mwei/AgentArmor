@@ -1246,7 +1246,9 @@ def select(mine, call_id, others, home):
                                              places they were looked for: no others
          "unresolved": {key: reason},        sources searched without knowing they are near
          "searched": [...], "excluded": {key: reason},
-         "route": "asked" | "unasked" | "undecided", "route_reason": ...}
+         "route": "asked" | "unasked" | "undecided", "route_reason": ...,
+         "prior": [{"key", "seq", "type", "placement"}, ...]}   what came before the current
+                                             request and bears on the call (prior_events())
 
     Items are in the order they should be shown: by source, then by event. Each is in one
     or more groups. A group of kind "writer" or "statement" is key evidence: it is shown
@@ -1598,6 +1600,7 @@ def select(mine, call_id, others, home):
     else:
         route, reason = ("asked", "marked") if marked else ("unasked", "nothing_earlier_bears")
     return {
+        "prior": prior_events(mine["key"], entries, call, stated, items, bridges),
         "sources": [key for key in searched if any(item["key"] == key for item in items)],
         "items": items,
         "groups": groups,
@@ -1614,6 +1617,35 @@ def select(mine, call_id, others, home):
         "route_reason": reason,
         "objects": objects,
     }
+
+
+def prior_events(key, entries, call, stated, items, bridges):
+    """The events that came before the current request and bear on the call: who they are and
+    where they stand, never what they mean.
+
+    The current request is the user's last prompt before the call. A statement in that very
+    prompt bears on the call it asks for and is no dependence on an earlier turn, so it is not
+    here; a statement of an earlier prompt of this session is ("same_session"), and so is what
+    another session holds that bears on the call ("earlier_session"). The relation is the one
+    select() already found: a session that ends and starts again moves an event from one
+    placement to the other and changes nothing else.
+    """
+    asked = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] < call["seq"]]
+    current = max(asked, default=None)
+    found = [
+        {"key": key, "seq": e["seq"], "type": "prompt", "placement": "same_session"}
+        for e in stated
+        if current is not None and e["seq"] < current
+    ]
+    seen = set()
+    for one in [*items, *bridges]:
+        if one.get("bears") and (one["key"], one["seq"]) not in seen:
+            seen.add((one["key"], one["seq"]))
+            found.append(
+                {"key": one["key"], "seq": one["seq"], "type": one.get("type", "action")}
+                | {"placement": "earlier_session"}
+            )
+    return found
 
 
 # Programs that report a property of the files they name (a digest, metadata, a size, a listing):
@@ -2872,8 +2904,21 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     # So does a lookup whose only finding is a control it passed over: the account is how
     # that is traced, and it puts nothing of the control before the reader (MR146-1).
     passed = found["controls_not_applying"]
+    # What came before the current request and bears on the call, by alias: an identity of the
+    # event, with nothing of its text.
+    aliases = {key: other["alias"] for key, other in parts.items()} | {mine["key"]: mine["alias"]}
+    prior = [
+        {"alias": aliases[one["key"]], "seq": one["seq"], "type": one["type"]}
+        | {"placement": one["placement"]}
+        for one in found["prior"]
+        if one["key"] in aliases
+    ]
     if not items and not why and not found["unresolved"] and not passed and not objects:
-        return view | {"route": found["route"], "route_reason": found["route_reason"]}
+        return view | {
+            "route": found["route"],
+            "route_reason": found["route_reason"],
+            "prior": prior,
+        }
     sources, seen = [], set()
     for source, *_ in items:
         if source["alias"] not in seen:
@@ -2942,4 +2987,5 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         }
     route = "undecided" if why else found["route"]
     reason = "history_incomplete" if why else found["route_reason"]
-    return view | {"text": text, "history": account, "route": route, "route_reason": reason}
+    told = {"text": text, "history": account, "route": route, "route_reason": reason}
+    return view | told | {"prior": prior}

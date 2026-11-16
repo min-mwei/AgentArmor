@@ -1032,6 +1032,7 @@ def test_watching_sends_on_everything_marked_and_the_gate_asks_from_medium_up(sp
         "level": "low",
         "threshold": "medium",
         "host_facts": "none_required",  # the default policy requires none (MR195-1)
+        "session_route": "unasked",  # nothing the user said earlier in the session bounds it
         "reason": "below_threshold",
     }
     (record,) = watched_records("s-low")  # the daemon did ask

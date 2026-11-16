@@ -280,6 +280,22 @@ def judge(
                 routing |= {"eligible": True, "eligible_by": "earlier_sessions"}
             elif route == "undecided" or not earlier_sessions.coverage_known(counts):
                 return unasked("undecided", "earlier_history_unknown", "unmarked_earlier_unknown")
+    if not marked and not with_earlier:
+        # What the user said earlier in this very session bounds the call whether or not other
+        # sessions are looked into: a call that follows a limit, a grant or a revocation the
+        # user stated is put to the decision model (MR283). Only this session is read here, and
+        # nothing is said of any other: no count of sessions, no section, no account.
+        try:
+            mine = earlier_sessions.known(agent, directory.name, summary)
+            route = history.select(mine, call_id, [], str(Path.home())).get("route")
+        except Exception:
+            route = "undecided"
+        routing["session_route"] = route
+        if route == "asked":
+            marked = True
+            routing |= {"eligible": True, "eligible_by": "user_statement"}
+        elif route == "undecided":
+            return unasked("undecided", "session_statements_unknown", "unmarked_statements_unknown")
     if not marked:
         # "Not marked" is a finding only when Summarizer scanned everything it captured.
         if coverage["scanned_all_captured"]:

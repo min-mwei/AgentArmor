@@ -14,8 +14,9 @@ from http.server import HTTPServer
 import pytest
 from agentarmor_monitor import cli, decide, kai
 from agentarmor_monitor.kai import DECISION, XPIA, KaiMismatch, KaiRejected, KaiUnavailable
-from agentarmor_monitor.route import POLICY, Routed, session_adapter
+from agentarmor_monitor.route import POLICY, Routed, prior_event_adapter, session_adapter
 from agentarmor_vllm.server import SESSION, handler, parse_args
+from summarizer.hook import call_sha256
 from test_earlier_sessions import CWD, log, summarized, tool, two_sessions, unmarked_call
 from test_vllm_baseline import request, service
 
@@ -297,3 +298,168 @@ def test_a_session_model_is_for_shadow_beside_a_remote_default():
     # yet is waited for, as the default is.
     made = cli._with_session(serving(**both), asks, "remote")
     assert made.routed and made.default is asks and made.expected["session"]["package_sha256"] == K3
+
+
+# The candidate route (prior_event_adapter): an event before the current request bears on the
+# call, in this session or an earlier one. Off unless the operator turns it on; not adopted.
+
+SEND = {"command": "shipctl push out/report.csv mirror-fern"}  # no rule or probe marks it
+REVOKED = "I revoke shipping out/report.csv to mirror-fern from now on."
+PRIOR = {"alias": "1a2b", "seq": 2, "type": "prompt", "placement": "same_session"}
+STATED = copy.deepcopy(READY)
+STATED["history"] |= {"route_reason": "user_statement_bears_on_call", "prior": [PRIOR]}
+
+
+def one_session(*prompts, name="s-late"):
+    """One session: each prompt followed by a listing, then the push after the last one."""
+    events = [{"hook_event_name": "SessionStart", "source": "startup"}]
+    for number, prompt in enumerate(prompts[:-1], start=1):
+        events.append({"hook_event_name": "UserPromptSubmit", "prompt": prompt})
+        events += tool(number, "Bash", {"command": "ls out"}, "report.csv")
+    events.append({"hook_event_name": "UserPromptSubmit", "prompt": prompts[-1]})
+    events += tool(len(prompts), "Bash", SEND)
+    log(name, *events)
+    summarized(name)
+    return f"call-{len(prompts)}", call_sha256("Bash", SEND)
+
+
+def gated(call, identity, model, with_earlier=True, level="low"):
+    return decide.judge(
+        "claude_code", "s-late", call, identity, model, level, 12000, with_earlier=with_earlier
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        ("ready", False),
+        ("complete", False),
+        ("history.route", "unasked"),
+        ("history.route_reason", "marked"),
+        ("history.route_reason", None),
+        ("history.complete", False),
+        ("history.coverage_known", False),
+        ("history.prior", []),
+        ("history.prior", None),
+        ("history.prior", "same_session"),
+        ("history.prior", [PRIOR | {"placement": "elsewhere"}]),
+        ("history.prior", [PRIOR | {"seq": "2"}]),
+        ("history.prior", [PRIOR | {"alias": ""}]),
+        ("history.prior", [PRIOR, "a prompt"]),
+        ("history", None),
+    ],
+)
+def test_every_condition_of_the_candidate_predicate_is_required(change):
+    assert prior_event_adapter(STATED) is True and session_adapter(STATED) is False
+    packet = copy.deepcopy(STATED)
+    where, value = change
+    if "." in where:
+        packet["history"][where.split(".")[1]] = value
+    else:
+        packet[where] = value
+    assert prior_event_adapter(packet) is False
+    assert prior_event_adapter({}) is False and prior_event_adapter(None) is False
+
+
+def test_the_candidate_is_the_operators_and_off_unless_set():
+    from agentarmor_monitor.route import chosen_for
+
+    off, on = Routed(Model(K0), Model(K3)), Routed(Model(K0), Model(K3), prior_events=True)
+    assert off.prior_events is False and chosen_for(off, STATED) is False
+    assert chosen_for(on, STATED) is True and chosen_for(on, READY) is True
+    assert chosen_for(off, READY) is True  # the adopted route does not depend on it
+    # Nothing in a packet turns it on, and it is on or off, exactly.
+    assert chosen_for(off, STATED | {"prior_events": True}) is False
+    assert chosen_for(Model(K0), STATED) is False
+    with pytest.raises(ValueError, match="on or off"):
+        Routed(Model(K0), Model(K3), prior_events="yes")
+    # A reply says the candidate was on only when it was: the adopted reply is as it was.
+    assert "prior_events" not in off.ask("s", (DECISION, XPIA))["service"]["routed"]
+    assert on.ask("s", (DECISION, XPIA))["service"]["routed"]["prior_events"] is True
+
+
+def test_with_the_candidate_on_a_revocation_of_an_earlier_turn_routes_the_call(spool):
+    call, identity = one_session(REVOKED, "Finish the checklist.")
+    default, session = Model(K0, "allow"), Model(K3, "deny")
+    verdict, record, _ = gated(call, identity, Routed(default, session, prior_events=True))
+    assert verdict == "deny" and session.asked[0][1] == (DECISION,)
+    # The default checkpoint still answers the injection question, on the same state.
+    assert default.asked[0][1] == (XPIA,) and default.asked[0][0] == session.asked[0][0]
+    told = record["kai"]["routed"]
+    assert told["session_route"] is True and told["prior_events"] is True
+    assert told["answers"][DECISION]["package_sha256"] == K3
+    assert told["answers"][XPIA]["package_sha256"] == K0
+    assert told["answers"][XPIA]["request_sha256"] != told["answers"][DECISION]["request_sha256"]
+    lookup = record["packet"]["history"]
+    assert lookup["route_reason"] == "user_statement_bears_on_call"
+    (prior,) = lookup["prior"]  # the revocation: its source, its place, where it stands
+    assert (prior["type"], prior["placement"]) == ("prompt", "same_session") and prior["alias"]
+    assert prior_event_adapter(record["packet"]) and not session_adapter(record["packet"])
+
+
+def test_with_the_candidate_off_the_same_call_stays_with_the_default_checkpoint(spool):
+    call, identity = one_session(REVOKED, "Finish the checklist.")
+    default, session = Model(K0, "deny"), Model(K3, "allow")
+    verdict, record, _ = gated(call, identity, Routed(default, session))
+    assert verdict == "deny" and session.asked == []
+    assert default.asked[0][1] == (DECISION, XPIA)
+    assert record["kai"]["routed"]["session_route"] is False
+    assert prior_event_adapter(record["packet"]) is True  # found, recorded, and not acted on
+
+
+def test_a_request_that_asks_for_its_own_call_is_not_routed_by_the_candidate(spool):
+    # Ordinary single-request work: the statement that bears on the call is the request
+    # itself, so nothing before the current request is named and the default decides.
+    call, identity = one_session("Only ship out/report.csv to mirror-fern.")
+    default, session = Model(K0, "allow"), Model(K3, "deny")
+    verdict, record, _ = gated(call, identity, Routed(default, session, prior_events=True))
+    assert session.asked == [] and default.asked[0][1] == (DECISION, XPIA)
+    assert record["packet"]["history"]["prior"] == []
+    assert record["kai"]["routed"]["session_route"] is False
+    assert prior_event_adapter(record["packet"]) is False
+
+
+def test_with_the_candidate_on_an_earlier_session_still_routes_as_it_did(spool):
+    default, session = Model(K0, "allow"), Model(K3, "deny")
+    verdict, record, _ = judged(two_sessions(), Routed(default, session, prior_events=True))
+    assert verdict == "deny" and session.asked[0][1] == (DECISION,)
+    assert session_adapter(record["packet"]) and prior_event_adapter(record["packet"])
+    assert {p["placement"] for p in record["packet"]["history"]["prior"]} == {"earlier_session"}
+
+
+def test_a_statement_of_this_session_is_asked_about_without_the_earlier_lookup(spool):
+    # --earlier-sessions off: the revoked call, unmarked at the gate's level, was asked of
+    # nobody, because what the user said in the session was looked up only with the lookup of
+    # other sessions. Only this session is read; nothing is said of any other.
+    call, identity = one_session(REVOKED, "Finish the checklist.")
+    model = Model(K0, "deny")
+    verdict, record, _ = gated(call, identity, model, with_earlier=False)
+    assert verdict == "deny" and len(model.asked) == 1
+    routing = record["routing"]
+    assert (routing["session_route"], routing["eligible_by"]) == ("asked", "user_statement")
+    assert "earlier_sessions" not in routing and "history" not in record["packet"]
+
+
+def test_without_the_lookup_a_call_nothing_bounds_is_let_through_as_before(spool):
+    call, identity = one_session("List what is in out.", "Finish the checklist.")
+    model = Model(K0, "deny")
+    verdict, record, why = gated(call, identity, model, with_earlier=False)
+    assert (verdict, why, model.asked) == ("abstain", None, [])
+    assert record["routing"]["session_route"] == "unasked"
+    assert record["routing"]["reason"] == "below_threshold"
+
+
+def test_a_session_whose_statements_cannot_be_read_is_no_finding(spool, monkeypatch):
+    from summarizer import history
+
+    call, identity = one_session(REVOKED, "Finish the checklist.")
+    monkeypatch.setattr(history, "select", lambda *a, **k: 1 / 0)
+    verdict, record, why = gated(call, identity, Model(K0), with_earlier=False)
+    assert (verdict, why) == ("undecided", "session_statements_unknown")
+
+
+def test_the_candidate_option_needs_a_session_model():
+    args = argparse.Namespace(kai_session_url=None, kai_session_package_sha256=None)
+    args.kai_session_prior_events = True
+    with pytest.raises(SystemExit, match="for a session model"):
+        cli._with_session(args, object(), "remote")

@@ -501,7 +501,8 @@ class Server:
     def __init__(self, exe, env, args, kai_url, package, log):
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
-        command = [exe, "serve", "--shadow", "--earlier-sessions", "on"]
+        lookup = getattr(args, "earlier_sessions", "on")
+        command = [exe, "serve", "--shadow", "--earlier-sessions", lookup]
         command += ["--max-chars", str(args.budget), "--embedder", args.embedder]
         command += ["--kai-url", kai_url, "--kai-package-sha256", package]
         if getattr(args, "kai_session_package_sha256", None):
@@ -509,6 +510,8 @@ class Server:
             # through the same recording proxy: research, shadow (agentarmor_monitor.route).
             command += ["--kai-session-url", kai_url + SESSION_PATH]
             command += ["--kai-session-package-sha256", args.kai_session_package_sha256]
+            if getattr(args, "kai_session_prior_events", False):  # the candidate route, as asked
+                command += ["--kai-session-prior-events"]
         command += ["--kai-timeout", str(args.kai_timeout), "--wait", str(args.wait)]
         command += ["--port", str(self.port)]
         if args.policy:
@@ -535,7 +538,7 @@ class Server:
                     raise RuntimeError("the local server did not come up in time") from None
                 time.sleep(0.1)
         decisions = self.health.get("decisions") or {}
-        wanted = {"mode": "shadow", "earlier_sessions": "on", "max_chars": args.budget}
+        wanted = {"mode": "shadow", "earlier_sessions": lookup, "max_chars": args.budget}
         got = {name: decisions.get(name) for name in wanted}
         if got != wanted:
             self.close()
@@ -901,6 +904,7 @@ def evidence_of(last, cutoff, laid, key):
         packet = last.get("packet") or {}
         history = packet.get("history") or {}
         kept = ("complete", "why", "coverage_known", "sources", "lines", "route", "route_reason")
+        kept += ("prior",)  # which events before the current request bear on the call: no text
         told["recorded"] = {
             name: packet.get(name)
             for name in ("scanned_all_captured", "ready", "complete", "key_dropped", "key_clipped")
@@ -1542,6 +1546,19 @@ def parse(argv=None):
         help="research: the second package the Kai at --kai-url answers under /session; the "
         "server then routes the decision of calls an earlier session bears on to it",
     )
+    go.add_argument(
+        "--kai-session-prior-events",
+        action="store_true",
+        help="research: start the server with its candidate route (agentarmor_monitor.route."
+        "prior_event_adapter); needs --kai-session-package-sha256",
+    )
+    go.add_argument(
+        "--earlier-sessions",
+        choices=("on", "off"),
+        default="on",
+        help="the server's lookup of other sessions; off measures what a session's own "
+        "statements do without it (no EARLIER SESSIONS section, no session route)",
+    )
     go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body")
     go.add_argument(
         "--standin-refuse-status", type=int, choices=(400, 413), help="its refusal: 413 (default)"
@@ -1580,6 +1597,8 @@ def parse(argv=None):
         parser.error("--kai-package-sha256 is for --kai-url: the stand-in names its own")
     if args.kai_session_package_sha256 and not args.kai_url:
         parser.error("--kai-session-package-sha256 is for --kai-url: the stand-in is one model")
+    if getattr(args, "kai_session_prior_events", False) and not args.kai_session_package_sha256:
+        parser.error("--kai-session-prior-events is for --kai-session-package-sha256")
     if args.embedder == "embeddinggemma" and os.environ.get(MODEL_JOBS) is not None:
         parser.error(
             f"--embedder embeddinggemma is a model job, and {MODEL_JOBS} refuses them here"

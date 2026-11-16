@@ -54,7 +54,7 @@ from .kai import (
     wire_bytes,
 )
 from .policy import LAYOUT, layout, load_rules, state, writable
-from .route import session_adapter
+from .route import chosen_for
 
 SCHEMA = "agentarmor-detection/v1"
 DETECTIONS = "detections.jsonl"
@@ -126,6 +126,8 @@ def packet(summary, entry, max_chars, sessions=None):
             "lines": len(account.get("items", ())),
         }
         lookup |= {"route": shown.get("route"), "route_reason": shown.get("route_reason")}
+        # What came before the current request and bears on the call (history.prior_events).
+        lookup |= {"prior": shown.get("prior", [])}
         ready = ready and lookup["complete"] and lookup["coverage_known"]
     # A call under decision must be the logged one. Content has no call of its own to verify:
     # the call it came back from is only where the packet is centred.
@@ -506,7 +508,7 @@ def detect(
         earlier = asked.get(key) if asked is not None else refused_here.get(key)
         try:
             if earlier is None:
-                chosen = session_adapter(record["packet"])  # this server's, from the packet
+                chosen = chosen_for(client, record["packet"])  # this server's, from the packet
                 reply = put(client, body, questions, counts, record["last_request"], chosen)
             elif earlier["reply"] is None:  # refused before, and how: nothing is sent again
                 retries["repeats_not_sent"] += 1
