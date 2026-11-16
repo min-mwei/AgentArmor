@@ -683,11 +683,13 @@ def _conditions(summary, target, shown):
     every piece of every result that could settle it reached the reader. A condition is
     unresolved when a piece of a later result is not in the text (one excerpt of a long result
     is not the result), when a later call has no result yet, when no later call has returned at
-    all, or when calls were left out of the summary. shown is what digest() emitted.
+    all, or when a call that may have come after the request was left out of the summary. A
+    call the summary's catalogue places before the request was made before the condition was
+    set and is no later call of it: it stays in the packet's count of what is not shown and
+    leaves the condition as its later calls leave it. shown is what digest() emitted.
     """
     entries = summary["entries"]
     limit = target["seq"] if target else float("inf")
-    left_out = sum(summary["session"]["omitted"]["actions"].values())
     # The pieces of results that are in the text, each with the calls its line ties it to:
     # the call of its own event, and the calls of the sightings the line lists. A piece that
     # many calls returned is shown as one call's result only where its line names that
@@ -718,11 +720,29 @@ def _conditions(summary, target, shown):
             for call, ids, count in required
             if all(call in tied.get(i, ()) for i in ids) and count <= len(ids)
         )
+        left_out = _left_out_after(summary["session"], request["seq"], limit)
         resolved = bool(calls) and seen == total and not pending and not left_out
         found.append({"request": request["seq"], "results": len(calls), "pending": pending})
         found[-1] |= {"results_shown": whole, "pieces": total, "pieces_shown": seen}
         found[-1]["resolved"] = resolved
     return found
+
+
+def _left_out_after(session, said_at, limit):
+    """How many calls the summary left out may have come after the event said_at and before
+    limit: the ones its catalogue (dropped_calls) places there, and every one whose place is
+    not known. The catalogue lists the newest left-out calls in session order, so the ones it
+    does not list all came before its oldest; with no catalogue, or one that does not account
+    for every call left out, no place is known and all of them count."""
+    total = sum(session["omitted"]["actions"].values())
+    listed = [call.get("seq") for call in session.get("dropped_calls") or ()]
+    unlisted = session.get("dropped_calls_not_listed")
+    placed = all(isinstance(seq, int) and not isinstance(seq, bool) for seq in listed)
+    if not total or not placed or unlisted is None or len(listed) + unlisted != total:
+        return total
+    if unlisted and not (listed and min(listed) < said_at):
+        return total
+    return sum(1 for seq in listed if said_at < seq < limit)
 
 
 def _condition_line(conditions, worst=False, elsewhere=()):

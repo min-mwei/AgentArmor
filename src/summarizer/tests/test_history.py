@@ -2398,6 +2398,85 @@ def test_a_session_named_by_the_user_binds_only_to_one_host_identity():
     ]
 
 
+def test_a_setting_of_sessions_names_no_session_and_a_named_session_still_does():
+    """ "The 15-minute session timeout" is which timeout, not which session: it bound to no summary
+    and left a whole history undecided. A session a user names is still reported, whatever it is
+    said to have left, and so is a host's own alias or id that binds to nothing, even before
+    such a word."""
+    others = [{"key": "a", "alias": "892c", "session_id": "tenant:setup"}]
+
+    def unbound(text):
+        return history.unbound_sessions([{"text": text}], others)
+
+    for setting in (
+        "Keep the 15-minute session timeout on the exact console heron-audit.",
+        "Do not change the idle session time-out or the admin session cookie.",
+        "Rotate the gateway session-token and leave our sticky session affinity alone.",
+        "Raise the default session TTL only after the review; keep that browser session store.",
+        "Leave the login session timeouts as they are.",
+    ):
+        assert unbound(setting) == [], setting
+    # A session the summaries do not name, in every wording that was reported before.
+    assert unbound("Use the setup session's limit.") == ["the setup session"]
+    assert unbound("Apply what the intake session decided.") == ["the intake session"]
+    assert unbound("Keep the timeout that the setup session chose.") == ["the setup session"]
+    assert unbound("As the setup session. Timeout stays.") == ["the setup session"]
+    # What a session may have said or left behind still names that session.
+    for left in (
+        "limit",
+        "notes",
+        "log",
+        "policy",
+        "settings",
+        "decision",
+        "timeline",
+        "id",
+        "state",
+        "duration",
+        "key",
+    ):
+        assert unbound(f"Follow the setup session {left}.") == ["the setup session"], left
+    # A name shaped as a host's alias or id is a reference whatever follows; one that binds is not
+    # reported, with or without such a word.
+    assert unbound("Use the 77a4 session timeout.") == ["the 77a4 session"]
+    assert unbound("Use the s:77a4 session token.") == ["the s:77a4 session"]
+    assert unbound("Use the 892c session timeout.") == []
+    assert unbound("Use the 15-minute session timeout of the setup session.") == [
+        "the setup session"
+    ]
+
+
+@pytest.mark.parametrize(
+    "said, reported",
+    [
+        ("until the audit ends; keep the 15-minute session timeout as well", False),
+        ("until the audit ends; keep the timeout the setup session chose as well", True),
+    ],
+    ids=["a setting of sessions", "a session the summaries do not name"],
+)
+def test_only_a_named_session_leaves_the_history_incomplete(starter, runtime, said, reported):
+    """The frozen-file starter's earlier limit with one more clause. A clause about a session
+    setting leaves the account as it was without it; one that names a session no summary names
+    leaves it incomplete and the route undecided, as before."""
+    plain = built(copy.deepcopy(starter["frozen-file-changed-later"]), runtime)[2]
+    campaign = copy.deepcopy(starter["frozen-file-changed-later"])
+    changed = 0
+    for session in campaign["sessions"]:
+        for step in session["steps"]:
+            if "frozen until the audit ends" in str(step.get("prompt", "")):
+                step["prompt"] = step["prompt"].replace("until the audit ends", said)
+                changed += 1
+    assert changed
+    view = built(campaign, runtime)[2]
+    assert ("session_reference_unbound" in view["history"]["why"]) is reported
+    if reported:
+        assert view["history"]["complete"] is False and view["route"] == "undecided"
+    else:
+        assert view["history"]["why"] == plain["history"]["why"]
+        assert view["history"]["complete"] is plain["history"]["complete"]
+        assert view["route"] == plain["route"]
+
+
 def test_a_bearing_statement_naming_a_session_leaves_the_history_incomplete(starter, runtime):
     """MR184, MR185: the frozen-file starter's earlier limit, worded with a session's name, cannot
     be pointed to by any summary: the account says so, the route is undecided, and only contract

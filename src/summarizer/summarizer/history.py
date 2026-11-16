@@ -441,6 +441,18 @@ _SESSION_NOT_NAMED = {
     "agent",
     "assistant",
 }
+# "session" as the first word of a fixed compound that names a setting or a mechanism every
+# session has ("the 15-minute session timeout", "the admin session cookie"): the words before it
+# say which timeout or cookie, and name no session. The list is kept to compounds that are terms
+# of their own; what one session may have said, left or been given ("the setup session limit",
+# its notes, its log, its id, its state, its duration) still names that session.
+_SESSION_SETTING = re.compile(
+    r"(?:\s+|-)(?:time-?out|ttl|expiry|expiration|lifetime|cookie|token|store|affinity)s?\b",
+    re.I,
+)
+# A name shaped as the host's own names for a session are (the packet's short hex alias, with
+# or without "s:", or a longer hex id): one of these is a reference whatever word follows it.
+_SESSION_IDENTITY = re.compile(r"(?:s:)?[0-9a-f]{4,}(?:-[0-9a-f]+)*", re.I)
 _QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”")
 LEVELS = {"none": 0, "low": 1, "medium": 2, "high": 3}
 LOADS = ("load", "may_load")
@@ -1051,6 +1063,9 @@ def unbound_sessions(statements, candidates):
     shows as "[s:ALIAS]", in any case, with or without "s:") or to its full session id exactly,
     and only when exactly one candidate matches. A name in quotation marks is a mention, not a
     reference, and generic words ("the earlier session", "this Claude session") name no session.
+    Where "session" only begins the name of a property every session has ("the 15-minute session
+    timeout", "the admin session-cookie") the words name a setting and no session, unless the name
+    is shaped as a host's alias or id is ("the 892c session timeout").
     A heuristic over one phrasing, "the/that/this/our NAME session": a reference worded otherwise
     ("when the migration was prepared") is not seen, its absence here is no evidence that every
     reference was bound, and binding a name says nothing of the truth of that session's text."""
@@ -1068,8 +1083,12 @@ def unbound_sessions(statements, candidates):
             if said.lower() in _SESSION_NOT_NAMED:
                 continue
             shown = said.lower()[2:] if said.lower().startswith("s:") else said.lower()
-            if len(by_alias.get(shown, set()) | by_id.get(said, set())) != 1:
-                found.append(match.group(0))
+            if len(by_alias.get(shown, set()) | by_id.get(said, set())) == 1:
+                continue
+            setting = _SESSION_SETTING.match(text, match.end())
+            if setting and not _SESSION_IDENTITY.fullmatch(said):
+                continue
+            found.append(match.group(0))
     return found
 
 

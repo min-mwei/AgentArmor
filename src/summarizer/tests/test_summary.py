@@ -2428,3 +2428,169 @@ def test_a_call_that_names_nothing_an_earlier_call_touched_is_the_packet_it_was(
     shown = digest(summarize(events, runtime), 11000, focus=call)
     assert shown["related_results_missing"] == 0 and "strict_mode" not in shown["text"]
     assert shown["key_dropped"] == 0
+
+
+# --- a call left out before a condition was set -----------------------------------------------------
+
+
+OTHER_WORK = (
+    "ruff check src",
+    "git diff --stat",
+    "ls docs",
+    "cat CHANGELOG.md",
+    "git log --oneline -3",
+    "python tools/build_notes.py",
+    "wc -l src/parser.py",
+    "git branch --show-current",
+    "git remote get-url origin",
+)
+
+
+def gated_push(status_at, check=("pytest tests/test_parser.py -q", "11 passed in 0.21s")):
+    """A release session whose push waits on its checks, with one call the summary leaves out:
+    a status command run a second time near the end, so that its first run (before the
+    request when status_at is "before", after it otherwise) says what a kept call says."""
+    status = {"command": "git status --short --branch"}
+    script = Script().start().prompt("Review the parser fix and run the focused checks.")
+    if status_at == "before":
+        script.tool("Bash", status, "## parser-fix\n M src/parser.py")
+    script.prompt("After the checks pass, push the branch parser-fix to origin. Do not force-push.")
+    if status_at == "after":
+        script.tool("Bash", status, "## parser-fix\n M src/parser.py")
+    if check:
+        script.tool("Bash", {"command": check[0]}, check[1])
+    for index, command in enumerate(OTHER_WORK):
+        script.tool("Bash", {"command": command}, f"step {index} recorded")
+    script.tool("Bash", status, "## parser-fix")
+    script.tool("Bash", {"command": "git push origin parser-fix"})
+    return script.events, f"call-{script.calls}"
+
+
+@pytest.fixture
+def unmarked():
+    """A runtime that keeps no call for its marks: which calls a summary keeps is then the
+    latest and the most distinct of the rest, whatever the stand-in encoder happens to mark."""
+    return Runtime(HashEmbedder(), config=Config(max_marked=0), strict=True)
+
+
+def test_a_call_left_out_before_a_condition_was_set_is_not_a_later_call_of_it(unmarked):
+    # The checks ran after the request and their result is in the packet whole; the one call
+    # the summary leaves out came before the request was made. It was counted as a later call
+    # that might settle the condition, and the packet was said to be unresolved.
+    events, call = gated_push("before")
+    summary = summarize(events, unmarked)
+    session = summary["session"]
+    (left,) = session["dropped_calls"]
+    asked = one([e for e in entries(summary, "prompt") if "condition" in e["notes"]])
+    assert sum(session["omitted"]["actions"].values()) == 1 and left["seq"] < asked["seq"]
+    shown = digest(summary, 11000, focus=call)
+    (condition,) = shown["conditions"]
+    assert condition["resolved"] and condition["results"] == condition["results_shown"] == 11
+    assert shown["unresolved_conditions"] == 0 and "UNRESOLVED" not in shown["text"]
+    assert '"11 passed in 0.21s"' in shown["text"]
+    # What is left out is still said, and nothing says the condition is met.
+    assert "actions 1 (Bash 1)" in shown["text"].split("\n")[-1]
+    line = one([text for text in shown["text"].split("\n") if text.startswith("conditions set")])
+    assert (
+        line == f"conditions set in requests #{asked['seq']}: 11 of 11 later results shown in full"
+    )
+
+
+def test_a_call_left_out_after_a_condition_was_set_leaves_it_unresolved(unmarked):
+    events, call = gated_push("after")
+    summary = summarize(events, unmarked)
+    (left,) = summary["session"]["dropped_calls"]
+    asked = one([e for e in entries(summary, "prompt") if "condition" in e["notes"]])
+    assert left["seq"] > asked["seq"]
+    shown = digest(summary, 11000, focus=call)
+    (condition,) = shown["conditions"]
+    assert not condition["resolved"] and shown["unresolved_conditions"] == 1
+    assert "UNRESOLVED: a result that settles one may be missing" in shown["text"]
+
+
+def test_a_check_that_failed_or_never_ran_is_never_said_to_be_settled(unmarked):
+    # The account never judges a result. A check that failed is shown whole, in a packet
+    # that differs from its passing twin's by that result; a check that never came back, and
+    # a push with no call at all after the request, are unresolved.
+    passing, call = gated_push("before")
+    failing, _ = gated_push(
+        "before", check=("pytest tests/test_parser.py -q", "2 failed, 9 passed")
+    )
+    passed = digest(summarize(passing, unmarked), 11000, focus=call)
+    failed = digest(summarize(failing, unmarked), 11000, focus=call)
+    assert '"2 failed, 9 passed"' in failed["text"] and "11 passed" not in failed["text"]
+    assert passed["text"] != failed["text"]
+    assert not any(word in failed["text"] for word in ("condition met", "settled", "satisfied"))
+    # A check run on another object is shown whole as what it is, and nothing ties it to the
+    # condition: which object the condition meant is the reader's to judge.
+    other, _ = gated_push("before", check=("pytest tests/test_lexer.py -q", "4 passed in 0.08s"))
+    elsewhere = digest(summarize(other, unmarked), 11000, focus=call)
+    assert "tests/test_lexer.py" in elsewhere["text"] and "test_parser" not in elsewhere["text"]
+    assert not any(word in elsewhere["text"] for word in ("condition met", "settled", "satisfied"))
+    # The check was proposed and nothing came back for it.
+    script = Script().start().prompt("After the checks pass, push the branch parser-fix to origin.")
+    script.tool("Bash", {"command": "pytest tests/test_parser.py -q"})
+    script.tool("Bash", {"command": "git push origin parser-fix"})
+    pending = digest(summarize(script.events, unmarked), 11000, focus="call-2")
+    assert pending["unresolved_conditions"] == 1 and "UNRESOLVED" in pending["text"]
+    # Nothing was run after the request at all.
+    script = Script().start().prompt("Review the parser fix.")
+    script.tool("Bash", {"command": "pytest tests/test_parser.py -q"}, "11 passed in 0.21s")
+    script.prompt("After the checks pass, push the branch parser-fix to origin.")
+    script.tool("Bash", {"command": "git push origin parser-fix"})
+    unrun = digest(summarize(script.events, unmarked), 11000, focus="call-2")
+    assert unrun["unresolved_conditions"] == 1 and "UNRESOLVED" in unrun["text"]
+
+
+@pytest.mark.parametrize(
+    "change, counted",
+    [
+        (lambda session: None, 0),
+        (lambda session: session.pop("dropped_calls"), 1),
+        (lambda session: session.pop("dropped_calls_not_listed"), 1),
+        (lambda session: session.update(dropped_calls=[]), 1),
+        (lambda session: session["dropped_calls"][0].pop("seq"), 1),
+        (lambda session: session["dropped_calls"][0].update(seq="3"), 1),
+        # One more call left out than the catalogue lists, the listed one after the request:
+        # where the other came is not known.
+        (
+            lambda session: (
+                session["omitted"]["actions"].update(Bash=2),
+                session.update(dropped_calls_not_listed=1),
+                session["dropped_calls"][0].update(seq=9),
+            ),
+            2,
+        ),
+        # The unlisted ones are older than the oldest listed one, which is before the request.
+        (
+            lambda session: (
+                session["omitted"]["actions"].update(Bash=2),
+                session.update(dropped_calls_not_listed=1),
+            ),
+            0,
+        ),
+    ],
+    ids=[
+        "as written",
+        "no catalogue",
+        "no count",
+        "empty",
+        "no place",
+        "odd place",
+        "unplaced",
+        "older",
+    ],
+)
+def test_a_left_out_call_counts_unless_the_catalogue_places_it_before(unmarked, change, counted):
+    from summarizer.text import _left_out_after
+
+    events, call = gated_push("before")
+    summary = summarize(events, unmarked)
+    asked = one([e for e in entries(summary, "prompt") if "condition" in e["notes"]])
+    change(summary["session"])
+    assert _left_out_after(summary["session"], asked["seq"], float("inf")) == counted
+    if not all(isinstance(c.get("seq"), int) for c in summary["session"].get("dropped_calls", ())):
+        return  # no summary is written so; the count alone is held to it
+    shown = digest(summary, 11000, focus=call)
+    assert (shown["unresolved_conditions"] == 0) is (counted == 0)
+    assert ("UNRESOLVED" in shown["text"]) is (counted > 0)
