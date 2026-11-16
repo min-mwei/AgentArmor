@@ -4655,9 +4655,10 @@ def test_slice_three_keeps_the_final_hold_query_in_every_replay(runtime, root_id
     """MR233, on the public training case itself: the benign twin's final hold query ("hold-query
     --case 77", "case=77 hold=none") was missing while its packet was ready in every layout and in
     every replay. Both twins now keep it with its call in all four replays of both layouts, never
-    falsely ready. The turn under the statement that bears on the call is longer than the calls a
-    lookup retrieves of it, so the history says the search did not finish (statement_turn_bounded,
-    MR303 P1) rather than pass as complete."""
+    falsely ready. The turn under the statement that bears on the call is longer than its newest
+    TURN calls: its older calls are retrieved as well (the whole turn, up to TURN_MAX), so the
+    history is complete with every call of the turn shown, where before it said the search did not
+    finish (statement_turn_bounded, MR303 P1)."""
     root = next(
         r for r in read_jsonl(ROOTS / "session-roots-train-003-r1.jsonl") if r["id"] == root_id
     )
@@ -4670,9 +4671,8 @@ def test_slice_three_keeps_the_final_hold_query_in_every_replay(runtime, root_id
             assert scored["elsewhere"] == (2, 2), (agent, variant, scored["support"])
             assert not scored["false_ready"] and scored["forged"] == 0, (agent, variant)
             account = view["history"]
-            assert account["complete"] is False and view["route"] == "undecided", (agent, variant)
-            assert account["why"] == ["lookup_unfinished"], (agent, variant)
-            assert account["unsupported"] == ["statement_turn_bounded"], (agent, variant)
+            assert account["complete"] is True and view["route"] == "asked", (agent, variant)
+            assert "turns_bounded" not in account and "unsupported" not in account, agent
 
 
 # --- MR240-1: another session as it stood when the call was proposed -----------------------------
@@ -5310,23 +5310,23 @@ def test_a_late_check_that_cannot_be_shown_whole_leaves_the_search_unfinished(ru
     assert found["why"] == ["lookup_unfinished"] and found["route"] == "undecided"
 
 
-def test_a_long_turn_shows_its_newest_calls_and_says_the_rest_were_not_retrieved(runtime):
-    # Under a bearing statement the newest TURN calls of the turn are retrieved. The older ones
-    # are counted in the account, and their being left out leaves the search unfinished
-    # (MR303 P1): a count is no evidence that what they returned did not matter.
+def test_a_long_turn_is_shown_whole_up_to_its_cap(runtime):
+    # Under a bearing statement the newest TURN calls of the turn are retrieved in its group and
+    # the older ones, up to TURN_MAX, in a key group of their own ("turn"). Before, the older ones
+    # were only counted, and their being left out left the search unfinished (MR303 P1).
     runs = [
         {"id": f"w{5 + n}", "run": f"pytest tests/test_part{n}.py -q", "output": f"{n} passed"}
         for n in range(history.TURN + 2)
     ]
     runs.append({"id": "w20", "run": "pytest tests/test_lark.py -q", "output": PASSED})
     found, view, shown = selected(_late_check(after=runs), runtime, budget=11000)
-    assert PASSED in shown and '"0 passed"' not in shown and '"1 passed"' not in shown
-    (bounded,) = found["turns_bounded"]
-    assert bounded["key"] == "a" and bounded["calls_not_retrieved"] == 3
-    (told,) = view["history"]["turns_bounded"]
-    assert set(told) == {"alias", "seq", "calls_not_retrieved"} and told["calls_not_retrieved"] == 3
-    assert "statement_turn_bounded" in found["unsupported"] and found["route"] == "undecided"
-    assert view["history"]["complete"] is False and "lookup_unfinished" in view["history"]["why"]
+    assert PASSED in shown and all(f'"{n} passed"' in shown for n in range(history.TURN + 2))
+    (turn,) = [g for g in found["groups"] if ":turn:" in g["id"]]
+    assert turn["key"] is True and turn["kind"] == "turn"
+    older = [i for i in found["items"] if turn["id"] in i["groups"] and i["type"] == "action"]
+    assert len(older) == 3  # seven calls, the newest four in the statement's own group
+    assert found["turns_bounded"] == [] and "statement_turn_bounded" not in found["unsupported"]
+    assert view["history"]["complete"] is True and view["route"] == "asked"
 
 
 FAILED_RUN = "1 failed, 8 passed in 0.21s"
@@ -5634,3 +5634,182 @@ def test_a_packet_exactly_at_its_budget_is_ready_and_one_over_is_not(runtime, ag
     again = builder.build(builder.blind(laid), summaries, size)
     assert len(again["text"]) <= size and again["fits"]
     assert campaigns.score(laid, summaries, again, size)["ready"]
+
+
+# --- The whole turn under a bearing statement (repair of MR303 P1's window) ----------------------
+# Under a statement that bears on the call, the newest TURN calls of its turn were shown and the
+# older ones only counted: every such packet was unfinished, and the count was made before later
+# groups had retrieved some of those very calls (an older call shown by another tie was still
+# counted missing). Now the older calls, up to TURN_MAX, are retrieved with all that came back in
+# a key group of their own, and what is counted is what no item shows once every group is in.
+
+
+def _turn_lines(view, found, key="a"):
+    """The turn calls under the bearing statement of session key, and whether each is shown."""
+    (said,) = [g["id"] for g in found["groups"] if ":under:" in g["id"] and g["key"]]
+    seq = int(said.rsplit(":", 1)[1])
+    alias = next(s["alias"] for s in view["history"]["sources"])
+    shown = {(i["seq"], i["type"]) for i in view["history"]["items"] if i["alias"] == alias}
+    return seq, alias, shown
+
+
+def _sized_ok(view, budget):
+    """The final-size invariant of MR311 P1: never over budget while saying it fits."""
+    assert len(view["text"]) <= budget or not view["fits"], budget
+
+
+_SWEEP = list(range(1400, 11001, 200))
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+@pytest.mark.parametrize("late", [ONLY_IF, NOT_IF])
+@pytest.mark.parametrize("result", [FAILED_RUN, PASSED])
+def test_the_test_result_of_a_bearing_turn_is_shown_or_the_history_is_unfinished(
+    agent, late, result
+):
+    """The Reviewer's control at every budget: a test result followed by four later checks. A
+    complete history shows the result's line; otherwise it is incomplete and undecided. With room
+    the whole turn is shown and the history is complete, for the failing run and its passing twin
+    alike."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    for budget in _SWEEP:
+        _, view, shown = selected(_tested(result, late), runtime, agent=agent, budget=budget)
+        _sized_ok(view, budget)
+        if view["history"]["complete"]:
+            assert result in shown, budget
+        else:
+            assert view["route"] == "undecided", budget
+    found, view, shown = selected(_tested(result, late), runtime, agent=agent, budget=11000)
+    assert result in shown and view["history"]["complete"] is True
+    assert found["turns_bounded"] == [] and "statement_turn_bounded" not in found["unsupported"]
+    assert view["route"] == "asked"
+    assert shown.index(result) < shown.index("git diff --stat HEAD~1")  # chronology kept
+    twin = FAILED_RUN if result == PASSED else PASSED
+    _, other, _ = selected(_tested(twin, late), runtime, agent=agent, budget=11000)
+    assert (other["route"], other["history"]["complete"]) == ("asked", True)
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_turn_call_another_tie_retrieves_is_not_counted_missing(agent):
+    """A turn longer than TURN + TURN_MAX: past the cap are the test run and a fetch whose result
+    names the branch the push names, which another tie retrieves (what a session was told). The
+    fetch is shown with its call and is not counted; the test run is the one call counted. Before,
+    the count was made before that tie ran, and every older call was counted missing."""
+    runtime = Runtime(HashEmbedder(), config=Config(max_actions=200, max_content=200), strict=True)
+    tail = [("git fetch origin", "From origin: lark-fix-23 4be1a07 up to date")]
+    tail += [(f"ls build/part{n}", f"part{n}.o") for n in range(history.TURN + history.TURN_MAX)]
+    found, view, shown = selected(_tested(PASSED, ONLY_IF, tail), runtime, agent, 60000)
+    _sized_ok(view, 60000)
+    assert "From origin: lark-fix-23" in shown and any(":told:" in g["id"] for g in found["groups"])
+    assert PASSED not in shown
+    (bounded,) = found["turns_bounded"]
+    assert bounded["calls_not_retrieved"] == 1
+    assert view["history"]["turns_bounded"][0]["calls_not_retrieved"] == 1
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_an_unrelated_long_turn_under_a_statement_that_does_not_bear_pulls_nothing_in(agent):
+    """A statement that names nothing of the push, then thirty calls: none of them is retrieved,
+    nothing is counted, and the history is complete."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    after = [{"id": "w5", "prompt": "Tidy the notes folder and list what is there."}]
+    after += [
+        {"id": f"n{n}", "run": f"ls notes/day{n}", "output": f"memo{n}.txt"} for n in range(30)
+    ]
+    found, view, shown = selected(_late_check(after=after), runtime, agent, 11000)
+    assert not any(f"memo{n}.txt" in shown for n in range(30))
+    assert found["turns_bounded"] == [] and "statement_turn_bounded" not in found["unsupported"]
+    assert view["history"]["complete"] is True
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_turn_longer_than_the_cap_counts_exactly_the_calls_not_shown(agent):
+    """Thirty ordinary calls after the test run: the newest TURN + TURN_MAX calls of the turn are
+    retrieved with their results, and the account counts exactly the older calls that no line
+    shows: the test run and the two oldest checks. A newer call the summary itself did not keep is
+    said otherwise (statement_turn_not_kept or statement_result_not_kept), never counted here."""
+    runtime = Runtime(HashEmbedder(), config=Config(max_actions=200, max_content=200), strict=True)
+    tail = [(f"ls build/part{n}", f"part{n}.o") for n in range(30)]
+    found, view, shown = selected(_tested(FAILED_RUN, ONLY_IF, tail), runtime, agent, 60000)
+    _sized_ok(view, 60000)
+    turn = 1 + len(tail)
+    assert FAILED_RUN not in shown and "part0.o" not in shown and "part1.o" not in shown
+    (bounded,) = found["turns_bounded"]
+    assert bounded["calls_not_retrieved"] == turn - history.TURN - history.TURN_MAX == 3
+    newer_missing = [n for n in range(2, 30) if f"part{n}.o" not in shown]
+    kept_gaps = {"statement_turn_not_kept", "statement_result_not_kept"}
+    assert len(newer_missing) <= 1 and bool(newer_missing) == bool(
+        kept_gaps & set(found["unsupported"])
+    )
+    assert "statement_turn_bounded" in found["unsupported"] and found["route"] == "undecided"
+    assert view["history"]["complete"] is False
+    # In a summary that keeps fewer calls, those it lists only in its catalogue are said as well.
+    found, _, _ = selected(
+        _tested(FAILED_RUN, ONLY_IF, tail), Runtime(HashEmbedder()), agent, 60000
+    )
+    assert {"statement_turn_not_kept", "statement_turn_bounded"} <= set(found["unsupported"])
+    assert found["turns_bounded"][0]["calls_not_retrieved"] == 3
+
+
+def test_a_catalogue_only_call_among_the_older_calls_is_not_kept(runtime):
+    """A call of the turn older than the newest TURN that the summary lists only in its catalogue
+    cannot be shown: the search is unfinished (statement_turn_not_kept), not counted as bounded."""
+    tail = [(f"ls build/part{n}", f"part{n}.o") for n in range(history.TURN + 2)]
+
+    def catalogued(summaries):
+        summary = summaries["a"]
+        run = next(e for e in summary["entries"] if "pytest" in str(e.get("text")))
+        summary["entries"] = [e for e in summary["entries"] if e.get("call_id") != run["call_id"]]
+        listed = {k: v for k, v in run.items() if k not in ("type", "trust", "indicators")}
+        summary["session"]["dropped_calls"] = [listed]
+
+    found = _selected_after(_tested(FAILED_RUN, ONLY_IF, tail), runtime, catalogued)
+    assert found["unsupported"] == ["statement_turn_not_kept"]
+    assert found["turns_bounded"] == []
+    assert found["why"] == ["lookup_unfinished"] and found["route"] == "undecided"
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_turn_without_room_is_left_out_and_never_complete(agent):
+    """Across a budget sweep, a history called complete shows every call of the turn; where the
+    turn's older calls find no room they are left out whole as key evidence (key_group_left_out),
+    and the packet never says it fits while over its budget."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    tail = [(f"ls build/part{n}", "x" * 120 + f" part{n}.o") for n in range(10)]
+    seen = set()
+    for budget in range(1200, 9001, 150):
+        _, view, shown = selected(_tested(FAILED_RUN, ONLY_IF, tail), runtime, agent, budget)
+        _sized_ok(view, budget)
+        every = FAILED_RUN in shown and all(f" part{n}.o" in shown for n in range(10))
+        if view["history"]["complete"]:
+            assert every, budget
+        else:
+            assert view["route"] == "undecided", budget
+            seen.add("key_group_left_out" in view["history"]["why"])
+    assert True in seen
+    _, view, shown = selected(_tested(FAILED_RUN, ONLY_IF, tail), runtime, agent, 20000)
+    assert view["history"]["complete"] is True
+
+
+def test_a_cut_named_body_of_the_session_s_own_past_is_recorded(runtime):
+    """The session's own part before its request leaves the search unfinished when the body of a
+    named file is not all kept there (named_body_cut): the account says so now, as a record of
+    that part; the route is what it was."""
+    campaign = _named_config("partial")
+    sessions = {s["id"]: s for s in campaign["sessions"]}
+    steps = [*sessions["scope"]["steps"], *sessions["finish"]["steps"]]
+    merged = copy.deepcopy(campaign)
+    merged["sessions"] = [
+        {
+            "id": "finish",
+            **{k: v for k, v in sessions["finish"].items() if k not in ("id", "steps")},
+            "steps": steps,
+        }
+    ]
+    merged["facts"] = [f | {"session": "finish"} for f in merged["facts"]]
+    laid = campaigns.layout(merged, "claude_code")
+    summaries, _ = campaigns.replay(laid, runtime)
+    view = builder.build(builder.blind(laid), summaries, 10000)
+    account = view["history"]
+    assert account["why"] == ["lookup_unfinished"] and view["route"] == "undecided"
+    assert account["unsupported_before_request"] == ["named_body_cut"]

@@ -461,8 +461,11 @@ PLACES = ("domain", "url", "ip", "email")  # observables that are somewhere a ca
 _FROM_CALLS = frozenset({"action_source", "destination_source"})
 UNDER = 3  # writes shown of what a session did under a bound the user stated
 # Under a statement that bears on the call, the newest other calls of that turn shown with all that
-# came back (a test run, a status check); any more are counted and leave the search unfinished.
+# came back (a test run, a status check), in the statement's own group; the older ones, up to
+# TURN_MAX of them, in a key group of their own. Any more are counted, and leave the search
+# unfinished, unless another tie shows them.
 TURN = 4
+TURN_MAX = 24
 OBJECT_EVENTS = 8  # recorded events listed in an object's account, the newest; the rest counted
 EARLIER = 3  # other requests of the project's earlier sessions shown as context, the newest
 NEAR_CHARS, NEAR_EDITS = 8, 2  # a place resembles another this close, in a name this long (_near)
@@ -1633,6 +1636,7 @@ def select(mine, call_id, others, home, within=True):
     bearing = list(stated)  # the user's statements that bear on the call, here and earlier
     waits = []  # (session, request, words): the conditions those of other sessions set
     turns = []  # turns under a bearing statement with older calls not retrieved (_under)
+    pending = []  # (source, statement, calls of its turn past TURN_MAX), counted at the end
     for other, acted in sources:
         summary, there = other["summary"], other["cwd"]
         if not summary["session"]["coverage"]["scanned_all_captured"]:
@@ -1701,9 +1705,8 @@ def select(mine, call_id, others, home, within=True):
             # those calls and counts what it leaves out.
             if within:
                 unsupported += [gap for gap in under["gaps"] if gap not in unsupported]
-                if under["bounded"]:
-                    turns.append({"key": other["key"], "seq": prompt["seq"]})
-                    turns[-1]["calls_not_retrieved"] = under["bounded"]
+                if under["bounded"]:  # counted once every group is in (below)
+                    pending.append((other["key"], prompt["seq"], under["bounded"]))
             taken |= {(item["seq"], item["type"]): item for item in under["items"]}
     # What was observed elsewhere of a thing a bearing statement names by its identifier:
     # "until ticket RV-44 is closed" is held against whatever a session saw of RV-44.
@@ -1850,6 +1853,16 @@ def select(mine, call_id, others, home, within=True):
     # so a producer its summary lists only in its catalogue leaves nothing out of what is shown.
     if _producers(items, others) and within and "producer_not_kept" not in unsupported:
         unsupported.append("producer_not_kept")
+    # The calls of a bearing statement's turn past TURN_MAX, counted now that every group is in:
+    # one another tie retrieved is shown, and is no gap. Any other leaves the search unfinished
+    # (statement_turn_bounded, MR303 P1); how many is said.
+    for key, said_at, beyond in pending:
+        shown_there = shown_in.get(key, {})
+        missing = sum(1 for seq in beyond if (seq, "action") not in shown_there)
+        if missing:
+            turns.append({"key": key, "seq": said_at, "calls_not_retrieved": missing})
+            if "statement_turn_bounded" not in unsupported:
+                unsupported.append("statement_turn_bounded")
     items.sort(key=lambda item: (searched.index(item["key"]), item["seq"]))
     # A module the call loads by name was looked for where its words say, and nowhere else:
     # where else the program finds it is not known, so the search is not finished either.
@@ -1892,10 +1905,14 @@ def select(mine, call_id, others, home, within=True):
     # the request cannot be ruled out any more than one in another session. The cut it reads
     # the session at is its own, though, and what that cut alone could not date is no gap in
     # this session's history (_restarted()).
-    earlier_here, parts = [], _restarted(mine, call) if within else None
+    earlier_here, before_request = [], []
+    parts = _restarted(mine, call) if within else None
     if parts is not None:
         apart = select(parts[1], call_id, [parts[0]], home, within=False)
         why += apart["why"]
+        # Why that reading did not finish, kept as a record of that part: it routes nothing
+        # beyond the "why" it already gave.
+        before_request = list(apart["unsupported"]) if apart["why"] else []
         earlier_here = [
             one
             for one in [*apart["items"], *apart["bridges"]]
@@ -1932,6 +1949,7 @@ def select(mine, call_id, others, home, within=True):
         "route_reason": reason,
         "objects": objects,
         "turns_bounded": turns,
+        "unsupported_before_request": before_request,
     }
 
 
@@ -2974,12 +2992,14 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
     the packet said it was complete. The calls a condition of the statement names (its checks,
     _condition_checks()) are shown by select() in groups of their own whatever came after them,
     so they are kept ahead of the rest; then the newest TURN other calls of the turn are shown
-    as well, each with all that came back, in this group. Older calls of a longer turn are not
-    retrieved; how many is counted ("bounded"), and what they returned is then not known to be
-    beside the point, so that leaves the search unfinished ("statement_turn_bounded", MR303 P1),
-    as does a call among the newest that the summary lists only in its catalogue
-    ("statement_turn_not_kept") or one whose result it does not keep whole
-    ("statement_result_not_kept"). Nothing here says what a result means.
+    as well, each with all that came back, in this group. The older calls of the turn, up to
+    TURN_MAX of them, are retrieved the same way in a key group of their own ("turn"), which
+    competes for room like any key group: shown whole, or left out and said to be. Calls older
+    still are returned in "bounded", and select() counts those that no group of the lookup shows
+    once every group is in: what they returned is then not known to be beside the point, so that
+    leaves the search unfinished ("statement_turn_bounded", MR303 P1), as does a retrieved call
+    that the summary lists only in its catalogue ("statement_turn_not_kept") or one whose result
+    it does not keep whole ("statement_result_not_kept"). Nothing here says what a result means.
 
     A call of the turn that select() already shows only in context groups (keyed names the key
     ones), a classifier run on the call's file say, is a call of the turn all the same: it joins
@@ -2994,7 +3014,7 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
     writes = [e for e in turn if e["type"] == "action" and e.get("tool") in WRITES]
     writes = [e for e in writes if (e["seq"], "action") not in taken][:UNDER]
     group = f"{other['key']}:under:{prompt['seq']}"
-    items, seen, gaps, rest, bounded = [], set(taken), set(), [], 0
+    items, seen, gaps, rest, older, bounded = [], set(taken), set(), [], [], []
     joined = []  # calls of the turn shown only as context so far: key evidence here
     if key:
         joined = [
@@ -3022,12 +3042,18 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
             if prompt["seq"] < (c.get("seq") or 0) < end
         ]
         window = sorted([*rest, *listed], key=lambda e: e["seq"])
-        bounded, window = max(0, len(window) - TURN), window[-TURN:]
-        if bounded:
-            gaps.add("statement_turn_bounded")
-        if any(e.get("listed") for e in window) or session.get("dropped_calls_not_listed"):
+        beyond = window[: max(0, len(window) - TURN - TURN_MAX)]
+        older = window[len(beyond) : max(len(beyond), len(window) - TURN)]
+        window = window[len(beyond) + len(older) :]
+        # The calls past the cap are counted by select() once every group is in: another tie
+        # may show one of them (bounded, below, is their number before that).
+        bounded = [e["seq"] for e in beyond]
+        if any(e.get("listed") for e in (*window, *older)) or session.get(
+            "dropped_calls_not_listed"
+        ):
             gaps.add("statement_turn_not_kept")  # not kept, or kept where it is not known
         rest = [e for e in window if not e.get("listed")]
+        older = [e for e in older if not e.get("listed")]
     calls = {e["call_id"]: e for e in entries if e["type"] == "action" and e.get("call_id")}
     for write in writes:
         linked = (write.get("resembles") or {}).get("seq")
@@ -3051,7 +3077,8 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
                 items.append(_item(other, entry, "shown", groups=[group]))
-    for made in rest:
+    whole_turn = f"{other['key']}:turn:{prompt['seq']}"  # the older calls of the turn
+    for made, into in (*((e, group) for e in rest), *((e, whole_turn) for e in older)):
         # Every piece that came back for it, one the session had seen before included (_arrived).
         came = [
             content
@@ -3065,7 +3092,7 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
         for entry, relation in ((made, "recent"), *((e, "shown") for e in back)):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
-                items.append(_item(other, entry, relation, groups=[group]))
+                items.append(_item(other, entry, relation, groups=[into]))
     shared = False
     for made in joined:
         came = [
@@ -3086,8 +3113,11 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
             elif at not in seen:
                 seen.add(at)
                 items.append(_item(other, entry, relation, groups=[group]))
+    mine = [item for item in items if group in item["groups"]]
     found = [{"id": group, "kind": "recent", "key": bool(key), "bears": False}]
-    found = found if items or shared else []
+    found = found if mine or shared else []
+    if any(whole_turn in item["groups"] for item in items):
+        found.append({"id": whole_turn, "kind": "turn", "key": True, "bears": False})
     return {"items": items, "groups": found, "gaps": sorted(gaps), "bounded": bounded}
 
 
@@ -3455,6 +3485,8 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
             account[name] = value
     if found["by_name"]:
         account["by_name"] = found["by_name"]
+    if found["unsupported_before_request"]:  # why this session's own past did not finish
+        account["unsupported_before_request"] = found["unsupported_before_request"]
     if found["turns_bounded"]:  # older calls of a bearing statement's turn, not retrieved (_under)
         account["turns_bounded"] = [
             {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}
