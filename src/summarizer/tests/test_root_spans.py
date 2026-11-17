@@ -331,3 +331,50 @@ def test_every_located_place_holds_the_source_forward_from_the_layout(played):
                 assert not root_spans.place_agrees(state, [place[0] + 1, place[1] + 1], text)
     assert checked >= 2
     assert root_spans.expected(laid, "b", "ask", "prompt", 0, 18) == (None, "crosses_placeholder")
+
+
+# --- version 3 (root-spans/v3): an argument escaped twice in the session's own line of the call ------------------------
+
+
+def test_an_argument_with_quotes_and_a_backslash_is_escaped_twice_and_reads_back(played):
+    from conftest import HashEmbedder, Runtime
+
+    root, _, _ = played
+    target = 'shelf \\ "west" bin'
+    lookalike = root_spans._json_spelled(target)
+    call = {"target": target, "note": lookalike}
+    made = _structured_root(root, call)
+    laid = campaigns.layout(made)
+    summaries, _ = campaigns.replay(laid, Runtime(HashEmbedder(), strict=True))
+    render = lambda: digest(summaries["b"], 6000)["text"]  # noqa: E731
+    found, state = map_of(render), render()
+    places = {}
+    for key in call:
+        (note,), why = root_spans.pieces(
+            laid, summaries, "b", "mail", "input." + key, 0, len(call[key])
+        )
+        assert why is None
+        where = (note["session"], note["seq"], note["field"], note["start"], note["end"])
+        places[key] = found.locate(*where, ref=note.get("ref"))
+        assert places[key]
+    for place in places["target"]:
+        shown = state[place[0] : place[1]]
+        assert shown == "".join(
+            p for p, _ in root_spans.json_spelling(root_spans._json_spelled(target))
+        )
+        assert not root_spans.place_agrees(state, place, target)  # version 2: refused
+        assert root_spans.place_agrees(state, place, target, version=3)
+        assert root_spans.reads_back(shown, target) == "quote(json)"
+        assert not root_spans.place_agrees(state, [place[0] + 1, place[1] + 1], target, version=3)
+    # a look-alike: the other argument's characters are the target's JSON spelling, so its place
+    # shows the target escaped once more, yet it is that argument, not the target
+    for place in places["note"]:
+        assert root_spans.place_agrees(state, place, lookalike, version=3)
+        assert not root_spans.place_agrees(state, place, target, version=3)
+    assert root_spans.reads_back(root_spans._json_spelled(target), target) in (
+        "quote",
+        "json",
+    )  # one escaping layer
+    assert root_spans.reads_back(root_spans._json_spelled(target) + "x", target) is None
+    with pytest.raises(ValueError):
+        root_spans.reads_back(target, target, version=2)

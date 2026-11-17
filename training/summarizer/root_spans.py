@@ -64,6 +64,11 @@ gives the characters a field's interval becomes under the layout's recorded work
 and home, and rendered_forms() the spellings a rendering may show them in: a regression of
 the map compares a located place with them (forward, from the source), never the reverse.
 
+Version 3 (root-spans/v3) changes only the place check: a string argument the action writes
+as JSON and the session summary then quotes stands escaped twice ("quote(json)"); the check
+admits that composition and, for every form, also undoes it (reads_back) and requires the
+source characters back. Binding (pieces) is version 2's.
+
 The command prints one annotation or one refusal for each line of SPANS.jsonl
 ({"question", "session", "event" (the step's id), "field", "start", "end"}); it replays the
 root with the stand-in encoder, which is enough to find events: which text a packet then
@@ -77,7 +82,7 @@ from typing import NamedTuple
 EVENT = {"prompt": "request", "run": "proposed", "output": "result", "content": "proposed"}
 ENTRY = {"prompt": "prompt", "run": "action", "output": "content", "content": "action"}
 INPUT = "input."  # a field naming one argument of a structured call
-VERSIONS = {1: "root-spans/v1", 2: "root-spans/v2"}
+VERSIONS = {1: "root-spans/v1", 2: "root-spans/v2", 3: "root-spans/v3"}
 PATCH = (
     "apply_patch"  # the codex tool whose action is a patch (events.py writes it without its frame)
 )
@@ -269,24 +274,79 @@ def expected(laid, session, step, field, start, end):
     return text[low:high], None
 
 
-def rendered_forms(text, value=None):
-    """The spellings a rendering may show text in: as it is, as text.quote() spells a session
-    string (sourcemap.spelled), and as JSON spells a string value; for a non-string argument
-    value, its JSON with either separator style."""
+def _quote_spelled(text):
     from summarizer.sourcemap import spelled
 
-    forms = {text, "".join(piece for piece, _ in spelled(text, len(text) + 1))}
-    forms.add("".join(piece for piece, _ in json_spelling(text)))
+    return "".join(piece for piece, _ in spelled(text, len(text) + 1))
+
+
+def _json_spelled(text):
+    return "".join(piece for piece, _ in json_spelling(text))
+
+
+def rendered_forms(text, value=None, version=2):
+    """The spellings a rendering may show text in: as it is, as text.quote() spells a session
+    string (sourcemap.spelled), and as JSON spells a string value; for a non-string argument
+    value, its JSON with either separator style. Version 3 adds the one composition a
+    rendering writes: a string argument JSON-spelled inside the action's own text, and that
+    text quoted again by the session summary ("quote(json)"), so a quotation mark or a
+    backslash in the value stands escaped twice."""
+    return set(_forms(text, value, version).values())
+
+
+def _forms(text, value, version):
+    forms = {"raw": text, "quote": _quote_spelled(text), "json": _json_spelled(text)}
     if value is not None and not isinstance(value, str):
-        forms.add(json.dumps(value, ensure_ascii=False, separators=(", ", ": ")))
+        forms["typed"] = json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+    if version >= 3:
+        forms["quote(json)"] = _quote_spelled(_json_spelled(text))
     return forms
 
 
-def place_agrees(state, place, text, value=None):
+def reads_back(shown, text, value=None, version=3):
+    """The name of the declared rendering rule under which shown is text, checked BOTH ways: the
+    rule's forward spelling of text equals shown, and undoing the rule on shown (one JSON string
+    decoding per escaping layer) gives text back character for character (a typed value: its
+    value). None when no rule does both. Version 3 and later."""
+    if version < 3:
+        raise ValueError("reads_back belongs to root-spans/v3")
+
+    def undo(layers):
+        out = shown
+        for _ in range(layers):
+            try:
+                out = json.loads('"' + out + '"')
+            except ValueError:
+                return None
+        return out
+
+    for name, form in _forms(text, value, version).items():
+        if form != shown:
+            continue
+        if name == "typed":
+            try:
+                back = json.loads(shown)
+            except ValueError:
+                back = None
+            if back == value:
+                return name
+            continue
+        layers = {"raw": 0, "quote": 1, "json": 1, "quote(json)": 2}[name]
+        if undo(layers) == text:
+            return name
+    return None
+
+
+def place_agrees(state, place, text, value=None, version=2):
     """True when the located place of a rendered state holds text in one of its rendered
-    forms (the forward check of a map: from the source, never from the rendering)."""
+    forms (the forward check of a map: from the source, never from the rendering). Version 3
+    also requires the reverse check (reads_back) and admits the quote(json) composition."""
     low, high = place
-    return 0 <= low < high <= len(state) and state[low:high] in rendered_forms(text, value)
+    if not (0 <= low < high <= len(state)):
+        return False
+    if version >= 3:
+        return reads_back(state[low:high], text, value, version) is not None
+    return state[low:high] in rendered_forms(text, value)
 
 
 def pieces(laid, summaries, session, step, field, start, end):
