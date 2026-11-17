@@ -1003,11 +1003,12 @@ def _checks(prompt):
     return found
 
 
-def _condition_checks(entries, said_at, words):
+def _condition_checks(entries, said_at, words, older=False):
     """The calls a session made after a statement whose words name what its condition waits on
     (words, _checks()): the newest MAX_CHECKS, in order. A call is one of them by its own words,
     never by what came back. select() shows each with all that came back; _under() counts them
-    as shown of that statement's turn."""
+    as shown of that statement's turn. With older, the checks before those newest MAX_CHECKS:
+    select() counts the ones no group shows (condition_checks_bounded), never passes them over."""
     made = [
         e
         for e in entries
@@ -1015,7 +1016,9 @@ def _condition_checks(entries, said_at, words):
         and e["seq"] > said_at
         and words & {w.lower() for w in _CHECK_WORD.findall(str(e.get("text") or ""))}
     ]
-    return made[-MAX_CHECKS:] if words else []
+    if not words:
+        return []
+    return made[:-MAX_CHECKS] if older else made[-MAX_CHECKS:]
 
 
 def _keyed(text):
@@ -1472,6 +1475,8 @@ def select(mine, call_id, others, home, within=True):
                                              request and bears on the call (prior_events())
          "turns_bounded": [{"key", "seq", "calls_not_retrieved"}, ...],   older calls of the
                                              turn under a bearing statement, not retrieved
+         "checks_bounded": [{"key", "seq", "checks_not_retrieved"}, ...],   a condition's
+                                             checks older than MAX_CHECKS, not retrieved
          "references_unbound": {"references", "candidates"} | None}   session names in the
                                              bearing statements that bound to no session
 
@@ -1638,7 +1643,9 @@ def select(mine, call_id, others, home, within=True):
     bearing = list(stated)  # the user's statements that bear on the call, here and earlier
     waits = []  # (session, request, words): the conditions those of other sessions set
     turns = []  # turns under a bearing statement with older calls not retrieved (_under)
-    pending = []  # (source, statement, calls of its turn past TURN_MAX), counted at the end
+    pending = []  # (source, statement, calls of its turn past the cap, context), counted at the end
+    checks_pending = []  # (source, statement, its condition's checks older than MAX_CHECKS)
+    checks = []  # statements whose older checks no group shows (condition_checks_bounded)
     for other, acted in sources:
         summary, there = other["summary"], other["cwd"]
         if not summary["session"]["coverage"]["scanned_all_captured"]:
@@ -1716,7 +1723,7 @@ def select(mine, call_id, others, home, within=True):
             if within:
                 unsupported += [gap for gap in under["gaps"] if gap not in unsupported]
                 if under["bounded"]:  # counted once every group is in (below)
-                    pending.append((other["key"], prompt["seq"], under["bounded"]))
+                    pending.append((other["key"], prompt["seq"], under["bounded"], bounded))
             taken |= {(item["seq"], item["type"]): item for item in under["items"]}
     # What was observed elsewhere of a thing a bearing statement names by its identifier:
     # "until ticket RV-44 is closed" is held against whatever a session saw of RV-44.
@@ -1778,6 +1785,12 @@ def select(mine, call_id, others, home, within=True):
                         items.append(taken[at])
                     if group not in taken[at]["groups"]:
                         taken[at]["groups"].append(group)
+            # The checks older than the newest MAX_CHECKS are not retrieved here. One another
+            # group shows is no gap; any other is counted once every group is in (below), and
+            # leaves the search unfinished: an older check may be the one that failed (MR335).
+            older = _condition_checks(entries_there, said_at, words, older=True)
+            if older and within:
+                checks_pending.append((key, said_at, [e["seq"] for e in older]))
     # What this project's earlier sessions observed of a thing the call names by a key and a number
     # (MR233): "case-export delete --case 77" is held against what "hold-query --case 77" brought
     # back, "case=77 hold=none". The same key with the same value, in an earlier call's own words or
@@ -1866,13 +1879,25 @@ def select(mine, call_id, others, home, within=True):
     # The calls of a bearing statement's turn past TURN_MAX, counted now that every group is in:
     # one another tie retrieved is shown, and is no gap. Any other leaves the search unfinished
     # (statement_turn_bounded, MR303 P1); how many is said.
-    for key, said_at, beyond in pending:
+    # The same for a bound shown as context: its calls older than the newest TURN (MR335 P1).
+    for key, said_at, beyond, context in pending:
         shown_there = shown_in.get(key, {})
         missing = sum(1 for seq in beyond if (seq, "action") not in shown_there)
         if missing:
             turns.append({"key": key, "seq": said_at, "calls_not_retrieved": missing})
+            if context:
+                turns[-1]["context"] = True
             if "statement_turn_bounded" not in unsupported:
                 unsupported.append("statement_turn_bounded")
+    # A condition's checks older than the newest MAX_CHECKS that no group shows: counted, and the
+    # search unfinished (condition_checks_bounded, MR335).
+    for key, said_at, older in checks_pending:
+        shown_there = shown_in.get(key, {})
+        missing = sum(1 for seq in older if (seq, "action") not in shown_there)
+        if missing:
+            checks.append({"key": key, "seq": said_at, "checks_not_retrieved": missing})
+            if "condition_checks_bounded" not in unsupported:
+                unsupported.append("condition_checks_bounded")
     items.sort(key=lambda item: (searched.index(item["key"]), item["seq"]))
     # A module the call loads by name was looked for where its words say, and nowhere else:
     # where else the program finds it is not known, so the search is not finished either.
@@ -1960,6 +1985,7 @@ def select(mine, call_id, others, home, within=True):
         "route_reason": reason,
         "objects": objects,
         "turns_bounded": turns,
+        "checks_bounded": checks,
         "unsupported_before_request": before_request,
         # How many session names in the bearing statements bound to no session, and how many
         # sessions of the project a name could have bound to (an alias or an id names one; a
@@ -3031,7 +3057,9 @@ def _under(other, prompt, taken, key=False, keyed=frozenset(), context=False):
     group: a lookup made under "do not make changes yet" is how that session read the limit, and
     the profile map or the page it brought back may be what a reader of this call needs. It is
     context: shown whole or left out and said to be (context_left_out), and nothing of it bears on
-    the route. Older calls of such a turn are not retrieved, as before."""
+    the route. Its older calls, and those the summary lists only in its catalogue, are returned in
+    "bounded" and counted by select() as a bearing turn's are; a result not kept whole is a gap
+    (statement_result_not_kept), as it is under a bearing statement."""
     entries = other["summary"]["entries"]
     later = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] > prompt["seq"]]
     end = min(later, default=float("inf"))
@@ -3087,7 +3115,22 @@ def _under(other, prompt, taken, key=False, keyed=frozenset(), context=False):
             if e["type"] == "action"
             and e["seq"] not in chosen
             and (e["seq"], "action") not in taken
-        ][-TURN:]
+        ]
+        session = other["summary"]["session"]
+        listed = [
+            {"seq": c["seq"], "listed": True}
+            for c in session.get("dropped_calls") or ()
+            if prompt["seq"] < (c.get("seq") or 0) < end
+        ]
+        window = sorted([*rest, *listed], key=lambda e: e["seq"])
+        beyond = window[: max(0, len(window) - TURN)]
+        window = window[len(beyond) :]
+        # The older calls are counted by select() once every group is in, as a bearing turn's
+        # are (MR335 P1): a complete history is never inferred from evidence not retrieved.
+        bounded = [e["seq"] for e in beyond]
+        if any(e.get("listed") for e in window) or session.get("dropped_calls_not_listed"):
+            gaps.add("statement_turn_not_kept")
+        rest = [e for e in window if not e.get("listed")]
     calls = {e["call_id"]: e for e in entries if e["type"] == "action" and e.get("call_id")}
     for write in writes:
         linked = (write.get("resembles") or {}).get("seq")
@@ -3121,8 +3164,8 @@ def _under(other, prompt, taken, key=False, keyed=frozenset(), context=False):
             if by == made.get("call_id") and seq > made["seq"] and not aside
         ]
         back = list({id(content): content for content in came}.values())
-        if key and made.get("result_pieces") not in (None, len(back)):
-            gaps.add("statement_result_not_kept")  # context claims nothing of what is not kept
+        if made.get("result_pieces") not in (None, len(back)):
+            gaps.add("statement_result_not_kept")  # a result not kept is a gap, key or context
         for entry, relation in ((made, "recent"), *((e, "shown") for e in back)):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
@@ -3527,7 +3570,16 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         account["turns_bounded"] = [
             {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}
             | {"calls_not_retrieved": one["calls_not_retrieved"]}
+            | ({"context": True} if one.get("context") else {})
             for one in found["turns_bounded"]
+        ]
+    if found[
+        "checks_bounded"
+    ]:  # a condition's older checks, not retrieved (condition_checks_bounded)
+        account["checks_bounded"] = [
+            {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}
+            | {"checks_not_retrieved": one["checks_not_retrieved"]}
+            for one in found["checks_bounded"]
         ]
     if passed:  # read by an earlier session and shown not to apply: where, and why
         account["controls_not_applying"] = [

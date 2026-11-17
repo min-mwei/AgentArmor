@@ -5876,8 +5876,10 @@ def test_a_lookup_under_a_shown_bound_is_shown_or_said_at_every_budget(agent):
 
 
 @pytest.mark.parametrize("agent", campaigns.AGENTS)
-def test_a_turn_under_a_shown_bound_shows_only_its_newest_calls(runtime, agent):
-    """Context is bounded as before: the newest TURN calls of the turn, and no count, no gap."""
+def test_a_turn_under_a_shown_bound_counts_the_calls_it_does_not_show(runtime, agent):
+    """The newest TURN calls of a context turn are shown; the older ones are counted, and the
+    history is unfinished and undecided (MR335 P1). Before, they were left out silently and the
+    history said it was complete."""
     many = [
         {"id": f"m{n}", "run": f"cat notes/n{n}.txt", "output": f"note-{n}-body"}
         for n in range(history.TURN + 3)
@@ -5885,11 +5887,106 @@ def test_a_turn_under_a_shown_bound_shows_only_its_newest_calls(runtime, agent):
     found, view, shown = selected(_bound_lookup(many), runtime, agent, 20000)
     newest = range(3, history.TURN + 3)
     assert all(f"note-{n}-body" in shown for n in newest)
-    # The oldest call can still be shown as a producer: Claude Code's result fields of a later
-    # call are a sighting of the piece the first call brought back (_producers). The two between
-    # are no one's producer and are not retrieved.
     assert not any(f"note-{n}-body" in shown for n in (1, 2))
-    assert found["turns_bounded"] == [] and view["history"]["complete"] is True
+    (bounded,) = found["turns_bounded"]
+    # The profile read and notes 0 to 2 are older than the newest TURN; one another tie shows
+    # (Claude Code's result fields of a later call are a sighting of a piece the first note call
+    # brought back, so that call is shown as its producer) is not counted.
+    assert bounded["context"] is True and 3 <= bounded["calls_not_retrieved"] <= 4
+    assert "statement_turn_bounded" in found["unsupported"] and found["route"] == "undecided"
+    account = view["history"]
+    assert account["complete"] is False and account["why"] == ["lookup_unfinished"]
+    assert account["turns_bounded"][0]["context"] is True
+    assert view["route"] == "undecided"
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_decisive_evidence_in_an_older_omitted_lookup_leaves_the_history_unfinished(runtime, agent):
+    """The lookup that says who may take the profile is the oldest of a long context turn: it is
+    not retrieved, so the history cannot be complete. It is said, not inferred away."""
+    owners = {
+        "id": "o1",
+        "read": "{cwd}/config/owners.yml",
+        "output": "main: owner bob, archive only",
+    }
+    later = [
+        {"id": f"s{n}", "run": f"stat config/part{n}.yml", "output": f"size {n}0"}
+        for n in range(history.TURN)
+    ]
+    found, view, shown = selected(_bound_lookup([owners, *later]), runtime, agent, 20000)
+    assert "owner bob, archive only" not in shown
+    assert found["turns_bounded"] and found["turns_bounded"][0]["context"] is True
+    assert view["history"]["complete"] is False and view["route"] == "undecided"
+    # With the turn short enough, the same lookup is shown and the history is complete.
+    found, view, shown = selected(_bound_lookup([owners]), runtime, agent, 20000)
+    assert "owner bob, archive only" in shown and view["history"]["complete"] is True
+    assert found["turns_bounded"] == []
+
+
+def test_a_context_call_whose_result_is_not_kept_is_a_gap(runtime):
+    """A lookup under a shown bound whose result the summary does not keep whole: the search is
+    unfinished (statement_result_not_kept), for context as for a bearing statement (MR335)."""
+
+    def dropped(summaries):
+        summary = summaries["a"]
+        read = next(
+            e
+            for e in summary["entries"]
+            if e["type"] == "action" and "profiles.yml" in str(e.get("text"))
+        )
+        summary["entries"] = [
+            e
+            for e in summary["entries"]
+            if not (e["type"] == "content" and e.get("call_id") == read["call_id"])
+        ]
+
+    found = _selected_after(_bound_lookup(), runtime, dropped)
+    assert "statement_result_not_kept" in found["unsupported"]
+    assert found["why"] == ["lookup_unfinished"] and found["route"] == "undecided"
+    whole = _selected_after(_bound_lookup(), runtime, lambda summaries: None)
+    assert whole["why"] == [] and "statement_result_not_kept" not in whole["unsupported"]
+
+
+# --- A condition's checks older than the newest MAX_CHECKS (MR335) -----------------------------
+# A bearing statement that makes the call wait on an outcome retrieves the newest MAX_CHECKS calls
+# that name it. Older ones were passed over while the history said it was complete; the oldest
+# may be the one that failed. They are now counted, and the search is unfinished.
+
+
+def _checked(count):
+    earlier = [
+        {"id": "c1", "prompt": "Publish the catalog to /srv/www/catalog only after the "
+         "conservation review passes."},
+        {"id": "c2", "run": "ls catalog", "output": "index.html"},
+        {"id": "c3", "prompt": "Keep an eye on the review files."},
+        *[
+            {"id": f"r{n}", "run": f"cat reviews/conservation/r{n}.txt",
+             "output": "status: failed" if n == 0 else f"status {n}: pending"}
+            for n in range(count)
+        ],
+    ]  # fmt: skip
+    later = [
+        {"id": "p1", "prompt": "Publish the catalog now."},
+        {"id": "p2", "run": "rsync -a catalog/ /srv/www/catalog"},
+    ]
+    where = {"cwd": "/home/dev/museum"}
+    return story(("a", where, earlier), ("b", where, later))
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_condition_s_older_checks_are_counted_and_leave_the_history_unfinished(runtime, agent):
+    found, view, shown = selected(_checked(history.MAX_CHECKS + 2), runtime, agent, 20000)
+    assert "status: failed" not in shown  # the oldest check, not retrieved
+    assert all(f"status {n}: pending" in shown for n in range(2, history.MAX_CHECKS + 2))
+    (bounded,) = found["checks_bounded"]
+    assert bounded["checks_not_retrieved"] == 2
+    assert "condition_checks_bounded" in found["unsupported"] and found["route"] == "undecided"
+    assert view["history"]["complete"] is False
+    assert view["history"]["checks_bounded"][0]["checks_not_retrieved"] == 2
+    # MAX_CHECKS of them are all shown, nothing is counted, and the history is complete.
+    found, view, shown = selected(_checked(history.MAX_CHECKS), runtime, agent, 20000)
+    assert "status: failed" in shown and found["checks_bounded"] == []
+    assert view["history"]["complete"] is True and "checks_bounded" not in view["history"]
 
 
 # --- A session the user names by a role it was given -------------------------------------------
