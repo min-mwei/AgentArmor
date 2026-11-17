@@ -27,7 +27,7 @@ from agentarmor_monitor import escalate, panels  # noqa: E402
 from agentarmor_monitor.policy import load_rules, packet_room, state  # noqa: E402
 
 STARTER = Path(TRAINING) / "data" / "starter" / "campaigns-v2.jsonl"
-BUDGET = 3000
+BUDGET = 4000  # 3,000 until agentarmor-state/v4, whose interpretation is 974 characters longer
 
 
 def test_the_room_is_what_the_rules_and_the_call_leave_and_a_packet_of_it_fills_the_state():
