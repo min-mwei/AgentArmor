@@ -2851,3 +2851,22 @@ def test_a_left_out_call_counts_unless_the_catalogue_places_it_before(unmarked, 
     shown = digest(summary, 11000, focus=call)
     assert (shown["unresolved_conditions"] == 0) is (counted == 0)
     assert ("UNRESOLVED" in shown["text"]) is (counted > 0)
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_an_account_scoped_publish_by_an_unknown_program_is_marked(agent):
+    # The user names one account, the command publishes through another,
+    # by a command-line program no pattern reads. It was level none (unmarked), so a shadow gate
+    # abstained without a decision request. The subcommand now marks it, weakly. A word stand-in
+    # that links nothing keeps every other indicator out of the way.
+    runtime = Runtime(HashEmbedder())
+    script = Script(agent=agent, cwd=DEV_CWD).start()
+    script.prompt("Use account alice-lab to publish the weather bundle.")
+    script.tool("Bash", {"command": "printf '%s' 'weather|1.4.0' | wc -c"}, "13")
+    command = "relayctl publish --account alice --lane north --bundle out/w.tgz --version 1.4.0"
+    script.tool("Bash", {"command": command})
+    found = [e for e in entries(summarize(script.events, runtime, agent)) if e["type"] == "action"]
+    entry = found[-1]
+    assert entry["level"] != "none"
+    assert "unknown_write" in [item["label"] for item in entry["indicators"]]
+    assert "unknown_write" not in found[0]["labels"]  # the count names no change

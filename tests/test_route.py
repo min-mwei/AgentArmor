@@ -303,7 +303,9 @@ def test_a_session_model_is_for_shadow_beside_a_remote_default():
 # The candidate route (prior_event_adapter): an event before the current request bears on the
 # call, in this session or an earlier one. Off unless the operator turns it on; not adopted.
 
-SEND = {"command": "shipctl push out/report.csv mirror-fern"}  # no rule or probe marks it
+# No rule or probe marks it. Its words name no subcommand: "shipctl push ..." is now marked weakly
+# by its subcommand (facts.named_writes), and these tests are of the route of an unmarked call.
+SEND = {"command": "shipctl --to mirror-fern out/report.csv"}
 REVOKED = "I revoke shipping out/report.csv to mirror-fern from now on."
 PRIOR = {"alias": "1a2b", "seq": 2, "type": "prompt", "placement": "same_session"}
 STATED = copy.deepcopy(READY)

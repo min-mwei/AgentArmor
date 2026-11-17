@@ -1470,8 +1470,10 @@ def select(mine, call_id, others, home, within=True):
          "route": "asked" | "unasked" | "undecided", "route_reason": ...,
          "prior": [{"key", "seq", "type", "placement"}, ...],   what came before the current
                                              request and bears on the call (prior_events())
-         "turns_bounded": [{"key", "seq", "calls_not_retrieved"}, ...]}   older calls of the
+         "turns_bounded": [{"key", "seq", "calls_not_retrieved"}, ...],   older calls of the
                                              turn under a bearing statement, not retrieved
+         "references_unbound": {"references", "candidates"} | None}   session names in the
+                                             bearing statements that bound to no session
 
     What this session itself did before the current request is held to the call by the very same
     reading: the session is taken as the two it would be after a restart at that request
@@ -1697,7 +1699,15 @@ def select(mine, call_id, others, home, within=True):
                     plain.append((other, prompt, group))
                 continue
             keyed = {group["id"] for group in groups if group.get("key")}
-            under = _under(other, prompt, taken, key=same_project and named, keyed=keyed)
+            # A bound on something else is shown with what that session then did, as context: the
+            # lookups made under "do not change anything yet" are how the limit was read then
+            # (before, a map of which name was which, or a page with a directive in it, brought
+            # back by a call made under a bound the packet showed, was left out while the packet
+            # said it was complete, because only that turn's writes were shown).
+            bounded = same_project and not named and _bound(prompt)
+            under = _under(
+                other, prompt, taken, key=same_project and named, keyed=keyed, context=bounded
+            )
             items += under["items"]
             groups += under["groups"]
             # What that turn did not show leaves the search unfinished. Not so for this session's
@@ -1879,7 +1889,8 @@ def select(mine, call_id, others, home, within=True):
         for other in others
         if other["cwd"] == cwd and _known(namespace) and other["namespace"] == namespace
     ]
-    if unbound_sessions(bearing, identities):
+    unbound = unbound_sessions(bearing, identities)
+    if unbound:
         why.append("session_reference_unbound")
     # The account of each file the call names, from the recorded sessions of its project (MR196);
     # one whose recorded calls are not all kept or searched leaves the history unfinished (MR198-1).
@@ -1950,6 +1961,13 @@ def select(mine, call_id, others, home, within=True):
         "objects": objects,
         "turns_bounded": turns,
         "unsupported_before_request": before_request,
+        # How many session names in the bearing statements bound to no session, and how many
+        # sessions of the project a name could have bound to (an alias or an id names one; a
+        # name the user gave a session, "the design session", binds to none). Counts only:
+        # the words are the user's and stay in the packet's own lines.
+        "references_unbound": (
+            {"references": len(unbound), "candidates": len(identities)} if unbound else None
+        ),
     }
 
 
@@ -2979,7 +2997,7 @@ def _alike(prompt, there, named, cwd, home):
     return False
 
 
-def _under(other, prompt, taken, key=False, keyed=frozenset()):
+def _under(other, prompt, taken, key=False, keyed=frozenset(), context=False):
     """What that session did under a request: the first writes it proposed before the next
     request, each with the lower-trust content shown before it in that turn and what came
     back. In a group of its own, and tied to nothing: "recent" and "shown". It is context,
@@ -3006,7 +3024,14 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
     this group with all that came back, so that under a budget the newest calls of the turn never
     take its room (development file 003 r5: a classifier's verdict was left out as context while
     later calls of the turn were shown as key). Like a check the condition names it is shown
-    whatever came after it and is not counted against TURN."""
+    whatever came after it and is not counted against TURN.
+
+    Under a bound the user stated on something else (context, not key), the newest TURN other
+    calls of the turn are shown too, each with all that came back, in the statement's own context
+    group: a lookup made under "do not make changes yet" is how that session read the limit, and
+    the profile map or the page it brought back may be what a reader of this call needs. It is
+    context: shown whole or left out and said to be (context_left_out), and nothing of it bears on
+    the route. Older calls of such a turn are not retrieved, as before."""
     entries = other["summary"]["entries"]
     later = [e["seq"] for e in entries if e["type"] == "prompt" and e["seq"] > prompt["seq"]]
     end = min(later, default=float("inf"))
@@ -3054,6 +3079,15 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
             gaps.add("statement_turn_not_kept")  # not kept, or kept where it is not known
         rest = [e for e in window if not e.get("listed")]
         older = [e for e in older if not e.get("listed")]
+    elif context:
+        chosen = {e["seq"] for e in writes}
+        rest = [
+            e
+            for e in turn
+            if e["type"] == "action"
+            and e["seq"] not in chosen
+            and (e["seq"], "action") not in taken
+        ][-TURN:]
     calls = {e["call_id"]: e for e in entries if e["type"] == "action" and e.get("call_id")}
     for write in writes:
         linked = (write.get("resembles") or {}).get("seq")
@@ -3087,8 +3121,8 @@ def _under(other, prompt, taken, key=False, keyed=frozenset()):
             if by == made.get("call_id") and seq > made["seq"] and not aside
         ]
         back = list({id(content): content for content in came}.values())
-        if made.get("result_pieces") not in (None, len(back)):
-            gaps.add("statement_result_not_kept")
+        if key and made.get("result_pieces") not in (None, len(back)):
+            gaps.add("statement_result_not_kept")  # context claims nothing of what is not kept
         for entry, relation in ((made, "recent"), *((e, "shown") for e in back)):
             if (entry["seq"], entry["type"]) not in seen:
                 seen.add((entry["seq"], entry["type"]))
@@ -3487,6 +3521,8 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         account["by_name"] = found["by_name"]
     if found["unsupported_before_request"]:  # why this session's own past did not finish
         account["unsupported_before_request"] = found["unsupported_before_request"]
+    if found["references_unbound"]:  # session names that bound to no session (counts only)
+        account["references_unbound"] = found["references_unbound"]
     if found["turns_bounded"]:  # older calls of a bearing statement's turn, not retrieved (_under)
         account["turns_bounded"] = [
             {"alias": parts[one["key"]]["alias"], "seq": one["seq"]}

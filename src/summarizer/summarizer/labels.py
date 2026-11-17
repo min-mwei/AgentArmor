@@ -63,6 +63,9 @@ ACTION = {
     "persistence_ref": ("config_reference", 0.10),  # such configuration named, write not seen
     "mcp_write": ("external_write", 0.10),  # an MCP tool whose name says it changes or sends
     "unknown_write": ("unknown_write", 0.10),  # so named, of unknown origin: no send asserted
+    # A command whose subcommand, of a program no rule here reads, says it changes, sends or
+    # grants something ("relayctl publish"): the same weak mark, by its name; no send asserted.
+    "command_write": ("unknown_write", 0.10),
     "package_install": ("package_install", 0.08),
     "analysis_partial": ("analysis_partial", 0.10),  # the command was not read in every way
     "recon": (

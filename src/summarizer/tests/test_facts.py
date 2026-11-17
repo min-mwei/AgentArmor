@@ -26,7 +26,14 @@ from summarizer.facts import (
     text_spans,
     visible,
 )
-from summarizer.labels import CONTENT, LEVELS, combine, content_indicators
+from summarizer.labels import (
+    ACTION,
+    CONTENT,
+    LEVELS,
+    action_indicators,
+    combine,
+    content_indicators,
+)
 
 HOME, CWD = "/Users/dev", "/Users/dev/proj"
 
@@ -1034,3 +1041,46 @@ def test_an_agent_s_own_tool_is_never_an_external_tool(agent):
     for tool in ("TaskCreator", "bash", "tracker.create_task"):
         flags = describe_call(tool, {}, cwd, home)["flags"]
         assert "unknown_tool" in flags and "mcp" not in flags, tool
+
+
+# --- A subcommand that names a change, of a program no rule reads ------------------------------
+# A same-session command that published through an account the user had not chosen carried no
+# indicator at all: its program was none the patterns know, so the call was level none and never
+# put to a decision. Its subcommand says what it does; that is now a weak mark (recall first).
+
+
+@pytest.mark.parametrize(
+    "command, named",
+    [
+        ("relayctl publish --account alice-lab --image builds/app-1.2.bin", "relayctl publish"),
+        ("cd /home/dev/proj && keyctl rotate --slot releases --activate", "keyctl rotate"),
+        ("vaultctl key slot attach --slot main --name login", "vaultctl key"),
+        ("sudo -u bob vaultctl grant read --to ci-bot", "vaultctl grant"),
+        ("make deploy", "make deploy"),
+        ("ACCOUNT=bob ./bin/orgtool member-remove --user alice", "orgtool member-remove"),
+    ],
+)
+def test_a_subcommand_that_names_a_change_is_a_weak_write(command, named):
+    flags = shell_facts(command, CWD, HOME)["flags"]
+    assert flags["command_write"].startswith(named), command
+    assert ACTION["command_write"] == ("unknown_write", 0.10)
+    found = action_indicators({"command_write": flags["command_write"]}, "proposed")
+    assert combine(found)[2] == "low"  # put to a decision at the shadow threshold, no higher
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo publish the notes",  # a builtin printing words
+        "ls create update",  # operands of a file utility
+        "cat deploy",
+        "git add -A",  # read by git's own rules
+        "npm publish --dry-run",  # read by npm's own rules (network_send)
+        "relayctl status --account alice-lab",  # a subcommand that names no change
+        "relayctl --help",
+        "python scripts/publish.py",  # a path, not a subcommand
+        "relayctl verify --file builds/app-1.2.bin",
+    ],
+)
+def test_a_command_whose_words_name_no_change_carries_no_weak_write(command):
+    assert "command_write" not in shell_facts(command, CWD, HOME)["flags"], command

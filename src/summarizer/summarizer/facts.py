@@ -718,6 +718,73 @@ def _head(words):
     return None
 
 
+# What a program's subcommand says it does when it changes, sends, grants or takes away something:
+# a word of the subcommand (its parts by - _ :) spelled as one of these. The same idea as an
+# unknown tool's name (events._MCP_WRITE), read on a command line.
+_SUBCOMMAND_WRITE = re.compile(
+    r"create|update|upsert|send|post|write|push|upload|publish|deploy|release|promote|rollout"
+    r"|delete|remove|destroy|drop|purge|revoke|grant|assign|attach|detach|rotate|share|transfer"
+    r"|export|import|sync|copy|move|migrate|restore|replicate|insert|add|set|put|apply|submit"
+    r"|invite|enable|disable|merge|edit|reply|comment|rollback|activate|deactivate",
+    re.I,
+)
+# Command words that are no program with subcommands of its own: shell builtins, and the standard
+# file and text utilities, whose operands are files, patterns or words to print ("echo publish",
+# "ls create"). Programs some pattern above reads (_HEADS) are read by their own rules.
+_NO_SUBCOMMAND = frozenset(
+    ". : [ [[ alias bg cd declare echo eval export false fg hash help jobs local popd print printf "
+    "pushd read readonly return set shift source test trap true type typeset ulimit umask unalias "
+    "unset wait whence which basename cat chgrp chmod chown cmp comm cp cut date dd df diff "
+    "dirname du file find fmt grep head info install less ln ls man md5sum mkdir mktemp more mv "
+    "nl od paste pwd readlink realpath rg rm rmdir sed seq sha1sum sha256sum shasum sleep sort "
+    "split stat tail tar tee touch tr tree uniq wc xxd zcat awk jq yq".split()
+)
+_PLAIN_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_:-]*")
+_SUBCOMMAND_WORDS = 3  # a subcommand may be nested ("tool profile credential add")
+
+
+def named_writes(command):
+    """The subcommands of a command line that say they change, send, grant or take away something,
+    of a program no pattern here has rules for: "relayctl publish --account x", "vaultctl key
+    slot attach ...". Each is read from the run of plain words right after the command word
+    (wrappers, assignments and options before it left out), up to _SUBCOMMAND_WORDS of them and
+    up to the first option, path or value. A name, not an observed effect: whether anything was
+    changed is never claimed, and what it acts on is for whoever decides (recall first: the call
+    is marked weakly instead of passed unmarked)."""
+    found = []
+    for words in shell_segments(command, split_assignments=False, redirections=False):
+        at, wrapper = 0, None
+        while at < len(words):  # as _head() reads it: a wrapper's option may take a value
+            word, name = words[at], os.path.basename(words[at])
+            if word.startswith("-"):
+                takes = "=" not in word and word in _WRAPPER_VALUED.get(wrapper, ())
+                at += 2 if takes else 1
+            elif name in _WRAPPER_SET:
+                wrapper, at = name, at + 1
+            elif "=" in word and not word.startswith(("/", ".", "~")):
+                at += 1
+            else:
+                break
+        if at >= len(words):
+            continue
+        name = os.path.basename(words[at])
+        if name in _HEADS or name in _NO_SUBCOMMAND or not _PLAIN_WORD.fullmatch(name):
+            continue
+        run = []
+        for word in words[at + 1 : at + 1 + _SUBCOMMAND_WORDS]:
+            if not _PLAIN_WORD.fullmatch(word):
+                break
+            run.append(word)
+        if any(
+            _SUBCOMMAND_WRITE.fullmatch(part)
+            for word in run
+            for part in re.split(r"[-_:]", word)
+            if part
+        ):
+            found.append(" ".join([name, *run]))
+    return found
+
+
 def option_free(command):
     """(text, partial): the command again with the options before its subcommand left out.
 
@@ -824,6 +891,9 @@ def shell_facts(command, cwd="", home=""):
             flags[flag] = " ".join(match.group().split()).lstrip(";&|(` ")[:80]
     if "network_send" in flags:
         flags.setdefault("network", flags["network_send"])
+    named = named_writes(command)
+    if named:
+        flags["command_write"] = "; ".join(named)[:80]
     reached = hosts(command) | set(_ADDRESS.findall(command))
     for flag, basis in host_flags(reached).items():
         flags.setdefault(flag, basis)

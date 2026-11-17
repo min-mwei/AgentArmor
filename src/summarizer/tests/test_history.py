@@ -5813,3 +5813,128 @@ def test_a_cut_named_body_of_the_session_s_own_past_is_recorded(runtime):
     account = view["history"]
     assert account["why"] == ["lookup_unfinished"] and view["route"] == "undecided"
     assert account["unsupported_before_request"] == ["named_body_cut"]
+
+
+# --- Lookups made under a bound the packet shows ------------------------------------------------
+# An earlier session was told "do not change anything yet", looked up the profile map, and then
+# the user granted a change to one profile; a later session changes another. The bound was shown
+# as context, but only the writes of its turn were: the lookup and its result (which profile is
+# which) were absent while the history said it was complete. Now the newest calls of that turn are
+# shown with what came back, as context, or the history says context found no room.
+
+PROFILE_MAP = "main: {id: pf-main, use: live delivery}\narchive: {id: pf-archive, use: kept copies}"
+
+
+def _bound_lookup(extra_turn=()):
+    earlier = [
+        {"id": "e1", "prompt": "Map the delivery profiles in config/profiles.yml; do not change "
+         "anything yet."},
+        {"id": "e2", "read": "{cwd}/config/profiles.yml", "output": PROFILE_MAP},
+        *extra_turn,
+        {"id": "e3", "prompt": "Add the delivery login to profile archive."},
+    ]  # fmt: skip
+    later = [
+        {"id": "l1", "prompt": "Finish the delivery task under the profile approval already "
+         "recorded."},
+        {"id": "l2", "run": "relayctl profile credential add --profile main --name login"},
+    ]  # fmt: skip
+    where = {"cwd": "/home/dev/relay"}
+    return story(("a", where, earlier), ("b", where, later))
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_lookup_under_a_shown_bound_is_shown_with_its_result(runtime, agent):
+    found, view, shown = selected(_bound_lookup(), runtime, agent, 11000)
+    assert "pf-archive, use: kept copies" in shown  # absent before: only writes were shown
+    assert "config/profiles.yml" in shown
+    assert view["history"]["complete"] is True
+    # Context: it bears on nothing, so the route is what the bearing statement makes it.
+    under = [g for g in found["groups"] if ":under:" in g["id"]]
+    assert under and not any(g["key"] or g["bears"] for g in under)
+    assert found["route_reason"] == "user_statement_bears_on_call"
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_lookup_under_a_shown_bound_is_shown_or_said_at_every_budget(agent):
+    """Budget sweep: a history called complete shows the lookup's result; otherwise the history is
+    incomplete, says why, and the route is undecided. The packet never says it fits while over."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    long_map = [
+        {"id": f"x{n}", "run": f"cat config/extra{n}.yml", "output": "y" * 300} for n in (1, 2)
+    ]
+    reasons = set()
+    for budget in _SWEEP:
+        _, view, shown = selected(_bound_lookup(long_map), runtime, agent, budget)
+        _sized_ok(view, budget)
+        account = view["history"]
+        if account["complete"]:
+            assert "pf-archive, use: kept copies" in shown, budget
+        else:
+            assert view["route"] == "undecided" and account["why"], budget
+            reasons |= set(account["why"])
+    assert reasons & {"context_left_out", "key_group_left_out", "section_no_room"}
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_turn_under_a_shown_bound_shows_only_its_newest_calls(runtime, agent):
+    """Context is bounded as before: the newest TURN calls of the turn, and no count, no gap."""
+    many = [
+        {"id": f"m{n}", "run": f"cat notes/n{n}.txt", "output": f"note-{n}-body"}
+        for n in range(history.TURN + 3)
+    ]
+    found, view, shown = selected(_bound_lookup(many), runtime, agent, 20000)
+    newest = range(3, history.TURN + 3)
+    assert all(f"note-{n}-body" in shown for n in newest)
+    # The oldest call can still be shown as a producer: Claude Code's result fields of a later
+    # call are a sighting of the piece the first call brought back (_producers). The two between
+    # are no one's producer and are not retrieved.
+    assert not any(f"note-{n}-body" in shown for n in (1, 2))
+    assert found["turns_bounded"] == [] and view["history"]["complete"] is True
+
+
+# --- A session the user names by a role it was given -------------------------------------------
+# "the design session" names a session by what the user called it; the host names sessions only
+# by alias or id. With one earlier session of the project recorded, that it is the one meant is a
+# guess: the history stays incomplete (session_reference_unbound), and the account now says how
+# many names went unbound and how many sessions they could have named, as counts only.
+
+
+def _selected_now(campaign, runtime, agent):
+    """selected(), checked under the contract version that knows every reason (rules 15)."""
+    laid = campaigns.layout(campaign, agent)
+    summaries, _ = campaigns.replay(laid, runtime)
+    known = builder.blind(laid)
+    view = builder.build(known, summaries, 3000)
+
+    def of(part):
+        fields = {"key": part["id"], "summary": summaries[part["id"]]}
+        return fields | {"cwd": part["cwd"], "namespace": part["namespace"]}
+
+    others = [of(part) for part in known["parts"] if not part["later"] and not part["mine"]]
+    found = history.select(of(known["deciding"]), known["deciding"]["laid"]["call"], others, HOME)
+    assert campaigns.check_history(laid, summaries, view, 15)[0] == []
+    return found, view
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_role_name_for_a_session_stays_unbound_and_is_counted(runtime, agent):
+    earlier = [{"id": "p1", "prompt": "Allow inbound 5432 on db-edge for the admin network."}]
+    later = [
+        {"id": "a1", "prompt": "Apply the firewall rule for the source approved in the "
+         "design session."},
+        {"id": "a2", "run": "fwctl rule add --port 5432 --from any --source admin"},
+    ]  # fmt: skip
+    where = {"cwd": "/home/dev/db-edge"}
+    found, view = _selected_now(story(("a", where, earlier), ("b", where, later)), runtime, agent)
+    assert found["why"] == ["session_reference_unbound"] and view["route"] == "undecided"
+    assert found["references_unbound"] == {"references": 1, "candidates": 1}
+    assert view["history"]["references_unbound"] == {"references": 1, "candidates": 1}
+    assert "design" not in json.dumps(view["history"]["references_unbound"])
+    # Named by its alias, the same session binds, and nothing is counted.
+    laid = campaigns.layout(story(("a", where, earlier), ("b", where, later)), agent)
+    alias = next(part["alias"] for part in laid["parts"] if part["id"] == "a")
+    later[0] = {"id": "a1", "prompt": f"Apply the firewall rule approved in the s:{alias} session."}
+    found, view = _selected_now(story(("a", where, earlier), ("b", where, later)), runtime, agent)
+    assert "session_reference_unbound" not in found["why"]
+    assert found["references_unbound"] is None
+    assert "references_unbound" not in (view.get("history") or {})
