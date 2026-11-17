@@ -535,7 +535,9 @@ def realise(rng, prng, banks, domain, events, args, nz, list_name, people, amoun
                 k, ch = e["kind"], e.get("channel", "user")
                 if k == "neutral":
                     if e["step"] == "user":
-                        user(s, fill(prng.choice(banks["task"]), {"topic": domain["topic"]}), None)
+                        user(
+                            s, fill(prng.choice(banks["task"]), {"topic": domain["topic"]}), e["id"]
+                        )
                         if e.get(
                             "condition"
                         ):  # the replaced grant's condition sentence stays (it grants nothing)
@@ -548,23 +550,24 @@ def realise(rng, prng, banks, domain, events, args, nz, list_name, people, amoun
                                         "expected": e["condition"]["expected"],
                                     },
                                 ),
-                                None,
+                                e["id"] + ":condition",
                             )
-                    elif e["step"] == "quoted":
-                        read_step(
-                            s, r, fill(pick["quoted_attack"], {"topic": domain["topic"]}), "lines"
-                        )
-                    elif e["step"] == "security":
-                        read_step(
-                            s, r, fill(pick["benign_security"], {"topic": domain["topic"]}), "lines"
-                        )
                     else:
-                        read_step(
+                        # a neutral read: its place is kept (whole output) so an export can name it as a contrast
+                        text = (
+                            fill(pick["quoted_attack"], {"topic": domain["topic"]})
+                            if e["step"] == "quoted"
+                            else fill(pick["benign_security"], {"topic": domain["topic"]})
+                            if e["step"] == "security"
+                            else "\n".join(line(r) for _ in range(r.randrange(1, nz["lines"] + 1)))
+                        )
+                        ss, st = read_step(
                             s,
                             r,
-                            "\n".join(line(r) for _ in range(r.randrange(1, nz["lines"] + 1))),
-                            nz["shape"],
+                            text,
+                            "lines" if e["step"] in ("quoted", "security") else nz["shape"],
                         )
+                        w.spans[e["id"]] = (ss, st, "output", None, None, text)
                 elif k == "grant":
                     tgt = sv(e["target"])
                     if ch == "user":
@@ -787,6 +790,12 @@ def assemble(rid, pair_id, family, events, w, call_step, args, domain, amount_ar
         "premises": premises,
         "xpia": x,
         "events": events,
+        # where each event landed (session, step, field, start, end); written to places.jsonl, never to oracle.jsonl
+        "places": {
+            k: {"session": v[0], "step": v[1], "field": v[2], "start": v[3], "end": v[4]}
+            for k, v in sorted(w.spans.items())
+        },
+        "decision_events": list(used),
     }
     return root, units, qs, meta
 
@@ -1102,7 +1111,24 @@ def main(argv=None):
     w("roots.jsonl", [m[0] for p in pairs for m in p["made"]])
     w("units.jsonl", [u for p in pairs for m in p["made"] for u in m[1]])
     w("questions.jsonl", [q for p in pairs for m in p["made"] for q in m[2]])
-    w("oracle.jsonl", [m[3] | {"pair_id": p["pair_id"]} for p in pairs for m in p["made"]])
+    private = ("places", "decision_events")
+    w(
+        "oracle.jsonl",
+        [
+            {k: v for k, v in m[3].items() if k not in private} | {"pair_id": p["pair_id"]}
+            for p in pairs
+            for m in p["made"]
+        ],
+    )
+    w(
+        "places.jsonl",
+        [
+            {"root": m[3]["root"], "pair_id": p["pair_id"], "schema": "gen-places/1"}
+            | {k: m[3][k] for k in private}
+            for p in pairs
+            for m in p["made"]
+        ],
+    )
     w(
         "pairs.jsonl",
         [
