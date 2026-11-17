@@ -69,7 +69,7 @@ from summarizer.store import AGENTS, safe_id, session_dir, view
 
 from . import policy as _policy
 from .decide import judge
-from .escalate import detect, key_of, triggers
+from .escalate import detect, key_of, selector, triggers
 from .kai import QUESTIONS, Unsent
 from .policy import check_rules
 
@@ -144,13 +144,16 @@ def code_identity(directory=None):
 
 
 def layout_identity():
-    """The policy-layout profile this process renders with: name, layout, status and text hash."""
+    """The policy-layout profile this process renders with: name, layout, status, text hash, and
+    the revision of the packet selector (history.SELECTOR): the same text with another selector is
+    another input (MR369)."""
     told = _policy.PROFILES[_policy.PROFILE]
     return {
         "profile": _policy.PROFILE,
         "state": _policy.LAYOUT,
         "status": _policy.STATUS,
         "interpretation_sha256": told["interpretation_sha256"],
+        "selector": selector(),
     }
 
 

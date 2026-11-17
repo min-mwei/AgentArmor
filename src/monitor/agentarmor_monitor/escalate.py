@@ -417,6 +417,15 @@ def provenance(summary):
     return {"summary_embedding": embedding_of(summary), "summary_detector": detector_of(summary)}
 
 
+def selector():
+    """The revision of the packet selector of the Summarizer this process runs
+    (summarizer.history.SELECTOR, MR369). A Summarizer older than that name selects as revision 1,
+    and is named so: the policy text alone never stands for the whole input."""
+    from summarizer import history
+
+    return getattr(history, "SELECTOR", "history-packet/1")
+
+
 def request_sha256(body, questions):
     """An identifier for one request: SHA-256 of its canonical JSON.
 
@@ -517,6 +526,7 @@ def detect(
     record |= {"decision": None, "flagged": None, "rules": [rule["id"] for rule in rules]}
     # What Kai was given is identified by both: the state's layout and the packet's schema.
     record["layout"] = {"state": _policy.LAYOUT, "packet": session.get("schema")}
+    record["layout"]["selector"] = selector()  # how the packet was selected (MR369)
     # What embedded and what marked this summary, by its own report. Kept beside the request,
     # never inside it.
     record |= provenance(summary)

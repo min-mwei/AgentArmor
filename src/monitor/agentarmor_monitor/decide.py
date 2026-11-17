@@ -33,7 +33,7 @@ from summarizer import history
 
 from . import earlier as earlier_sessions
 from . import policy as _policy
-from .escalate import LEVELS, detect
+from .escalate import LEVELS, detect, selector
 from .gate import keep, note, outcome
 from .hostfacts_profile import allows, resolve
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
@@ -416,6 +416,7 @@ class Decider:
                 "level": self.level,
                 "max_chars": self.max_chars,
                 "layout": _policy.LAYOUT,
+                "selector": selector(),
                 "at_once": self.slots,
                 "summary_identity_checked": self.made_with is not None,
                 "earlier_sessions": "on"

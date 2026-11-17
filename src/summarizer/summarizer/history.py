@@ -3205,6 +3205,12 @@ def _fits(path, patterns):
 # --- the packet: this call's session, and the section for other sessions -----------------
 
 TITLE = "EARLIER SESSIONS"  # the section docs/multi-session-contract.md gives a packet
+# The revision of how packet() selects and accounts for what it shows. A request is identified by
+# the code commit, the policy profile and its text hash, and this: the same policy text with
+# another selector is another input. 2 (MR369): a packet that left whole groups out for room is
+# built again with room kept only for the line it writes when nothing is left out, and taken
+# only if it is then complete and within its budget. Before, 1 (implicit).
+SELECTOR = "history-packet/2"
 COMPLETE, INCOMPLETE = "history: ", "history: incomplete"  # how its second line begins
 OWN_SHARE = 2  # a session's own lines keep at least one part in this many of a packet's budget
 # Why a view of earlier sessions is incomplete: a fixed list, each with its one wording.
@@ -3268,7 +3274,7 @@ def _entry_of(summary, about):
     return None
 
 
-def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
+def packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=False):
     """The packet for one proposed call: its own session's digest, focused on the call, and
     the section for other sessions that select() finds, written from each source's own
     lines. Returns the digest's view with "route" and, where there is a section, "history",
@@ -3387,6 +3393,8 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
         len(header({"complete": False, "why": may})),
         len(f"{COMPLETE}{len(found['sources'])} sources shown, {shown_at_most} lines"),
     )
+    if _whole:  # the second line a packet that leaves nothing out writes (MR369): see below
+        second = len(f"{COMPLETE}{len(found['sources'])} sources shown, {shown_at_most} lines")
     # The title, the second line and each object's line, each with the line break before it.
     frame = len(TITLE) + 1 + second + 1 + sum(len(line) + 1 for line in told_of)
     # Conditions of this session that only an earlier session can settle: room for each one's
@@ -3601,4 +3609,20 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None):
     route = "undecided" if why else found["route"]
     reason = "history_incomplete" if why else found["route_reason"]
     told = {"text": text, "history": account, "route": route, "route_reason": reason}
-    return view | told | {"fits": fits, "prior": prior}
+    built = view | told | {"fits": fits, "prior": prior}
+    # The second line is reserved at its longest, the line that says what was left out. When whole
+    # groups were left out for room and for nothing else, the whole packet may still fit with the
+    # line it writes when nothing is left out, the shorter count (MR368: an earlier user request was
+    # left out though the whole packet was 9 characters under its budget). It is built once more
+    # with room kept for that line only, and taken only if it then leaves nothing out, fits and is
+    # within its budget as written; otherwise the packet above stands (MR369). Only room-related
+    # omissions retry: evidence missing, unbound, stale or cut does not, and a complete packet
+    # whose own digest was shortened is kept as it is. The same groups are placed whole, from the
+    # same sources and cutoff; nothing is dropped, loosened or cut to make it complete.
+    room_only = {"key_group_left_out", "context_left_out"}
+    if not _whole and why and left and set(why) <= room_only:
+        whole = packet(mine, call_id, others, home, budget, call_sha256, _whole=True)
+        complete = (whole.get("history") or {}).get("complete") is True
+        if complete and whole.get("fits") and len(whole["text"]) <= budget:
+            return whole
+    return built

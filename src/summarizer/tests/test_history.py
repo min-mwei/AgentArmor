@@ -6035,3 +6035,107 @@ def test_a_role_name_for_a_session_stays_unbound_and_is_counted(runtime, agent):
     assert "session_reference_unbound" not in found["why"]
     assert found["references_unbound"] is None
     assert "references_unbound" not in (view.get("history") or {})
+
+
+# --- A packet that fits whole at the boundary (MR368, MR369) -----------------------------------
+# The section's second line is reserved at its longest (every reason it could give) before groups
+# are placed, so that a line saying what was left out always has room. When nothing is left out the
+# line written is the shorter count, and a packet whose every group fit with that line still lost
+# its last group: it became incomplete though the whole packet fit its budget. When whole groups are
+# left out for room, the packet is built once more with room kept only for the complete line, and
+# taken only if it is complete and within its budget as written. Nothing else retries: a complete
+# packet whose own digest was shortened is kept as it is (the narrow repair, MR369).
+
+
+def _whole_at(campaign, runtime, agent, budget):
+    laid = campaigns.layout(campaign, agent)
+    summaries, _ = campaigns.replay(laid, runtime)
+    return builder.build(builder.blind(laid), summaries, budget)
+
+
+def _shown_items(view):
+    return {(i["alias"], i["seq"], i["type"]) for i in (view.get("history") or {}).get("items", [])}
+
+
+def _retries(monkeypatch):
+    """Count the second, whole-packet builds packet() makes (its _whole call)."""
+    real, count = history.packet, []
+
+    def counted(*args, **kwargs):
+        if kwargs.get("_whole"):
+            count.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(history, "packet", counted)
+    return count
+
+
+BULKY = [{"id": "x1", "run": "cat config/routes.yml", "output": "route: " + "r" * 700}]
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_whole_packet_at_its_own_length_keeps_the_earlier_user_request(agent, monkeypatch):
+    """The session's own digest is at its floor, so only a group can give way. At exactly the
+    whole packet's length, and one over, every group is shown, the trusted earlier user request
+    among them, the packet is the whole one and is complete. Before, the earlier user request
+    was left out and the history called incomplete. One under, the whole packet cannot be had:
+    a history that does not show everything says what it left out and is undecided."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    campaign = _bound_lookup(list(BULKY))
+    whole = _whole_at(campaign, runtime, agent, 20000)
+    assert whole["history"]["complete"] is True
+    size, every = len(whole["text"]), _shown_items(whole)
+    assert any(item["type"] == "prompt" for item in whole["history"]["items"])
+    retries = _retries(monkeypatch)
+    for budget in (size, size + 1):
+        view = _whole_at(campaign, runtime, agent, budget)
+        assert view["history"]["complete"] is True, budget
+        assert view["fits"] and len(view["text"]) <= budget, budget
+        assert _shown_items(view) == every and view["text"] == whole["text"], budget
+    assert retries  # reached by the retry: the first placement had left a group out
+    view = _whole_at(campaign, runtime, agent, size - 1)
+    _sized_ok(view, size - 1)
+    assert view["history"]["complete"] is False and view["route"] == "undecided"
+    assert set(view["history"]["why"]) <= {"key_group_left_out", "context_left_out"}
+    assert "history: incomplete" in view["text"] and len(view["text"]) <= size - 1
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_complete_packet_with_a_shortened_own_digest_is_not_built_again(agent, monkeypatch):
+    """The narrow contract: where the session's own digest can give way, the packet that the
+    longest reserve gives is complete already (its own digest shorter, what it leaves out counted)
+    and stands unchanged; no second build is made to lengthen it."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    campaign = _bound_lookup()
+    whole = _whole_at(campaign, runtime, agent, 20000)
+    size, every = len(whole["text"]), _shown_items(whole)
+    retries = _retries(monkeypatch)
+    view = _whole_at(campaign, runtime, agent, size)
+    assert retries == []
+    assert view["history"]["complete"] is True and _shown_items(view) == every
+    assert view["fits"] and len(view["text"]) <= size
+
+
+@pytest.mark.parametrize("agent", campaigns.AGENTS)
+def test_a_packet_with_something_left_out_keeps_room_for_the_line_that_says_so(agent):
+    """Budget sweep: a history that left something out says so on its second line, is undecided,
+    and the packet is within its budget; a complete one is within its budget too."""
+    runtime = Runtime(HashEmbedder(), strict=True)
+    campaign = _bound_lookup(list(BULKY))
+    size = len(_whole_at(campaign, runtime, agent, 20000)["text"])
+    seen = set()
+    for budget in range(size - 1200, size + 80, 7):
+        view = _whole_at(campaign, runtime, agent, budget)
+        _sized_ok(view, budget)  # never over its budget while saying it fits
+        account = view.get("history") or {}
+        if account.get("complete"):
+            assert len(view["text"]) <= budget, budget
+        else:
+            assert view["route"] == "undecided" and account["why"], budget
+            assert "history: incomplete" in view["text"], budget
+            seen.add(tuple(account["why"]))
+    assert any("context_left_out" in why or "key_group_left_out" in why for why in seen)
+
+
+def test_the_packet_selector_has_a_revision():
+    assert history.SELECTOR == "history-packet/2"

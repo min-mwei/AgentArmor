@@ -217,3 +217,15 @@ def test_a_render_records_the_profile_and_the_code_it_ran(tmp_path, profile):
         assert layout["profile"] == name and layout["state"] == policy.LAYOUT
         assert layout["status"] == policy.STATUS
         assert layout["interpretation_sha256"] == policy.PROFILES[name]["interpretation_sha256"]
+
+
+def test_a_render_names_the_packet_selector_revision(profile):
+    """The same policy text with another packet selector is another input (MR369): a render's
+    layout identity names the selector revision beside the profile, whichever is selected."""
+    from agentarmor_monitor import render
+
+    from summarizer import history
+
+    for name in ("v3", "v5"):
+        profile(name)
+        assert render.layout_identity()["selector"] == history.SELECTOR == "history-packet/2"

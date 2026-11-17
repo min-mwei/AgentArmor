@@ -1079,8 +1079,13 @@ def test_the_requests_a_session_would_send_can_be_printed_without_sending(spool,
         )
         assert row["packet"]["state_chars"] == len(row["request"]["state"])
         assert row["review"] in ("pre_action", "retrospective")
-        # What Kai would be given is named: the state's layout and the packet's schema.
-        assert row["layout"] == {"state": policy.LAYOUT, "packet": "summarizer/v2"}
+        # What Kai would be given is named: the state's layout, the packet's schema and the
+        # revision of the selector that chose what the packet shows (MR369).
+        assert row["layout"] == {
+            "state": policy.LAYOUT,
+            "packet": "summarizer/v2",
+            "selector": "history-packet/2",
+        }
         assert (
             row["request"]["state"]
             .split("Conversation so far:\n")[1]
