@@ -285,8 +285,9 @@ def evidence(reply, question, state):
     targets = about.get("targets")
     if targets is not None and not (
         isinstance(targets, dict)
-        and set(targets) == {"rule", "wrapper_sources"}
+        and set(targets) - {"escapes"} == {"rule", "wrapper_sources"}
         and isinstance(targets["rule"], str)
+        and isinstance(targets.get("escapes", ""), str)
         and isinstance(targets["wrapper_sources"], list)
         and all(isinstance(source, str) for source in targets["wrapper_sources"])
     ):

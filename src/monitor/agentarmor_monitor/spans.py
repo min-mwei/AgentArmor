@@ -36,6 +36,7 @@ import hashlib
 import json
 
 EXACT, WRAPPER = "exact", "value-wrapper-quote-v1"
+ESCAPE = "serializer-escape-remainder-v1"
 QUOTE, CALL_VALUE = "quote", "call-argument-value"
 SOURCES = (QUOTE, CALL_VALUE)
 LAYOUT_SCHEMA = "kai-span-layout/v1"
@@ -163,10 +164,91 @@ def value(span, state, marks, edges=None):
     return {"rule": WRAPPER if taken else EXACT, "value": [low, high], "marks": taken}
 
 
+def _control_escape(text):
+    """Whether text is the JSON escape a quotation writes for one control character
+    (\\n, \\t, \\u0001)."""
+    if not text.startswith("\\") or len(text) < 2:
+        return False
+    try:
+        char = json.loads('"' + text + '"')
+    except ValueError:
+        return False
+    return len(char) == 1 and ord(char) < 0x20 and json.dumps(char)[1:-1] == text
+
+
+def escapes(found, state):
+    """[start, end, value_start, value_end] for every serializer escape in this state's mapped
+    session values: a piece the map says spells ONE source character of a session field in more
+    than one character of the state (not exact), when those characters are the canonical JSON
+    escape of a control character, with the interval of the unbroken run of that field's mapped
+    characters it stands in. Taken from the map, never from the look of the text: a content
+    backslash or quotation mark (spelled \\\\, \\"), a spelled-out invisible character, the call's
+    own JSON and any unmapped or synthesized text are never escapes. The same table the training
+    projection used (AgentArmor training/summarizer/span_targets.escapes; Kai kai.spans.escapes)."""
+    digest = hashlib.sha256(state.encode("utf-8", "surrogatepass")).hexdigest()
+    if digest != found.sha256 or len(state) != found.chars:
+        raise ValueError("this map is of another state")
+    out, run = [], []
+
+    def close():
+        if run:
+            low, high = run[0]["at"][0], run[-1]["at"][1]
+            for piece in run:
+                start, end = piece["at"]
+                if not piece.get("exact") and _control_escape(state[start:end]):
+                    out.append([start, end, low, high])
+
+    for segment in [*found.segments, {"kind": None}]:
+        mapped = segment["kind"] == "session" and "source" in segment
+        same = (
+            mapped
+            and run
+            and all(
+                segment.get(key) == run[-1].get(key) for key in ("session", "seq", "field", "ref")
+            )
+            and run[-1]["source"][1] == segment["source"][0]
+            and run[-1]["at"][1] == segment["at"][0]
+        )
+        if same:
+            run.append(segment)
+            continue
+        close()
+        run = [segment] if mapped else []
+    return out
+
+
+def escaped(span, state, table):
+    """One decoded interval read under ESCAPE: the interval with the remainder of a serializer
+    escape stripped at an edge that lies strictly inside one (its start inside an escape that
+    ends where the value begins, its end inside an escape that begins where the value ends, the
+    value within the escape's own quotation), then trimmed of white space as the decoder trims.
+    The inverse of Kai's kai.spans.escapes.unproject. None when no edge lies inside an escape or
+    nothing is left; a reading otherwise."""
+    start, end = span
+    taken = []
+    for s, e, low, high in table:
+        if s < start < e and low <= s and e < high:
+            start = e
+            taken.append([s, e])
+        if s < end < e and low < s and e <= high:
+            end = s
+            taken.append([s, e])
+    if not taken:
+        return None
+    while start < end and state[start].isspace():
+        start += 1
+    while end > start and state[end - 1].isspace():
+        end -= 1
+    if start >= end:
+        return {"rule": None, "why": "only_escape"}
+    return {"rule": ESCAPE, "value": [start, end], "marks": [], "escapes": taken}
+
+
 def projected(spans, state, found, targets, edges=None):
     """A question's strict intervals read under the rule its head's targets were projected by.
 
-    targets is what the package said of the head ({"rule", "wrapper_sources"}), or None;
+    targets is what the package said of the head ({"rule", "wrapper_sources"} and, when its
+    targets could carry an escape's remainder, "escapes": ESCAPE), or None;
     edges the service's token places for each interval's two ends, or None.
     Returns None when nothing was said, or there is no map: strict only. A rule or a source
     this code does not have is named and not applied. Otherwise {"rule", "layout", "spans"},
@@ -180,8 +262,25 @@ def projected(spans, state, found, targets, edges=None):
         return {"rule": rule, "status": "unknown_rule"}
     marks = wrappers(found, state, sources)
     ends = edges if edges is not None else [None] * len(spans)
-    read = [
-        {"at": list(span)} | value(span, state, marks, pair)
-        for span, pair in zip(spans, ends, strict=True)
-    ]
-    return {"rule": WRAPPER, "layout": identity(found, sources), "spans": read}
+    told = targets.get("escapes")
+    if told is not None and told != ESCAPE:
+        return {"rule": rule, "status": "unknown_rule", "escapes": told}
+    table = escapes(found, state) if told == ESCAPE else []
+    read = []
+    for span, pair in zip(spans, ends, strict=True):
+        item = escaped(span, state, table) if table else None
+        if (
+            item is not None
+            and item.get("value")
+            and (item["value"][0] in marks or item["value"][1] - 1 in marks)
+        ):
+            item = {
+                "rule": None,
+                "why": "escape_and_mark",
+            }  # both at once is no single rule's reading
+        read.append(
+            {"at": list(span)} | (item if item is not None else value(span, state, marks, pair))
+        )
+    return {"rule": WRAPPER, "layout": identity(found, sources), "spans": read} | (
+        {"escapes": ESCAPE} if told else {}
+    )
