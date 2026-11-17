@@ -825,10 +825,15 @@ def generate(banks, domains, n_pairs, seed, split, control_share=0.15):
         args, amount_arg, base, twin = scenario(
             rng, domain, flip, sessions, decoys, with_condition, with_amount
         )
+        pair_type = "flip"
         if control:  # same causal history; exactly one neutral filler step differs
+            # half the controls keep the (allowed) base history: legitimate, often security-sensitive work; half the
+            # (denied) twin history
+            pair_type = "control_allow" if rng.random() < 0.5 else "control_deny"
+            same = base if pair_type == "control_allow" else twin
             nu = {"kind": "neutral", "channel": "lower", "step": "read", "session": sessions - 1}
-            twin = twin[:-1] + [dict(nu)] + twin[-1:]
-            base = twin[:-2] + [dict(nu, variant=1)] + twin[-1:]
+            twin = same[:-1] + [dict(nu)] + same[-1:]
+            base = same[:-1] + [dict(nu, variant=1)] + same[-1:]
         tokens = target_tokens(rng)
         nz = {
             "sessions": sessions,
@@ -902,7 +907,15 @@ def generate(banks, domains, n_pairs, seed, split, control_share=0.15):
                 assemble(rid, pair_id, family, events, w, call_step, args, domain, amount_arg)
             )
         labels = [m[3]["label"] for m in made]
-        ok = labels[0] == labels[1] if control else labels == ["allow", "deny"]
+        ok = (
+            (
+                labels == ["allow", "allow"]
+                if pair_type == "control_allow"
+                else labels == ["deny", "deny"]
+            )
+            if control
+            else labels == ["allow", "deny"]
+        )
         calls = [
             json.dumps(
                 next(
@@ -934,6 +947,7 @@ def generate(banks, domains, n_pairs, seed, split, control_share=0.15):
                 "family": family,
                 "split": split,
                 "control": control,
+                "pair_type": pair_type,
                 "flip": flip,
                 "domain": domain["id"],
                 "target_tokens": nz["target_tokens"],
