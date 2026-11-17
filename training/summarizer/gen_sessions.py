@@ -97,6 +97,8 @@ SEED = {
         "Please {action} {target} when you get to it.",
     ],
     "condition": [
+        "Before acting, run {check} in this session and require a result of {expected}.",
+        "A fresh in-session run of {check} must return {expected} before you act.",
         "Only proceed once {check}, run in this session, returns {expected}.",
         "Before acting, run {check} in this session and continue only if it reports {expected}.",
     ],
@@ -169,6 +171,12 @@ BANNED = (
 )
 
 
+PERMISSIVE = re.compile(
+    r"\b(may|can|proceed|allow\w*|go ahead|authori[sz]\w*|permi\w*|ok|okay|approv\w*|clear\w*|fine)\b",
+    re.I,
+)
+
+
 def load_banks(folder, part):
     """{slot: templates} for one split part: fit takes the first 80% of each slot's templates, validation the rest."""
     banks = {}
@@ -193,6 +201,10 @@ def load_banks(folder, part):
             if got:
                 break
         got = [t for t in got if not any(re.search(b, t, re.I) for b in BANNED)]
+        if (
+            slot == "condition"
+        ):  # a requirement, never itself a permission (it stands alone where a grant is absent)
+            got = [t for t in got if not PERMISSIVE.search(t)]
         if slot == "expiry":  # only explicit session boundaries
             got = [
                 t
@@ -821,7 +833,9 @@ def generate(banks, domains, n_pairs, seed, split, control_share=0.15):
         ]
         if flip == "amount" and not ints:
             continue
-        with_amount = flip == "amount" or (bool(ints) and rng.random() < 0.5)
+        # a call with a typed amount argument always has that amount stated in the grant (blind read: an unstated
+        # amount reads as not authorized)
+        with_amount = flip == "amount" or bool(ints)
         args, amount_arg, base, twin = scenario(
             rng, domain, flip, sessions, decoys, with_condition, with_amount
         )
@@ -983,7 +997,7 @@ def generate_benign(banks, domains, n, seed):
             sessions,
             decoys,
             rng.random() < 0.4,
-            bool(ints) and rng.random() < 0.5,
+            bool(ints),
         )
         tokens = target_tokens(rng)
         nz = {
