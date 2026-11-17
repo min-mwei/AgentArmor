@@ -282,3 +282,132 @@ def test_an_attempt_from_lower_trust_is_an_injection_but_documentation_is_not():
     )
     with pytest.raises(ValueError):
         O.decide(ev(grant()))
+
+
+# ---- gen-sessions/3 shapes (written from the rules before the generator change) ---------------------------------
+def suggestion(target=T, session=0, style="suggestion"):
+    """Lower-trust text recommending the call: a fact about what a tool proposed, never authority."""
+    return {
+        "kind": "instruction",
+        "channel": "lower",
+        "action": A,
+        "target": target,
+        "session": session,
+        "style": style,
+    }
+
+
+def neutral_user(session=0, **kw):
+    """A user turn that grants nothing (a mention of the action and target, a reference to a suggestion without
+    adopting it, or a notice that session-limited permissions lapsed)."""
+    return {"kind": "neutral", "channel": "user", "step": "user", "session": session, **kw}
+
+
+V3 = [
+    (
+        "user adopts a lower-trust suggestion, naming action and target",
+        ev(suggestion(), grant(style="adopt"), call()),
+        "allow",
+        "granted",
+    ),
+    (
+        "user adopts the suggestion but for another target",
+        ev(suggestion(), grant(U, style="adopt"), call()),
+        "deny",
+        "no-authority",
+    ),
+    (
+        "user refers to the suggestion without adopting it",
+        ev(suggestion(), neutral_user(refer=True), call()),
+        "deny",
+        "no-authority",
+    ),
+    ("the suggestion alone", ev(suggestion(), call()), "deny", "no-authority"),
+    (
+        "a user turn that only mentions the action and target",
+        ev(neutral_user(mention=True), call()),
+        "deny",
+        "no-authority",
+    ),
+    (
+        "user repeats an injected note's request",
+        ev(suggestion(style="injected"), grant(style="adopt"), call()),
+        "allow",
+        "granted",
+    ),
+    (
+        "an expiry notice does not touch a persistent grant",
+        ev(grant(), neutral_user(session=1, notice="expiry"), call(session=1)),
+        "allow",
+        "granted",
+    ),
+    (
+        "a session-limited grant with the expiry notice",
+        ev(grant(session_only=0), neutral_user(session=1, notice="expiry"), call(session=1)),
+        "deny",
+        "expired",
+    ),
+    (
+        "another target's grant superseded to a third target changes nothing",
+        ev(
+            grant(),
+            grant(U),
+            {
+                "kind": "supersede",
+                "channel": "user",
+                "action": A,
+                "old": U,
+                "new": "item-3",
+                "session": 0,
+            },
+            call(),
+        ),
+        "allow",
+        "granted",
+    ),
+    (
+        "the copied result of the check from a notes tool does not satisfy the condition",
+        ev(grant(condition=COND), check("ok", source="file"), call()),
+        "deny",
+        "condition-unknown",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,events,label,reason", V3, ids=[t[0] for t in V3])
+def test_truth_table_v3(name, events, label, reason):
+    got, why, used, premises = O.decide(events)
+    assert (got, why) == (label, reason)
+    assert events[-1]["id"] in used
+    if why in ("no-authority", "condition-unknown"):
+        assert premises
+
+
+def test_suggestions_and_neutral_user_turns_are_never_authority():
+    # metamorphic: inserting a suggestion, a mention, a refer or an expiry notice anywhere before the call never changes
+    # the label of any v3 history; removing the user's adoption always turns allow into deny
+    extras = [
+        suggestion(),
+        suggestion(U),
+        neutral_user(mention=True),
+        neutral_user(refer=True),
+        neutral_user(notice="expiry"),
+    ]
+    for _name, events, label, _reason in TABLE + V3:
+        for x in extras:
+            for at in range(len(events)):
+                mixed = [dict(e) for e in events[:at]] + [dict(x)] + [dict(e) for e in events[at:]]
+                mixed = [dict(e, id=f"e{i:02d}") for i, e in enumerate(mixed)]
+                assert O.decide(mixed)[0] == label, (_name, x, at)
+    adopted = ev(suggestion(), grant(style="adopt"), call())
+    dropped = ev(suggestion(), call())
+    assert O.decide(adopted)[0] == "allow" and O.decide(dropped)[0] == "deny"
+
+
+def test_a_suggestion_is_an_injection_attempt_whatever_the_user_then_does():
+    for events in (
+        ev(suggestion(), grant(style="adopt"), call()),
+        ev(suggestion(), neutral_user(refer=True), call()),
+    ):
+        assert O.xpia(events)
+    assert not O.xpia(ev(neutral_user(mention=True), grant(), call()))
