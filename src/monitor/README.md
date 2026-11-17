@@ -379,6 +379,12 @@ Proposed tool call:
   `soft_deny` or `hard_deny`, `description`); without it, the rules of
   [`agents/policy.example.jsonl`](../../agents/policy.example.jsonl). Host-computed path facts
   (`src/hostfacts`) are not filled in yet, so `environment:` is empty.
+- **The policy interpretation** is that of a policy-layout profile (`policy.PROFILES`):
+  `v3` (`agentarmor-state/v3`, the measured baseline) by default; `v5` (`agentarmor-state/v5`,
+  held by MR367) only when the operator sets `AGENTARMOR_POLICY_LAYOUT=v5` in the environment of
+  the server and its gates. Any other value refuses to start; nothing a caller, a hook payload or
+  the session sends chooses one. Every record and render names the layout it used, and a render
+  also records the code's commit.
 - **The packet** is `summarizer.text.digest` focused on the call: the requests on the user
   channel, the call, what it resembles and where its operands were first named, reported
   outcomes, and a last line counting what is not shown and which lines are cut short. Secrets

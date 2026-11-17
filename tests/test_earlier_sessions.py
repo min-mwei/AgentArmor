@@ -340,9 +340,7 @@ def test_off_sends_the_session_alone(spool):
     identity = marked_sessions()
     model = Answering("deny")
     _, record, _ = asked_on(identity, model, on=False)
-    # The policy interpretation names the section (agentarmor-state/v5); the packet has none.
-    packet = model.states[0].split("Conversation so far:", 1)[1]
-    assert len(model.states) == 1 and "EARLIER SESSIONS" not in packet
+    assert len(model.states) == 1 and "EARLIER SESSIONS" not in model.states[0]
     assert "history" not in record["packet"]
 
 

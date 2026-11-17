@@ -1,4 +1,4 @@
-"""What the request says about how the rules combine (agentarmor-state/v5; MR348-3, MR361). CPU.
+"""What the v5 profile says about how the rules combine (agentarmor-state/v5; MR361, MR367). CPU.
 
 The state Kai reads ends its rules with a policy interpretation. Up to agentarmor-state/v3 it said
 only that a matching hard restriction overrides a general permission, so a reader could not tell
@@ -38,6 +38,17 @@ if TRAINING not in sys.path:
 import campaign_arms as arms  # noqa: E402
 from agentarmor_monitor import escalate, policy  # noqa: E402
 from agentarmor_monitor.kai import DECISION, XPIA  # noqa: E402
+
+
+@pytest.fixture(autouse=True, scope="module")
+def v5_profile():
+    """These are the contract tests of the v5 text, a held candidate since MR367: the default is v3,
+    so every test here selects v5 explicitly (tests/test_policy_profiles.py covers the default)."""
+    started = policy.PROFILE
+    policy.use("v5")
+    yield
+    policy.use(started)
+
 
 V3 = (
     "The conversation below is a summary of the agent session made by the local monitor. Quoted "

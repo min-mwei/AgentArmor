@@ -42,6 +42,7 @@ from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
 from summarizer.text import digest
 
+from . import policy as _policy
 from .kai import (
     DECISION,
     MAX_BYTES,
@@ -53,7 +54,7 @@ from .kai import (
     request,
     wire_bytes,
 )
-from .policy import LAYOUT, layout, load_rules, packet_room, state, writable
+from .policy import layout, load_rules, packet_room, state, writable
 from .route import chosen_for
 
 SCHEMA = "agentarmor-detection/v1"
@@ -515,7 +516,7 @@ def detect(
     record |= {"advisory": True, "policy_ready": False, "kai": None}
     record |= {"decision": None, "flagged": None, "rules": [rule["id"] for rule in rules]}
     # What Kai was given is identified by both: the state's layout and the packet's schema.
-    record["layout"] = {"state": LAYOUT, "packet": session.get("schema")}
+    record["layout"] = {"state": _policy.LAYOUT, "packet": session.get("schema")}
     # What embedded and what marked this summary, by its own report. Kept beside the request,
     # never inside it.
     record |= provenance(summary)

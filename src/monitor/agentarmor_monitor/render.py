@@ -57,6 +57,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -66,10 +67,11 @@ from summarizer.events import agent_home
 from summarizer.hook import Scripted, call_sha256, handle
 from summarizer.store import AGENTS, safe_id, session_dir, view
 
+from . import policy as _policy
 from .decide import judge
 from .escalate import detect, key_of, triggers
 from .kai import QUESTIONS, Unsent
-from .policy import INTERPRETATION, LAYOUT, check_rules
+from .policy import check_rules
 
 SCHEMA = "agentarmor-render/v1"
 REQUESTS, CALLS, MANIFEST = "requests.jsonl", "calls.jsonl", "manifest.json"
@@ -117,6 +119,39 @@ def source_sha256(directory=None):
     except OSError:
         return None
     return _sha256(found)
+
+
+def code_identity(directory=None):
+    """{"source_sha256", "commit", "dirty"}: the code that rendered. The commit is the checkout's,
+    asked of git; None when this package is not in a checkout or git cannot say. A layout's name
+    says what the state's layout is; it does not say that every other component is the one it was
+    first measured with, so a render records the commit beside it (MR367)."""
+    directory = Path(__file__).parent if directory is None else Path(directory)
+    commit = dirty = None
+    try:
+        ask = ["git", "-C", str(directory)]
+        head = subprocess.run(
+            [*ask, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10
+        )
+        if head.returncode == 0 and len(head.stdout.strip()) == 40:
+            commit = head.stdout.strip()
+            status = [*ask, "status", "--porcelain", "--untracked-files=no", "--", "."]
+            changed = subprocess.run(status, capture_output=True, text=True, timeout=10)
+            dirty = bool(changed.stdout.strip()) if changed.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        commit = dirty = None
+    return {"source_sha256": source_sha256(directory), "commit": commit, "dirty": dirty}
+
+
+def layout_identity():
+    """The policy-layout profile this process renders with: name, layout, status and text hash."""
+    told = _policy.PROFILES[_policy.PROFILE]
+    return {
+        "profile": _policy.PROFILE,
+        "state": _policy.LAYOUT,
+        "status": _policy.STATUS,
+        "interpretation_sha256": told["interpretation_sha256"],
+    }
 
 
 def _paths(value, what):
@@ -515,12 +550,10 @@ def render(path, out, runtime, max_chars=5000, level="low", gate_level="medium")
                     hashes[name].update(text.encode("ascii"))
                     rows[name] += len(part)
         manifest = {"schema": SCHEMA, "repeated": True}
-        manifest["monitor"] = {"source_sha256": source_sha256()}
-        manifest["layout"] = {
-            "state": LAYOUT,
+        manifest["monitor"] = code_identity()
+        manifest["layout"] = layout_identity() | {
             "packet": sorted(tally.packets),
             "questions_sha256": _sha256(QUESTIONS),
-            "interpretation_sha256": hashlib.sha256(INTERPRETATION.encode("utf-8")).hexdigest(),
         }
         # What the summaries themselves say, never what is running now. A render that built no
         # request has no summary to quote, and says nothing here.

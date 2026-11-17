@@ -37,10 +37,11 @@ import json
 import re
 from pathlib import Path
 
+from . import policy as _policy
 from .escalate import proposed, request_sha256
 from .hostfacts_profile import resolve
 from .kai import DECISION, QUESTIONS
-from .policy import LAYOUT, load_rules, state
+from .policy import load_rules, state
 
 NEEDED = ("run", "arm", "packet", "tool", "input")
 ARM = re.compile(r"[a-z][a-z0-9_-]{0,39}\Z")  # what an arm may be called: it names a file
@@ -90,7 +91,7 @@ def request_of(row, rules, purpose="evaluation"):
     if row.get("decision") in question["criteria"]:
         question["label"] = row["decision"]
     meta = {"id": f"{row['run']}#{row['arm']}", "run": row["run"], "arm": row["arm"]}
-    meta |= {"group_id": row.get("pair"), "kind": row.get("kind"), "layout": LAYOUT}
+    meta |= {"group_id": row.get("pair"), "kind": row.get("kind"), "layout": _policy.LAYOUT}
     # What the rules require of this call in host facts, as the state's own section says it:
     # the record Kai's preparation checks and labels facts_sufficient from (MR195-1).
     meta["host_facts"] = resolve(rules, (tool, arguments))
@@ -117,7 +118,10 @@ def write(path, out, rules=None, purpose="evaluation"):
     out = Path(out)
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise ValueError(f"{out} is not a new or an empty folder")
-    arms, told = {}, {"layout": LAYOUT, "question": DECISION, "rules": [r["id"] for r in rules]}
+    arms, told = (
+        {},
+        {"layout": _policy.LAYOUT, "question": DECISION, "rules": [r["id"] for r in rules]},
+    )
     told["purpose"] = purpose
     for row in rows:
         arms.setdefault(row["arm"], []).append(request_of(row, rules, purpose))

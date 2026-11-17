@@ -32,12 +32,13 @@ from summarizer.store import AGENTS, EVENTS, load_summary, read_events, session_
 from summarizer import history
 
 from . import earlier as earlier_sessions
+from . import policy as _policy
 from .escalate import LEVELS, detect
 from .gate import keep, note, outcome
 from .hostfacts_profile import allows, resolve
 from .local import ASKED, MODES, ON_ERROR, RECEIPT
 from .observe import VERSION as OBSERVATIONS
-from .policy import LAYOUT, load_rules
+from .policy import load_rules
 from .quantities import VERSION as QUANTITIES
 
 SLOTS = 4  # calls decided at once; a caller beyond that is told so, and never queued unseen
@@ -414,7 +415,7 @@ class Decider:
                 "mode": self.mode,
                 "level": self.level,
                 "max_chars": self.max_chars,
-                "layout": LAYOUT,
+                "layout": _policy.LAYOUT,
                 "at_once": self.slots,
                 "summary_identity_checked": self.made_with is not None,
                 "earlier_sessions": "on"
@@ -485,7 +486,7 @@ class Decider:
         named = ("agent", "session_id", "tool_use_id", "call_sha256", "attempt")
         bound = {name: asked.get(name) for name in named}
         bound = {name: value if isinstance(value, str) else None for name, value in bound.items()}
-        bound |= {"policy": self.policy, "layout": LAYOUT}
+        bound |= {"policy": self.policy, "layout": _policy.LAYOUT}
         told = {"schema": RECEIPT, "verdict": verdict, "why": why, "p_deny": None}
         told["mode"] = self.mode
         record = record or {}
