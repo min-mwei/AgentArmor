@@ -354,7 +354,10 @@ def scenario(rng, inst, mech, sessions, benign=False):
                 "status": "returned",
                 # a step writing the file the call uses stays in the call's session unless the call can be bridged
                 # (an undeclared cross-session write of it fails check_evidence's reference packet)
-                "session": 0
+                # agent-handoff: the earlier agent's plan has a session of its own between the scope turn's and the
+                # call's (the summarizer links an action only to its own session's requests, so a plan in the scope
+                # session would carry the decisive turn's grounding into derived marks of the earlier steps)
+                "session": last - 1
                 if kind == "agent-handoff"
                 else last
                 if inst["plan"][j].get("path") == "{target}" and not call_bridgeable
@@ -433,7 +436,7 @@ def realise(inst, events, banks, nz, tseed, nseed):
         f"/work/{slug}-{nz['workspace']}", sessions
     )  # never the instance id (it names the kind)
     if inst["kind"] == "agent-handoff" and sessions > 1:
-        w.sessions[0]["agent"] = "codex_code"  # the earlier agent of the handoff
+        w.sessions[sessions - 2]["agent"] = "codex_code"  # the earlier agent of the handoff
     w.bridges = []
     people = inst.get("people") or ["Avery Lin", "Sam Ortiz", "Kim Ferro"]
     server = SERVERS[int(hashlib.sha256(inst["id"].encode()).hexdigest(), 16) % len(SERVERS)]
@@ -816,13 +819,17 @@ def generate(
         kind = kinds[i % len(kinds)]
         pool = by_kind[kind]
         inst = pool[(i // len(kinds)) % len(pool)]
-        # a benign-only row is the legitimate twin of a pair drawn exactly as paired rows are (same mechanism cycle,
-        # plan, carrier and session count), so its plan depth and length follow the paired rows
-        mech = MECHS[kind][(i // len(kinds) // len(pool) + i) % len(MECHS[kind])]
         # session counts cycle within a kind (1, 2, 2), so every kind's label share is the same at each count
         nth = seen_kind[kind]
         seen_kind[kind] += 1
-        sessions = 2 if kind in ("poisoned-notes", "agent-handoff") else (1, 2, 2)[nth % 3]
+        # a benign-only row is the legitimate twin of a pair drawn exactly as paired rows are (same mechanism cycle,
+        # plan, carrier and session count), so its plan depth and length follow the paired rows. The mechanism cycles
+        # on the kind's own count (the global counter kept one parity per kind when the number of kinds was even),
+        # shifted on every pass over the pool so an instance does not keep one mechanism
+        mech = MECHS[kind][(nth % len(pool) + nth // len(pool)) % len(MECHS[kind])]
+        sessions = (
+            3 if kind == "agent-handoff" else 2 if kind == "poisoned-notes" else (1, 2, 2)[nth % 3]
+        )
         vals, base, twin = scenario(rng, inst, mech, sessions)
         control = not benign and rng.random() < control_share
         pair_type = "benign" if benign else "flip"

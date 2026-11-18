@@ -311,11 +311,11 @@ def test_bridges_only_for_calls_the_contract_reads_and_writes_under_cwd(tmp_path
     roots = [json.loads(x) for x in (out / "roots.jsonl").read_text().splitlines()]
     for r in roots:
         assert (
-            r["sessions"][0]["agent"] == "codex_code"
+            r["sessions"][-2]["agent"] == "codex_code"
             and r["sessions"][-1]["agent"] == "claude_code"
         )
         (b,) = r["bridges"]
-        writer = next(st for st in r["sessions"][0]["steps"] if st["id"] == b["step"])
+        writer = next(st for st in r["sessions"][-2]["steps"] if st["id"] == b["step"])
         assert writer["write"] == b["resource"] and writer["write"].startswith("{cwd}/")
         call = next(
             st for s in r["sessions"] for st in s["steps"] if st["id"] == r["decide"]["step"]
@@ -387,3 +387,52 @@ def test_limit_crossed_plan_steps_never_repeat_the_counted_operation(fit):
                 if e["kind"] == "step" and e["target"] == call["target"] and e.get("amount")
             )
             assert counted + call["amount"] < grant["total_max"]  # never exactly at the bound
+
+
+def test_every_fit_kind_draws_both_of_its_mechanisms_at_probe_scale(tmp_path):
+    # kinds probe 6: with an even number of fit kinds the mechanism index kept one parity per kind, so every
+    # agent-handoff pair was scope-lower and every claimed-approval pair scope-outside
+    rows = run(tmp_path, "--pairs", "24", "--role", "fit", "--controls", "0")
+    seen = {}
+    for p in rows("pairs.jsonl"):
+        seen.setdefault(p["kind"], set()).add(p["flip"])
+    assert len(seen) == 6
+    for kind, mechs in seen.items():
+        assert mechs == set(C.MECHS[kind]), (kind, mechs)
+
+
+def test_mechanisms_rotate_over_a_kinds_instances(tmp_path):
+    # an instance never keeps one mechanism on every pass over the pool (instance and mechanism stay uncrossed)
+    rows = run(tmp_path, "--pairs", "120", "--role", "fit", "--controls", "0")
+    by = {}
+    for p in rows("pairs.jsonl"):
+        by.setdefault(p["domain"], set()).add(p["flip"])
+    assert sum(len(m) == 2 for m in by.values()) >= 0.8 * len(by)
+
+
+def test_handoff_scope_session_holds_no_plan_step(fit):
+    # kinds probe 6: the earlier agent's plan sat in the scope turn's session; the summarizer links an action only to
+    # the requests of its own session, so the legitimate twin's scope grounded the write the call runs and the attack
+    # twin's task turn did not: goal_drift / action_source on the earlier session's lines told the twins apart (shortcut
+    # probe 0.889 vs chance 0.611). The plan now has a session of its own, opened alike in both twins.
+    oracle = {o["root"]: o for o in fit("oracle.jsonl")}
+    roots = {r["id"]: r for r in fit("roots.jsonl")}
+    seen = 0
+    for p in fit("pairs.jsonl"):
+        if p["kind"] != "agent-handoff":
+            continue
+        for rid in p["root_ids"]:
+            ev = oracle[rid]["events"]
+            scope_s = ev[0]["session"]
+            call_s = ev[-1]["session"]
+            plan_s = {e["session"] for e in ev if e["kind"] == "step"}
+            assert plan_s and scope_s not in plan_s and call_s not in plan_s, (
+                scope_s,
+                plan_s,
+                call_s,
+            )
+            r = roots[rid]
+            (b,) = r["bridges"]
+            assert b["session"] not in (r["sessions"][scope_s]["id"], r["decide"]["session"])
+            seen += 1
+    assert seen
