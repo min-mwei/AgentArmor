@@ -173,7 +173,7 @@ def test_a_group_that_does_not_fit_is_said_to_be_left_out(starter, runtime):
     small = len(campaigns.today(laid, summaries, 3000)["text"]) + 150
     view = builder.build(builder.blind(laid), summaries, small)
     assert view["route"] == "undecided" and "key_group_left_out" in view["history"]["why"]
-    assert len(view["text"]) <= small + 200
+    assert _chars(view) <= small + 200
 
 
 def uses(target, tool="Bash"):
@@ -371,7 +371,7 @@ def test_a_limit_of_the_user_that_does_not_fit_is_said_to_be_left_out(
     assert view["route"] == "undecided"
     # This little room is less than the digest's own fixed lines take: the packet is longer
     # than the budget, and says so (MR311 P1).
-    assert len(view["text"]) > budget and not view["fits"] and result["over_budget"]
+    assert _chars(view) > budget and not view["fits"] and result["over_budget"]
     assert view["history"]["why"] == ["key_group_left_out", "section_no_room"]
     # The statement, and what that session did under it (key evidence as well, _under()).
     left = {"statement": 1, "recent": 1}
@@ -413,7 +413,7 @@ def swept(known, laid, summaries, key):
     assert key <= {(item["alias"], item["seq"]) for item in whole["history"]["items"]}
     least = len(campaigns.today(laid, summaries, 3000)["text"])
     incomplete = 0
-    for budget in range(least // 3, len(whole["text"]) + 12, 7):
+    for budget in range(least // 3, _chars(whole) + 12, 7):
         view = builder.build(known, summaries, budget)
         shown = {(item["alias"], item["seq"]) for item in view["history"]["items"]}
         if view["history"]["complete"]:
@@ -423,7 +423,7 @@ def swept(known, laid, summaries, key):
             assert view["route"] == "undecided", budget
             # Below what the digest's own fixed lines take, the packet is longer than the
             # budget, and says so as well (MR311 P1).
-            over = len(view["text"]) > budget
+            over = _chars(view) > budget
             assert not (over and view["fits"]), budget
             said = ["key_group_left_out", *(["section_no_room"] if over else [])]
             assert view["history"]["why"] == said, budget
@@ -905,7 +905,7 @@ def test_a_candidate_write_reaches_the_packet_with_what_stands_around_it(starter
     least = len(campaigns.today(laid, summaries, 3000)["text"])
     key = {where["ask"]["request"], where["readme"]["result"], where["plant"]["proposed"]}
     left_out = 0
-    for budget in range(least, len(view["text"]) + 12, 11):
+    for budget in range(least, _chars(view) + 12, 11):
         small = builder.build(known, summaries, budget)
         seen = {item["seq"] for item in small["history"]["items"]}
         assert small["route"] == "undecided"
@@ -1692,7 +1692,7 @@ def test_the_packet_with_its_section_is_built_by_the_runtime(starter, runtime):
     view = history.packet(mine, call, others, HOME, 3000, identity)
     assert view == builder.build(builder.blind(laid), summaries, 3000)
     assert (view["route"], view["route_reason"]) == ("asked", "earlier_session_bears_on_call")
-    assert view["call"] == "verified" and len(view["text"]) <= 3000
+    assert view["call"] == "verified" and _chars(view) <= 3000
     # The section: its title, the account's own second line, a line for each item with
     # the source's alias and a tie from the fixed list, and the digest's footer after it.
     own, _, rest = view["text"].partition("\n" + history.TITLE + "\n")
@@ -2153,7 +2153,7 @@ def test_a_long_session_gives_room_to_key_evidence_of_another(starter, runtime):
     alone = campaigns.today(laid, summaries, 3000)["text"]
     known = builder.blind(laid)
     view = builder.build(known, summaries, 3000)
-    assert len(alone) > 2800 and len(view["text"]) <= 3000  # its own lines took the budget
+    assert len(alone) > 2800 and _chars(view) <= 3000  # its own lines took the budget
     assert view["history"]["complete"] is True and view["route"] == "asked"
     assert [bridge["use"] for bridge in view["history"]["bridges"]] == ["run"]
     assert "lines over budget" in view["text"]  # what the shorter digest left out is counted
@@ -5578,7 +5578,7 @@ def _within_or_said(laid, view, result, budget, objects):
     assert len(account["objects"]) == objects
     for one in account["objects"]:
         assert history.object_line(one, laid["deciding"]["cwd"]) in view["text"]
-    if len(view["text"]) <= budget:
+    if _chars(view) <= budget:
         assert not result["over_budget"]
         return True
     assert view["fits"] is False and result["over_budget"] and not result["ready"]
@@ -5625,14 +5625,14 @@ def test_a_packet_exactly_at_its_budget_is_ready_and_one_over_is_not(runtime, ag
     laid = campaigns.layout(_release(2), agent)
     summaries, _ = campaigns.replay(laid, runtime)
     view = builder.build(builder.blind(laid), summaries, 9671)
-    size = len(view["text"])
+    size = _chars(view)
     exact = campaigns.score(laid, summaries, view, size)
     assert exact["ready"] and not exact["over_budget"] and not exact["false_ready"]
     over = campaigns.score(laid, summaries, view, size - 1)
     assert over["over_budget"] and not over["ready"] and over["false_ready"]
     # Built again at exactly that length, the packet still fits and is ready.
     again = builder.build(builder.blind(laid), summaries, size)
-    assert len(again["text"]) <= size and again["fits"]
+    assert _chars(again) <= size and again["fits"]
     assert campaigns.score(laid, summaries, again, size)["ready"]
 
 
@@ -5653,9 +5653,15 @@ def _turn_lines(view, found, key="a"):
     return seq, alias, shown
 
 
+def _chars(view):
+    """A packet's size against its budget: its text less the coverage lines, which are outside the
+    budget (summarizer.coverage, MR414)."""
+    return len(view["text"]) - view.get("coverage_chars", 0)
+
+
 def _sized_ok(view, budget):
     """The final-size invariant of MR311 P1: never over budget while saying it fits."""
-    assert len(view["text"]) <= budget or not view["fits"], budget
+    assert _chars(view) <= budget or not view["fits"], budget
 
 
 _SWEEP = list(range(1400, 11001, 200))
@@ -6058,15 +6064,16 @@ def _shown_items(view):
 
 
 def _retries(monkeypatch):
-    """Count the second, whole-packet builds packet() makes (its _whole call)."""
-    real, count = history.packet, []
+    """Count the second, whole-packet builds packet() makes (its _whole call, made by the packet
+    before its coverage lines, history._packet)."""
+    real, count = history._packet, []
 
     def counted(*args, **kwargs):
         if kwargs.get("_whole"):
             count.append(1)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(history, "packet", counted)
+    monkeypatch.setattr(history, "_packet", counted)
     return count
 
 
@@ -6084,20 +6091,20 @@ def test_a_whole_packet_at_its_own_length_keeps_the_earlier_user_request(agent, 
     campaign = _bound_lookup(list(BULKY))
     whole = _whole_at(campaign, runtime, agent, 20000)
     assert whole["history"]["complete"] is True
-    size, every = len(whole["text"]), _shown_items(whole)
+    size, every = _chars(whole), _shown_items(whole)
     assert any(item["type"] == "prompt" for item in whole["history"]["items"])
     retries = _retries(monkeypatch)
     for budget in (size, size + 1):
         view = _whole_at(campaign, runtime, agent, budget)
         assert view["history"]["complete"] is True, budget
-        assert view["fits"] and len(view["text"]) <= budget, budget
+        assert view["fits"] and _chars(view) <= budget, budget
         assert _shown_items(view) == every and view["text"] == whole["text"], budget
     assert retries  # reached by the retry: the first placement had left a group out
     view = _whole_at(campaign, runtime, agent, size - 1)
     _sized_ok(view, size - 1)
     assert view["history"]["complete"] is False and view["route"] == "undecided"
     assert set(view["history"]["why"]) <= {"key_group_left_out", "context_left_out"}
-    assert "history: incomplete" in view["text"] and len(view["text"]) <= size - 1
+    assert "history: incomplete" in view["text"] and _chars(view) <= size - 1
 
 
 @pytest.mark.parametrize("agent", campaigns.AGENTS)
@@ -6108,12 +6115,12 @@ def test_a_complete_packet_with_a_shortened_own_digest_is_not_built_again(agent,
     runtime = Runtime(HashEmbedder(), strict=True)
     campaign = _bound_lookup()
     whole = _whole_at(campaign, runtime, agent, 20000)
-    size, every = len(whole["text"]), _shown_items(whole)
+    size, every = _chars(whole), _shown_items(whole)
     retries = _retries(monkeypatch)
     view = _whole_at(campaign, runtime, agent, size)
     assert retries == []
     assert view["history"]["complete"] is True and _shown_items(view) == every
-    assert view["fits"] and len(view["text"]) <= size
+    assert view["fits"] and _chars(view) <= size
 
 
 @pytest.mark.parametrize("agent", campaigns.AGENTS)
@@ -6129,7 +6136,7 @@ def test_a_packet_with_something_left_out_keeps_room_for_the_line_that_says_so(a
         _sized_ok(view, budget)  # never over its budget while saying it fits
         account = view.get("history") or {}
         if account.get("complete"):
-            assert len(view["text"]) <= budget, budget
+            assert _chars(view) <= budget, budget
         else:
             assert view["route"] == "undecided" and account["why"], budget
             assert "history: incomplete" in view["text"], budget
