@@ -441,6 +441,7 @@ def previous_result(told, name, seq, cutoff=None):
 
 
 NO_GRANT, MISSING_CHECK, SESSION_BOUNDARY = "no_grant", "missing_check", "session_boundary"
+KINDS = (NO_GRANT, MISSING_CHECK, SESSION_BOUNDARY)  # the only premises the lines can support
 
 
 def premise(told, kind, checks=(), material=(), scope=None):
@@ -464,6 +465,8 @@ def premise(told, kind, checks=(), material=(), scope=None):
     which these lines do not carry, and is unresolved. An expiry premise (SESSION_BOUNDARY) needs
     the grant's lifetime and the boundary or host time, which these lines do not carry: it is
     unresolved. A material result whose order is not established (UNORDERED) is not shown."""
+    if kind not in KINDS:
+        return False, [f"unknown premise kind {kind!r}"]
     why = []
     if told is None:
         return False, ["no coverage lines"]

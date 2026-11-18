@@ -497,3 +497,10 @@ def test_the_cap_falls_back_to_unknown_detail_and_never_exceeds_it():
     told = coverage.read("\n".join(["x", *block, "NOT SHOWN: actions 0"]))
     ok, why = coverage.premise(told, coverage.NO_GRANT)
     assert not ok and "this session: user inputs not all whole" in why
+
+
+def test_an_unknown_premise_kind_supports_nothing():
+    told = coverage.read(ORDER.format(results="#2:5 whole"))
+    assert coverage.premise(told, coverage.NO_GRANT) == (True, [])
+    for kind in ("", "no-grant", "anything", None):
+        assert coverage.premise(told, kind) == (False, [f"unknown premise kind {kind!r}"])
