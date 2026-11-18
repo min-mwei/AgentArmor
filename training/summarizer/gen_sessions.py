@@ -27,7 +27,7 @@ from pathlib import Path
 
 import gen_oracle
 
-VERSION = "gen-sessions/3.6"
+VERSION = "gen-sessions/3.7"
 DEFAULT_RULES = (
     "external-instructions",
     "secrets",
@@ -78,7 +78,19 @@ BLOCK_SHARE = 0.95  # share of filler reads drawn from the seed-grounded result 
 # filler volume is planned on this, not on the raw length, and every session carries at least MIN_BLOCKS real-length
 # results when the banks have them, so the realised tool-result length follows the real distribution
 RENDERED_BLOCK_CHARS = 300
-MIN_BLOCKS = 4
+MIN_BLOCKS = 4  # gen-sessions/3.6 only (per session); kept for reproducing 3.6 sets
+# v3.7 (S2 probe: 4 long results in EVERY session filled the summarizer's budget, so every state landed at 2,900-3,500
+# tokens whatever the plan, and the real spool has a median of 2 tool calls per session): at least MIN_BLOCKS_ROOT
+# real-length results per ROOT, in the call's session; filler planned on a model fitted to renders (--calibrate)
+MIN_BLOCKS_ROOT = 2
+PLAN = {"version": "3.6"}  # set to {"version": "3.7", ...} by main() for 3.7 runs
+# fitted on a 3.7 calibration render (32 roots, random filler counts, EmbeddingGemma history arm at 4e2effe): state
+# tokens ~ base + per_result * tool results, until the summarizer's budget saturates near 3,350 tokens; content and
+# block length predict little beyond the result count (the history packet fills to its own budget). Two required
+# real-length results put the floor near 1,950 tokens, so the 3.6 plan range (70% at 800-1,600) is not reachable:
+# 3.7 plans 1,900-3,400 (2 to 8 results per root; the real spool has a median of 2 tool calls per session, p90 7).
+PLAN_37 = {"version": "3.7", "base": 1650.0, "per_result": 200.0}
+LENGTHS_37 = ((0.50, 1900, 2600), (0.35, 2600, 3100), (0.15, 3100, 3400))
 BANK_PART = {"fit": "fit", "val-select": "validation", "val-confirm": "validation", "test": "test"}
 SHAPES = ("lines", "json", "table", "log")
 ROLE = {
@@ -100,6 +112,7 @@ WHY = {
     "expired": "the permission was limited to an earlier session",
     "amount-mismatch": "the permitted amount differs from the call's",
     "amount-over-bound": "the call's amount is above the bound the user set",
+    "total-over-bound": "the plan's total with this call is above the total the user set",
     "exception": "the target is on a list the user forbade",
     "condition-unknown": "the user's condition was not established by the named check in this session",
     "condition-failed": "the named check reported a value other than the condition requires",
@@ -735,14 +748,18 @@ def realise(rng, prng, banks, domain, events, args, nz, list_name, people, amoun
         )
 
     def filler(s, k, n):
-        if banks.get("result_blocks") and k == 0:
+        v37 = PLAN["version"] == "3.7"
+        if banks.get("result_blocks") and k == 0 and (not v37 or s == nz["sessions"] - 1):
             n = max(n, 0)
-            for j in range(MIN_BLOCKS):  # the session's minimum of real-length results
+            for j in range(
+                MIN_BLOCKS_ROOT if v37 else MIN_BLOCKS
+            ):  # the minimum of real-length results
                 r = R("block", s, j)
                 text = fill(r.choice(banks["result_blocks"]), {"topic": domain["topic"]})
                 w.block_excess = getattr(w, "block_excess", 0) + max(
                     0, len(json.dumps(text)) - RENDERED_BLOCK_CHARS
                 )
+                w.blocks = getattr(w, "blocks", 0) + 1
                 read_step(
                     s,
                     r,
@@ -758,6 +775,7 @@ def realise(rng, prng, banks, domain, events, args, nz, list_name, people, amoun
                 w.block_excess = getattr(w, "block_excess", 0) + max(
                     0, len(json.dumps(text)) - RENDERED_BLOCK_CHARS
                 )
+                w.blocks = getattr(w, "blocks", 0) + 1
                 read_step(s, r, text, "lines")
                 continue
             read_step(
@@ -1218,11 +1236,37 @@ def assemble(rid, pair_id, family, events, w, call_step, args, domain, amount_ar
 
 def target_tokens(rng):
     r, acc = rng.random(), 0.0
-    for share, lo, hi in LENGTHS:
+    for share, lo, hi in LENGTHS_37 if PLAN["version"] == "3.7" else LENGTHS:
         acc += share
         if r <= acc:
             return rng.uniform(lo, hi)
     return 1200.0
+
+
+def plan_shape(w):
+    """(steps, characters outside result blocks, result blocks): what the 3.7 length model reads."""
+    raw = sum(len(json.dumps(st)) for s in w.sessions for st in s["steps"])
+    blocks = getattr(w, "blocks", 0)
+    excess = getattr(w, "block_excess", 0)
+    steps = sum(len(s["steps"]) for s in w.sessions)
+    return steps, raw - excess - RENDERED_BLOCK_CHARS * blocks, blocks
+
+
+def results_of(w):
+    return sum(1 for s in w.sessions for st in s["steps"] if isinstance(st.get("output"), str))
+
+
+def est_tokens(w):
+    """3.7: rendered-state tokens predicted from the root's number of tool results (PLAN's fitted constants)."""
+    return PLAN["base"] + PLAN["per_result"] * results_of(w)
+
+
+def plan_reads(rng, tokens, w0):
+    """3.7: how many filler reads (one result each) bring the bare root w0 to the target tokens; the required
+    real-length results are counted in w0. --calibrate draws the count at random instead."""
+    if PLAN.get("calibrate"):
+        return rng.randrange(0, PLAN["calibrate"] + 1)
+    return max(0, round((tokens - est_tokens(w0)) / PLAN["per_result"]))
 
 
 def root_chars(w):
@@ -1305,6 +1349,7 @@ def generate(
         list_name = f"the {domain['topic']} {rng.choice(('hold list', 'do-not-touch list', 'protected set', 'freeze list', 'review list'))}"
         tseed, nseed = rng.randrange(10**9), rng.randrange(10**9)
         made = []
+        w_bare = None
         # filler volume: measured on the longer twin without filler, the same count for both twins (length is nuisance)
         want = max(0.0, (tokens - TOKENS_BASE) / TOKENS_PER_CHAR)
         bare = 0
@@ -1329,6 +1374,8 @@ def generate(
                 domain.get("people") or ["Avery Lin"],
                 amount_arg,
             )
+            if root_chars(w0) >= bare:
+                w_bare = w0
             bare = max(bare, root_chars(w0))
         per_read = 70 + 45 * (nz["lines"] + 1) / 2
         if banks.get(
@@ -1336,6 +1383,8 @@ def generate(
         ):  # v3.5: the expected characters of a filler read with result blocks mixed in
             per_read = BLOCK_SHARE * (70 + RENDERED_BLOCK_CHARS) + (1 - BLOCK_SHARE) * per_read
         reads = max(0, int((want - bare) / per_read))
+        if PLAN["version"] == "3.7":
+            reads = plan_reads(random.Random(f"plan:{nseed}"), tokens, w_bare)
         nz["reads"] = reads
         nz_b["reads"] = reads
         for k, (events, z) in enumerate(((base, nz), (twin, nz_b))):
@@ -1458,6 +1507,7 @@ def generate(
                 "flip": flip,
                 "domain": domain["id"],
                 "target_tokens": nz["target_tokens"],
+                "plan": {"reads": nz["reads"], "shape": list(plan_shape(w))},
                 "made": made,
             }
         )
@@ -1536,6 +1586,8 @@ def generate_benign(banks, domains, n, seed, role="fit"):
                 / (70 + 45 * (nz["lines"] + 1) / 2)
             ),
         )
+        if PLAN["version"] == "3.7":
+            nz["reads"] = plan_reads(random.Random(f"plan:{nseed}"), tokens, w0)
         w, call_step = realise(
             random.Random(nseed),
             random.Random(tseed),
@@ -1572,6 +1624,7 @@ def generate_benign(banks, domains, n, seed, role="fit"):
                 "flip": None,
                 "domain": domain["id"],
                 "target_tokens": nz["target_tokens"],
+                "plan": {"reads": nz["reads"], "shape": list(plan_shape(w))},
                 "made": [made],
             }
         )
@@ -1589,7 +1642,18 @@ def main(argv=None):
     ap.add_argument("--siblings", type=float, default=0.0)
     ap.add_argument("--benign-only", action="store_true")
     ap.add_argument("--shares", default=None)
+    ap.add_argument("--plan", default="3.6", choices=("3.6", "3.7"))
+    ap.add_argument(
+        "--calibrate",
+        type=int,
+        default=0,
+        help="3.7: draw 0..N filler reads at random (fit the model)",
+    )
     a = ap.parse_args(argv)
+    PLAN.clear()
+    PLAN.update(PLAN_37 if a.plan == "3.7" else {"version": "3.6"})
+    if a.calibrate:
+        PLAN["calibrate"] = a.calibrate
     banks = load_banks(a.banks, BANK_PART[a.role] if a.role else a.split)
     blocks = load_blocks(a.banks, BANK_PART[a.role] if a.role else a.split)
     if blocks:

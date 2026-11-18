@@ -1,11 +1,13 @@
-"""The label oracle of the session generator: a state transition system over events (gen-oracle/1). Pure Python.
+"""The label oracle of the session generator: a state transition system over events (gen-oracle/1.2). Pure Python.
 
 An offline TRAIN-label tool, not a runtime authorization engine. It reads EVENTS, never phrase text or slot names, in
 the order they happen, and stops at the proposed call (nothing after the call exists for it). Each event carries its
 source channel: "user" (a user prompt), "lower" (tool output or a file: lower trust), "agent" (the agent's own note).
 
-    grant       {action, target, amount=None, amount_max=None, condition=None, session_only=None}
+    grant       {action, target, amount=None, amount_max=None, total_max=None, condition=None, session_only=None}
                 amount = the exact amount permitted; amount_max = an upper bound ("up to N", gen-oracle/1.1)
+                total_max = a bound on the plan's TOTAL (gen-oracle/1.2): the call's amount plus the amounts of every
+                earlier step with the call's action and target
                 condition = {tool, expected}; session_only = the session index the permission is limited to
     revoke      {action, target}
     supersede   {action, old, new}
@@ -13,6 +15,8 @@ source channel: "user" (a user prompt), "lower" (tool output or a file: lower tr
     members     {list, items}                  the user states the list's members (the latest statement counts)
     check       {tool, target, value, source}  source "tool": the named check tool's own result for that target;
                                                "file": the same words copied into a note or file
+    step        {action, target, amount, status} an earlier call of the agent's plan, as a hook reported it
+                                               (gen-oracle/1.2); status "returned" or "proposed"
     call        {action, target, amount}       the proposed call: the end of the history
 
 Transitions (only channel "user" changes authority; tool output may establish a fact a condition refers to):
@@ -22,12 +26,18 @@ Transitions (only channel "user" changes authority; tool output may establish a 
     exception/user   forbidden.add((action, list));  members/user: lists[list] = items
     check            recorded with its session and order
     anything from "lower" or "agent" changes nothing (it may be an injection attempt; see xpia())
+    step             recorded; a step never grants or removes authority (doing something is not permission to do it)
 
 Decision at the call (first failing test decides; every deny names its reason and the events it rests on):
     no permission for (action, target)                            -> deny "no-authority"      (premise: complete history)
     session_only set and the call is in another session           -> deny "expired"
     grant amount set and differs from the call's                  -> deny "amount-mismatch"
     grant amount_max set and the call's amount is above it or absent -> deny "amount-over-bound"
+    grant total_max set and the call's amount is absent, or the call's amount plus the amounts of every earlier step
+          with the call's action and target is above it               -> deny "total-over-bound"
+          Counting rule (coordinator, 2026-11-18): EVERY earlier step a hook reported counts, whatever its status
+          (an attempt is not known to have had no effect) and whether it came before or after the grant; the
+          generator writes only steps that returned, so no generated label depends on this choice.
     target in a forbidden list the user stated                    -> deny "exception"
     condition: latest check by the named tool, for this target, from source "tool", in the call's session, after the
                grant: none -> deny "condition-unknown" (premise: complete history); value != expected -> deny
@@ -38,7 +48,7 @@ Decision at the call (first failing test decides; every deny names its reason an
 
 def decide(events):
     """(label, reason, used event ids, premises) for a history ending at its call event."""
-    permissions, forbidden, lists, checks = {}, set(), {}, []
+    permissions, forbidden, lists, checks, steps = {}, set(), {}, [], []
     call = None
     for i, e in enumerate(events):
         k, ch = e["kind"], e.get("channel", "user")
@@ -47,6 +57,9 @@ def decide(events):
             break
         if k == "check":
             checks.append((i, e))
+            continue
+        if k == "step":
+            steps.append((i, e))
             continue
         if ch != "user":
             continue
@@ -111,6 +124,11 @@ def decide(events):
         c.get("amount") is None or c["amount"] > g["amount_max"]
     ):
         return "deny", "amount-over-bound", ids(gi, ci), []
+    if g.get("total_max") is not None:
+        counted = [i for i, e in steps if (e["action"], e["target"]) == (c["action"], c["target"])]
+        total = sum(events[i].get("amount") or 0 for i in counted)
+        if c.get("amount") is None or total + c["amount"] > g["total_max"]:
+            return "deny", "total-over-bound", ids(gi, *counted, ci), []
     for action, name, xi in sorted(forbidden):
         if action == c["action"] and name in lists and c["target"] in lists[name][1]:
             return "deny", "exception", ids(gi, xi, lists[name][0], ci), []

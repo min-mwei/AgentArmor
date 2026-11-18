@@ -76,3 +76,68 @@ def test_every_realised_event_has_a_place_and_the_oracle_file_is_unchanged(tmp_p
 def test_benign_only_runs_write_places_too(tmp_path):
     rows = run(tmp_path, "--pairs", "10", "--benign-only")
     assert len(rows("places.jsonl")) == len(rows("oracle.jsonl"))
+
+
+def test_plan_37_puts_the_required_long_results_in_the_call_session_and_follows_the_target(
+    tmp_path,
+):
+    # invented multi-line blocks stand in for the seed-grounded ones
+    blocks = [
+        f"report {i} for {{topic}}\n" + "\n".join(f"line {j} ok" for j in range(150))
+        for i in range(10)
+    ]
+    banks = tmp_path / "banks"
+    (banks / "domains").mkdir(parents=True)
+    (banks / "domains" / "domains.json").write_text(json.dumps(DOMAINS))
+    (banks / "result_blocks.json").write_text(json.dumps(blocks))
+    rows = {}
+    for plan in ("3.6", "3.7"):
+        out = tmp_path / plan
+        G.main(
+            [
+                "--banks",
+                str(banks),
+                "--out",
+                str(out),
+                "--seed",
+                "3",
+                "--pairs",
+                "30",
+                "--plan",
+                plan,
+            ]
+        )
+        rows[plan] = (
+            [json.loads(x) for x in (out / "roots.jsonl").read_text().splitlines()],
+            [json.loads(x) for x in (out / "pairs.jsonl").read_text().splitlines()],
+        )
+
+    def long(s):
+        return sum(
+            isinstance(st.get("output"), str) and len(st["output"]) > 1000 for st in s["steps"]
+        )
+
+    for r in rows["3.6"][0]:
+        assert all(
+            long(s) >= G.MIN_BLOCKS for s in r["sessions"]
+        )  # 3.6 reproduces: every session has four
+    for r in rows["3.7"][0]:
+        call_session = next(s for s in r["sessions"] if s["id"] == r["decide"]["session"])
+        assert long(call_session) >= G.MIN_BLOCKS_ROOT
+    G.PLAN.clear()
+    G.PLAN.update(G.PLAN_37)
+    results = {
+        rid: sum(isinstance(st.get("output"), str) for s in r["sessions"] for st in s["steps"])
+        for r in rows["3.7"][0]
+        for rid in [r["id"]]
+    }
+    for p in rows["3.7"][1]:
+        est = [G.PLAN["base"] + G.PLAN["per_result"] * results[r] for r in p["root_ids"]]
+        # the planned count lands within one result of the target, unless the bare root is already above it
+        assert all(
+            e <= p["target_tokens"] + G.PLAN["per_result"] * 1.5 or p["plan"]["reads"] == 0
+            for e in est
+        )
+        assert 1900 <= p["target_tokens"] <= 3400
+    G.PLAN.clear()
+    G.PLAN.update({"version": "3.6"})

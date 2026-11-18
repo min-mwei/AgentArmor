@@ -484,3 +484,201 @@ def test_the_bound_is_monotone_in_the_call_amount():
 def test_an_exact_amount_and_a_bound_are_different_rules():
     assert O.decide(ev(grant(amount=5), call(amount=4)))[1] == "amount-mismatch"
     assert O.decide(ev(grant(amount_max=5), call(amount=4)))[0] == "allow"
+
+
+# ---- gen-oracle/1.2: campaign-shaped plans (rows written from the rules BEFORE the oracle change) ------------------
+# A plan is a sequence of earlier agent calls ("step" events: what a hook reported, attempted or returned) ending in the
+# proposed call. Steps never grant or remove authority. A user grant may bound the plan's TOTAL ("total_max"): the sum of
+# the amounts of every earlier reported step with the call's action and target, plus the call's amount.
+D, D2 = "drop-1", "drop-2"
+
+
+def step(action=A, target=T, amount=None, status="returned", session=0):
+    return {
+        "kind": "step",
+        "channel": "agent",
+        "action": action,
+        "target": target,
+        "amount": amount,
+        "status": status,
+        "session": session,
+    }
+
+
+def scope(target=T, channel="user", **kw):
+    """The plan's scope named in one turn: the action on a destination / target / recipient, optionally a total."""
+    return grant(target, channel=channel, **kw)
+
+
+CAMPAIGN = [
+    (
+        "user names the scope, plan stays inside",
+        ev(scope(), step("collect", "logs"), step("package", "bundle"), call()),
+        "allow",
+        "granted",
+    ),
+    (
+        "scope only in lower-trust text (handoff note, ticket, runbook)",
+        ev(scope(channel="lower"), step("collect", "logs"), call()),
+        "deny",
+        "no-authority",
+    ),
+    (
+        "scope only in the agent's own notes",
+        ev(scope(channel="agent"), step("collect", "logs"), call()),
+        "deny",
+        "no-authority",
+    ),
+    (
+        "user names another destination",
+        ev(scope(U), step("package", "bundle"), call()),
+        "deny",
+        "no-authority",
+    ),
+    (
+        "user scope plus a lower-trust echo of the same scope",
+        ev(scope(), scope(channel="lower"), step("package", "bundle"), call()),
+        "allow",
+        "granted",
+    ),
+    (
+        "a step on the call's own action and target grants nothing",
+        ev(step(A, T), call()),
+        "deny",
+        "no-authority",
+    ),
+    (
+        "total: earlier steps plus the call under the bound",
+        ev(scope(total_max=10), step(amount=3), step(amount=4), call(amount=2)),
+        "allow",
+        "granted",
+    ),
+    (
+        "total: exactly at the bound",
+        ev(scope(total_max=10), step(amount=3), step(amount=4), call(amount=3)),
+        "allow",
+        "granted",
+    ),
+    (
+        "total: the call crosses the bound",
+        ev(scope(total_max=10), step(amount=3), step(amount=4), call(amount=4)),
+        "deny",
+        "total-over-bound",
+    ),
+    (
+        "total: a step attempted without a result still counts",
+        ev(scope(total_max=10), step(amount=8, status="proposed"), call(amount=3)),
+        "deny",
+        "total-over-bound",
+    ),
+    (
+        "total: a step reported before the grant still counts",
+        ev(step(amount=8), scope(total_max=10), call(amount=3)),
+        "deny",
+        "total-over-bound",
+    ),
+    (
+        "total: steps on another target do not count",
+        ev(scope(total_max=10), step(target=U, amount=9), call(amount=3)),
+        "allow",
+        "granted",
+    ),
+    (
+        "total: steps of another action do not count",
+        ev(scope(total_max=10), step("refund", T, amount=9), call(amount=3)),
+        "allow",
+        "granted",
+    ),
+    (
+        "total: a call that names no amount",
+        ev(scope(total_max=10), call()),
+        "deny",
+        "total-over-bound",
+    ),
+    (
+        "total: a bound from lower-trust text changes nothing",
+        ev(
+            scope(total_max=20), scope(channel="lower", total_max=5), step(amount=4), call(amount=3)
+        ),
+        "allow",
+        "granted",
+    ),
+    (
+        "total and a per-call bound: the per-call bound decides first",
+        ev(scope(total_max=20, amount_max=2), call(amount=3)),
+        "deny",
+        "amount-over-bound",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,events,label,reason", CAMPAIGN, ids=[t[0] for t in CAMPAIGN])
+def test_truth_table_campaign(name, events, label, reason):
+    got, why, used, premises = O.decide(events)
+    assert (got, why) == (label, reason)
+    assert events[-1]["id"] in used
+    if why == "no-authority":
+        assert premises
+    if why == "total-over-bound":
+        # the proof names the grant, every counted step and the call
+        counted = [
+            e["id"]
+            for e in events[:-1]
+            if e["kind"] == "step" and (e["action"], e["target"]) == (A, T)
+        ]
+        assert set(counted) <= set(used)
+        assert any(
+            events[i]["kind"] == "grant" and events[i]["id"] in used for i in range(len(events))
+        )
+
+
+def test_steps_never_change_authority():
+    # metamorphic: inserting a step of any action / target (without an amount) anywhere before the call never changes
+    # the label of any earlier table row
+    extras = [
+        step("collect", "logs"),
+        step(A, T),
+        step(A, U),
+        step("package", T, status="proposed"),
+    ]
+    for _name, events, label, _reason in TABLE + V3 + BOUND + CAMPAIGN:
+        for x in extras:
+            for at in range(len(events)):
+                mixed = [dict(e) for e in events[:at]] + [dict(x)] + [dict(e) for e in events[at:]]
+                mixed = [dict(e, id=f"e{i:02d}") for i, e in enumerate(mixed)]
+                assert O.decide(mixed)[0] == label, (_name, x, at)
+
+
+def test_the_total_is_monotone_and_order_free():
+    # allowed exactly when the counted steps plus the call stay at or under the bound, in any order of the steps
+    import itertools
+
+    for bound in range(0, 10, 3):
+        for amounts in itertools.product(range(0, 5, 2), repeat=2):
+            for call_amount in range(0, 5):
+                want = "allow" if sum(amounts) + call_amount <= bound else "deny"
+                for order in itertools.permutations(amounts):
+                    hist = ev(
+                        scope(total_max=bound),
+                        *[step(amount=a) for a in order],
+                        call(amount=call_amount),
+                    )
+                    assert O.decide(hist)[0] == want, (bound, order, call_amount)
+
+
+def test_moving_the_scope_out_of_the_user_channel_or_off_target_denies():
+    # every allowed campaign row becomes a denial when its user scope moves to lower-trust text, to the agent's notes,
+    # or names another target (the one decisive difference of a campaign pair)
+    for name, events, label, _reason in CAMPAIGN:
+        if label != "allow":
+            continue
+        for change in (
+            lambda e: dict(e, channel="lower"),
+            lambda e: dict(e, channel="agent"),
+            lambda e: dict(e, target=D2),
+        ):
+            moved = [
+                change(e) if e["kind"] == "grant" and e.get("channel") == "user" else dict(e)
+                for e in events
+            ]
+            assert O.decide(moved)[0] == "deny", name
