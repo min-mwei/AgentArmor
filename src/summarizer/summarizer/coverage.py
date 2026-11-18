@@ -38,6 +38,9 @@ VERSION = "agentarmor-coverage/1"
 TITLE = f"COVERAGE {VERSION} (through the call under decision)"
 LISTED = 8  # event numbers listed in one clause before the rest are counted
 THIS = "this session"
+EARLIER = "earlier sessions"
+CAP = 1000  # characters of the block at most; over it, detail is collapsed into counts
+COLLAPSED = "detail collapsed to fit the block's cap"
 REDACTED = "[REDACTED:"
 
 
@@ -189,32 +192,79 @@ def _actions_clause(actions, listed):
     return f"actions {actions['total']}: " + ", ".join(parts)
 
 
+def _session_line(one, collapse=False):
+    clauses = []
+    if "call" in one:
+        clauses.append(f"call {one['call']}")
+    clauses.append(_inputs_clause(one["inputs"]))
+    clauses.append(_actions_clause(one["actions"], listed=one["name"] == THIS))
+    if one["results"] and not collapse:
+        said = ", ".join(f"#{seq} {word}" for seq, word in one["results"])
+        clauses.append(f"results of calls {said}")
+    elif one["results"]:
+        counts = {}
+        for _, word in one["results"]:
+            kind = "partial" if "/" in word else word
+            counts[kind] = counts.get(kind, 0) + 1
+        said = ", ".join(f"{n} {kind}" for kind, n in counts.items())
+        clauses.append(f"results of calls {said} ({COLLAPSED})")
+    clauses += one["flags"]
+    return f"{one['name']}: " + "; ".join(clauses)
+
+
+def _earlier_line(sessions):
+    """Every earlier session in one line, for a block that would pass its cap otherwise."""
+    total = sum(one["inputs"]["total"] for one in sessions)
+    whole = sum(one["inputs"]["whole"] for one in sessions)
+    acted = sum(one["actions"]["total"] for one in sessions)
+    shown = sum(one["actions"]["shown"] for one in sessions)
+    if whole == total:
+        inputs = f"user inputs {total}, all whole"
+    else:
+        short = [one["name"] for one in sessions if one["inputs"]["whole"] < one["inputs"]["total"]]
+        named = " ".join(short[:LISTED]) + (
+            f" +{len(short) - LISTED} more" if len(short) > LISTED else ""
+        )
+        inputs = f"user inputs {total}: {whole} whole, not all whole in {named}"
+    flagged = sorted({flag for one in sessions for flag in one["flags"]})
+    line = f"{EARLIER}: {len(sessions)} sessions; {inputs}; actions {acted}: {shown} shown"
+    return "; ".join([line, *flagged, f"per session {COLLAPSED}"])
+
+
 def lines(told):
-    """The lines a packet carries for this account, title first."""
-    out = [TITLE]
-    for one in told["sessions"]:
-        clauses = []
-        if "call" in one:
-            clauses.append(f"call {one['call']}")
-        clauses.append(_inputs_clause(one["inputs"]))
-        clauses.append(_actions_clause(one["actions"], listed=one["name"] == THIS))
-        if one["results"]:
-            said = ", ".join(f"#{seq} {word}" for seq, word in one["results"])
-            clauses.append(f"results of calls {said}")
-        clauses += one["flags"]
-        out.append(f"{one['name']}: " + "; ".join(clauses))
+    """The lines a packet carries for this account, title first, at most CAP characters in all.
+
+    Over the cap, each call's result is first told as counts by kind instead of by event, and then
+    the earlier sessions are told in one line; each says that it was collapsed. A premise that
+    rests on a particular result, or a particular session's inputs, is then not supported by the
+    lines (premise()): the reader is told that the detail is not there, never given less as all."""
     links = told["links"]
     line = f"sessions: {links['searched']} earlier searched"
     if links["set_aside"]:
         line += f", {links['set_aside']} set aside as another project"
     gaps = []
     if links["unresolved"]:
-        gaps.append("place not known " + " ".join(links["unresolved"]))
+        named = links["unresolved"]
+        gaps.append(
+            "place not known "
+            + " ".join(named[:LISTED])
+            + (f" +{len(named) - LISTED} more" if len(named) > LISTED else "")
+        )
     if links["unread"]:
         gaps.append(f"{links['unread']} could not be read")
     if links["unbound"]:
         gaps.append(f"{links['unbound']} session names bound to none")
-    out.append(line + "; " + ("; ".join(gaps) if gaps else "links resolved"))
+    tail = line + "; " + ("; ".join(gaps) if gaps else "links resolved")
+    own, others = told["sessions"][0], told["sessions"][1:]
+    for collapse, together in ((False, False), (True, False), (True, True)):
+        rows = [_session_line(own, collapse)]
+        if together and others:
+            rows.append(_earlier_line(others))
+        else:
+            rows += [_session_line(one, collapse) for one in others]
+        out = [TITLE, *rows, tail]
+        if len("\n".join(out)) <= CAP:
+            break
     return out
 
 
@@ -230,28 +280,16 @@ def placed(text, block, before=None):
 
 
 def framed(build, budget, account_of, before=None):
-    """A view with its coverage lines (placed()), within budget.
+    """A view with its coverage lines (placed()) added to the view built in the whole budget.
 
-    build(room) makes the view in that much room; account_of(view) gives its account. The lines
-    are written for the view they describe. Room for them is taken from what the view is built
-    in, so a view that already fits with them is the view it always was; where they do not fit,
-    the view is built again in less, and the lines written again for what it now shows. A view
-    that still does not fit says so (fits False). Nothing is cut.
+    The lines are outside the budget: the view is byte for byte the one build(budget) makes, with
+    the block inserted, and "coverage_chars" says how long the block made the text (at most CAP and
+    its line breaks). Whoever measures a packet against its budget measures the text less that.
     """
-    room = budget
-    for _ in range(4):
-        view = build(room)
-        told = account_of(view)
-        block = lines(told)
-        text = placed(view["text"], block, before)
-        extra = len(text) - len(view["text"])
-        if len(text) <= budget or budget - extra >= room:
-            break
-        room = max(budget - extra, 0)
-    view = view | {"text": text, "coverage": told}
-    if len(text) > budget:
-        view["fits"] = False
-    return view
+    view = build(budget)
+    told = account_of(view)
+    text = placed(view["text"], lines(told), before)
+    return view | {"text": text, "coverage": told, "coverage_chars": len(text) - len(view["text"])}
 
 
 def digest(summary, max_chars, focus=None, call_sha256=None):
@@ -269,7 +307,7 @@ def digest(summary, max_chars, focus=None, call_sha256=None):
 
 # Reading the lines back: the training reader and the monitor take what the model reads.
 _HEAD = re.compile(r"^COVERAGE (agentarmor-coverage/\d+) ")
-_NAME = re.compile(r"^(this session|\[s:[^\]]+\]): (.*)$")
+_NAME = re.compile(r"^(this session|earlier sessions|\[s:[^\]]+\]): (.*)$")
 _IDS = re.compile(r"#(\d+)")
 
 
@@ -311,10 +349,16 @@ def read(text):
                 one["inputs"] = _read_inputs(clause)
             elif clause.startswith("actions "):
                 one["actions"] = _read_actions(clause)
+            elif clause.startswith("results of calls ") and COLLAPSED in clause:
+                one["collapsed"] = True
             elif clause.startswith("results of calls "):
                 for piece in clause[len("results of calls ") :].split(", "):
                     seq, _, word = piece.partition(" ")
                     one["results"].append((int(seq.lstrip("#")), word))
+            elif COLLAPSED in clause:
+                one["collapsed"] = True
+            elif found[1] == EARLIER and re.fullmatch(r"\d+ sessions", clause):
+                one["sessions"] = int(clause.split()[0])
             else:
                 one["flags"].append(clause)
         out["sessions"][found[1]] = one
@@ -397,7 +441,13 @@ def premise(told, kind, checks=(), material=()):
             why.append(f"{name}: " + ", ".join(one["flags"]))
     if THIS in sessions and sessions[THIS]["call"] != "whole":
         why.append("call under decision not shown whole")
+    collapsed = {name for name, one in sessions.items() if one.get("collapsed")}
     results = {(name, seq): word for name, one in sessions.items() for seq, word in one["results"]}
+    for where in material:
+        if where[0] in collapsed:
+            results[tuple(where)] = "collapsed"
+    if kind == MISSING_CHECK and THIS in collapsed:
+        results.update({(THIS, seq): "collapsed" for seq in checks})
     for where in material:
         if results.get(tuple(where)) not in ("whole", "empty"):
             why.append(

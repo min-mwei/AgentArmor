@@ -292,7 +292,9 @@ def test_every_packet_carries_the_lines_and_they_read_back_as_written(runtime, a
     for campaign in (story(("s", steps)), story(("a", [ask("a0", "Tidy docs.")]), ("s", steps))):
         for budget in (2500, 4000, 40000):
             laid, _, view = built(campaign, runtime, budget, agent)
-            assert len(view["text"]) <= budget or not view["fits"]
+            # Outside the budget: the packet less its block fits as before, the block within its cap.
+            assert 0 < view["coverage_chars"] <= coverage.CAP + 1
+            assert len(view["text"]) - view["coverage_chars"] <= budget or not view["fits"]
             rows = view["text"].split("\n")
             assert rows.count(coverage.TITLE) == 1
             start = rows.index(coverage.TITLE)
@@ -306,6 +308,51 @@ def test_every_packet_carries_the_lines_and_they_read_back_as_written(runtime, a
             assert list(told["sessions"])[0] == coverage.THIS
             assert this(told)["call"] == "whole"
             assert this(told)["results"] == view["coverage"]["sessions"][0]["results"]
+
+
+@pytest.mark.parametrize("budget", [2500, 4500, 40000])
+def test_a_packet_is_the_packet_it_was_with_the_lines_added_at_any_budget(runtime, budget):
+    """The lines are outside the budget: at a tight budget as at an ample one, the packet is byte
+    for byte history._packet's in that budget, with the block inserted and nothing displaced."""
+    steps = [ask("p0", "Review staging."), tool("r", "list_environments", LONG)]
+    steps += [ask("p1", GRANT), scale()]
+    earlier = [ask(f"a{n}", f"Tidy docs folder part {n}.") for n in range(6)]
+    laid, summaries, view = built(story(("a", earlier), ("s", steps)), runtime, budget)
+    mine = next(part for part in laid["parts"] if part["mine"])
+
+    def known(p):
+        return {"key": p["id"], "summary": summaries[p["id"]], "cwd": p["cwd"]} | {
+            k: p[k] for k in ("namespace", "alias", "agent", "session_id")
+        }
+
+    others = [known(p) for p in laid["parts"] if not p["mine"] and not p["later"]]
+    call, identity = mine["laid"]["call"], mine["laid"]["identity"]
+    before = history._packet(known(mine), call, others, campaigns.HOME, budget, identity)
+    block = coverage.lines(view["coverage"])
+    assert view["text"] == coverage.placed(before["text"], block, history.TITLE)
+    assert view["coverage_chars"] == len(view["text"]) - len(before["text"])
+
+
+def test_a_block_over_its_cap_collapses_detail_and_says_so():
+    many = [(n, "whole" if n % 3 else f"1/{n}") for n in range(3, 400, 2)]
+    own = _whole_session(coverage.THIS, call="whole") | {"results": many}
+    own["actions"] = own["actions"] | {"total": len(many), "shown": len(many)}
+    others = [_whole_session(f"[s:{n:04x}]") | {"results": many[:30]} for n in range(12)]
+    links = {"searched": 12, "set_aside": 0, "unresolved": [], "unread": None, "unbound": 0}
+    block = coverage.lines({"sessions": [own, *others], "links": links})
+    assert len("\n".join(block)) <= coverage.CAP
+    assert coverage.COLLAPSED in block[1] and block[2].startswith(
+        coverage.EARLIER + ": 12 sessions"
+    )
+    told = coverage.read("\n".join(["x", *block, "NOT SHOWN: actions 0"]))
+    assert told["sessions"][coverage.THIS]["collapsed"]
+    assert told["sessions"][coverage.EARLIER]["inputs"]["all_whole"]
+    # no-grant stands on whole inputs; a premise on one result does not stand on counts
+    assert coverage.premise(told, coverage.NO_GRANT) == (True, [])
+    ok, why = coverage.premise(told, coverage.MISSING_CHECK, checks=[5])
+    assert not ok and why == ["named check #5: collapsed"]
+    ok, _ = coverage.premise(told, coverage.NO_GRANT, material=[(coverage.THIS, 5)])
+    assert not ok
 
 
 def test_a_packet_that_needed_no_room_is_the_packet_it_was_with_the_lines_added(runtime):

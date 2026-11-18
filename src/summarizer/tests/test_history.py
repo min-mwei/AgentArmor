@@ -11,7 +11,7 @@ import history_builder as builder
 import pytest
 from common import read_jsonl
 
-from summarizer import coverage, history, summarize
+from summarizer import history, summarize
 from summarizer.embedder import HashEmbedder
 from summarizer.labels import combine, content_indicators
 from summarizer.summarize import Config, Runtime
@@ -1447,9 +1447,7 @@ def test_what_a_session_observed_of_a_condition_it_was_given_is_key_evidence(run
     # What the check said changes nothing here: the same lines, the same route, either way.
     assert view["route"] == "asked" and found["route_reason"] == "earlier_session_bears_on_call"
     # With no room for it the packet says key evidence is left out, and is not complete.
-    # (The packet's coverage lines take their room out of the budget too: MR414.)
-    room = len("\n".join(coverage.lines(view["coverage"]))) + 1
-    _, tight, less = selected(_waiting(review), runtime, budget=500 + room)
+    _, tight, less = selected(_waiting(review), runtime, budget=500)
     assert tight["history"]["why"] == ["key_group_left_out"] and review not in less
     assert tight["history"]["complete"] is False and tight["route"] == "undecided"
 
@@ -4492,7 +4490,7 @@ def test_the_history_is_complete_only_where_the_keyed_observation_is_shown(runti
         ran = part["laid"]["where"]["hold"]
         where = (part["alias"], ran["proposed"], ran["result"])
         seen = set()
-        for budget in range(2000, 6501, 500):  # coverage lines take ~400 (MR414)
+        for budget in range(1500, 6001, 500):
             view = builder.build(builder.blind(laid), summaries, budget)
             score = campaigns.score(laid, summaries, view, budget, 16)
             shown = _hold_shown(view, where) == (True, True)
@@ -4504,8 +4502,7 @@ def test_the_history_is_complete_only_where_the_keyed_observation_is_shown(runti
                 assert view["history"]["why"] == ["key_group_left_out"], (agent, budget)
                 assert view["route"] == "undecided" and view["fits"], (agent, budget)
             seen.add((shown, complete and score["ready"]))
-        # Shown with context left out (neither complete nor ready) may lie between the two.
-        assert {(True, True), (False, False)} <= seen and (False, True) not in seen, agent
+        assert seen == {(True, True), (False, False)}, agent
 
 
 def _later_than_the_call(summaries, laid):
@@ -6061,23 +6058,15 @@ def _shown_items(view):
 
 
 def _retries(monkeypatch):
-    """Count the second, whole-packet builds packet() makes (its _whole call). MR369 is a rule of
-    the packet before its coverage lines (MR414), which take their room ahead of it: the builder
-    is given that packet here, so that its own boundary is what is swept."""
-
-    def bare(mine, call_id, others, home, budget=3000, call_sha256=None):
-        view = history._packet(mine, call_id, others, home, budget, call_sha256)
-        return {key: value for key, value in view.items() if key != "_found"}
-
-    monkeypatch.setattr(history, "packet", bare)
-    real, count = history._packet, []
+    """Count the second, whole-packet builds packet() makes (its _whole call)."""
+    real, count = history.packet, []
 
     def counted(*args, **kwargs):
         if kwargs.get("_whole"):
             count.append(1)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(history, "_packet", counted)
+    monkeypatch.setattr(history, "packet", counted)
     return count
 
 
@@ -6093,12 +6082,11 @@ def test_a_whole_packet_at_its_own_length_keeps_the_earlier_user_request(agent, 
     a history that does not show everything says what it left out and is undecided."""
     runtime = Runtime(HashEmbedder(), strict=True)
     campaign = _bound_lookup(list(BULKY))
-    retries = _retries(monkeypatch)
     whole = _whole_at(campaign, runtime, agent, 20000)
     assert whole["history"]["complete"] is True
     size, every = len(whole["text"]), _shown_items(whole)
     assert any(item["type"] == "prompt" for item in whole["history"]["items"])
-    retries.clear()
+    retries = _retries(monkeypatch)
     for budget in (size, size + 1):
         view = _whole_at(campaign, runtime, agent, budget)
         assert view["history"]["complete"] is True, budget
@@ -6119,10 +6107,9 @@ def test_a_complete_packet_with_a_shortened_own_digest_is_not_built_again(agent,
     and stands unchanged; no second build is made to lengthen it."""
     runtime = Runtime(HashEmbedder(), strict=True)
     campaign = _bound_lookup()
-    retries = _retries(monkeypatch)
     whole = _whole_at(campaign, runtime, agent, 20000)
     size, every = len(whole["text"]), _shown_items(whole)
-    retries.clear()
+    retries = _retries(monkeypatch)
     view = _whole_at(campaign, runtime, agent, size)
     assert retries == []
     assert view["history"]["complete"] is True and _shown_items(view) == every

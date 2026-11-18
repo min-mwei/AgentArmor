@@ -1121,9 +1121,7 @@ def patched(session):
 
 
 def test_a_saved_call_is_whole_only_when_its_logged_arguments_are_shown(spool, service, capsys):
-    # 6,000 characters: at the default 5,000 the packet's coverage lines (MR414) take the room
-    # of a key line of this small session, and the packet is then not ready for that reason.
-    watch = monitor(service, max_chars=6000)
+    watch = monitor(service)
     patched("s-patch")
     caught_up(watch, "claude_code", "s-patch")
     (record,) = [
@@ -1148,7 +1146,7 @@ def test_a_saved_call_is_whole_only_when_its_logged_arguments_are_shown(spool, s
     summary = load_summary("claude_code", "s-patch")
     entry = next(e for e in summary["entries"] if e["type"] == "action")
     service.seen.clear()
-    reduced = escalate.detect(kai.KaiClient(service.url), summary, entry, max_chars=6000)
+    reduced = escalate.detect(kai.KaiClient(service.url), summary, entry)
     state, _ = service.seen[-1]
     assert "TAIL-MARK-5521" not in state and "REMOVED-MARK-4410" in state
     about = reduced["packet"]
@@ -1165,7 +1163,7 @@ def test_a_saved_call_is_whole_only_when_its_logged_arguments_are_shown(spool, s
     assert escalate.logged_call(session_dir("claude_code", "s-none"), entry) is None
     # The printed requests say the same as the records.
     capsys.readouterr()
-    assert main(["requests", "--session", "s-patch", "--max-chars", "6000"]) == 0
+    assert main(["requests", "--session", "s-patch"]) == 0
     printed = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     (row,) = [r for r in printed if r["trigger"]["type"] == "action"]
     assert row["sendable"] and "REMOVED-MARK-4410" in row["request"]["state"]
@@ -1508,11 +1506,8 @@ def test_a_trigger_is_never_linked_to_itself_by_its_own_refused_attempts(
     # more than once before the packet finally has to shrink.
     client = Scripted(limit=full - 200)
     first, *rest = scanned(monkeypatch, capsys, client, name, "--max-chars", "12000")
-    # Each request is sent once, the full one first, until a smaller one is answered (how many
-    # halvings that takes depends on the packet's size, its coverage lines included: MR414).
-    sent = client.sends
-    assert sent[0] == full and sent[-1] < full and len(set(sent)) == len(sent) >= 2
-    assert (first["status"], first["requests_sent"]) == ("scored", len(sent))
+    assert len(client.sends) == 2 and client.sends[0] == full and client.sends[1] < full
+    assert (first["status"], first["requests_sent"]) == ("scored", 2)
     assert "same_request_as" not in first  # the original successful send links to nothing
     assert rest and all(r["status"] == "scored" and r["requests_sent"] == 0 for r in rest)
     assert {r["same_request_as"] for r in rest} == {first["key"]}
@@ -1532,14 +1527,10 @@ def test_one_decision_never_sends_a_refused_request_again(spool, monkeypatch, ca
     entry = next(e for e in summary["entries"] if e["level"] in ("medium", "high"))
     client = Scripted(limit=full - 200)
     record = escalate.detect(client, summary, entry, max_chars=12000)  # no asked: a gate's decision
-    sent = client.sends
-    assert sent[0] == full and sent[-1] < full and len(set(sent)) == len(sent) >= 2
-    assert (record["status"], record["requests_sent"]) == ("scored", len(sent))
-    # Halvings that rebuilt the refused request are counted and not sent (MR251); every halving
-    # is one or the other.
-    retries = record["refusal_retries"]
-    assert retries["repeats_not_sent"] >= 1
-    assert retries["budget_reductions"] == len(sent) - 1 + retries["repeats_not_sent"]
+    assert client.sends[0] == full and client.sends[1] < full and len(client.sends) == 2
+    assert (record["status"], record["requests_sent"]) == ("scored", 2)
+    # Three halvings, two of which rebuilt the refused request: counted, and not sent (MR251).
+    assert record["refusal_retries"] == {"budget_reductions": 3, "repeats_not_sent": 2}
 
 
 def test_when_no_smaller_request_passes_none_is_sent_twice(spool):

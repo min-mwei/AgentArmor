@@ -116,8 +116,9 @@ def test_the_default_is_v3_and_its_requests_are_13b14cd_s_bytes():
     assert sha(fixed()) == AT_13B14CD["fixed_state_sha256"]
     assert policy.packet_room(policy.load_rules(), CALL, 11000) == AT_13B14CD["room"]
     for agent, digest in AT_13B14CD["full"].items():
-        # Since history-packet/3 every packet carries its coverage lines (MR414): with them taken
-        # out, the request is 13b14cd's to the byte; with them, it is the one pinned here.
+        # Since history-packet/3 every packet carries its coverage lines outside its budget
+        # (MR414): with them taken out, the request is 13b14cd's to the byte; with them, it is
+        # the one pinned here.
         state = full(agent)
         rows = state.split("\n")
         start = rows.index(coverage.TITLE)

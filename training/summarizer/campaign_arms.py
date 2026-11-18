@@ -172,7 +172,10 @@ def packets(campaigns, runtime, budget=3000, agents=cc.AGENTS, variants=None, ro
                 found |= {"false_ready": bool(scored["false_ready"]), "passes": scored["passes"]}
                 found |= {"replays": len(every), "replays_passing": sum(s["passes"] for s in every)}
                 found["replays_faulty"] = sum(any(s[name] for name in FAULTS) for s in every)
-                found |= {"packet_chars": len(view["text"]), "budget": budget}
+                found |= {
+                    "packet_chars": len(view["text"]) - view.get("coverage_chars", 0),
+                    "budget": budget,
+                }
                 found["packet_budget"] = fit
                 rows.append(
                     base

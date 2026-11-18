@@ -3210,7 +3210,7 @@ TITLE = "EARLIER SESSIONS"  # the section docs/multi-session-contract.md gives a
 # another selector is another input. 2 (MR369): a packet that left whole groups out for room is
 # built again with room kept only for the line it writes when nothing is left out, and taken
 # only if it is then complete and within its budget. Before, 1 (implicit). 3 (MR414): every
-# packet carries its coverage lines (summarizer.coverage), and their room comes out of its budget.
+# packet carries its coverage lines (summarizer.coverage), outside its budget and capped.
 SELECTOR = "history-packet/3"
 COMPLETE, INCOMPLETE = "history: ", "history: incomplete"  # how its second line begins
 OWN_SHARE = 2  # a session's own lines keep at least one part in this many of a packet's budget
@@ -3281,8 +3281,9 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None, unread=No
     when there is none), and its account under "coverage": what it shows of each session it
     searched, user inputs, actions and results by event, through the call (MR414). unread is how
     many sessions that might bear on the call could not be read, when the caller knows it
-    (earlier.scope()). Room for the lines comes out of the budget: a packet that already fits with
-    them is the packet it always was, and one that does not is built again in less."""
+    (earlier.scope()). The lines are outside the budget: the packet is byte for byte the one
+    _packet() builds in it, with the block (at most coverage.CAP characters) inserted, and
+    "coverage_chars" says how much longer that made the text."""
     found = {}
 
     def build(room):
