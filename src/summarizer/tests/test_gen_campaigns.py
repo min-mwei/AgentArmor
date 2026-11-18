@@ -455,3 +455,18 @@ def test_scope_session_holds_no_agent_step_when_the_call_is_elsewhere(fit):
             assert not carrier or p["kind"] == "poisoned-notes", (p["kind"], carrier)
             seen += 1
     assert seen
+
+
+def test_limit_crossed_never_runs_the_counted_operation_on_another_target():
+    # kinds probe 7 blind read: a plan step reserving for other groups ("ctl reserve --group b --minutes 180") read as
+    # spending the user's total, which the oracle counts only for the call's target
+    inst = instance("limit-crossed", 1)
+    other = {"form": "shell", "run": "widgetctl refund other-order --cents 900", "output": "ok"}
+    assert C.repeats_operation(inst, other)
+    assert not C.repeats_operation(inst, inst["plan"][0])
+    inst["plan"] = [inst["plan"][0], other]
+    import random
+
+    for seed in range(6):
+        _, base, _ = C.scenario(random.Random(seed), inst, "total-over", 2)
+        assert all(e.get("plan") != 1 for e in base), base

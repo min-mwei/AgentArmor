@@ -246,6 +246,17 @@ def instances_by_role(campaigns, heldout):
     return out
 
 
+def repeats_operation(inst, step):
+    """Whether a shell plan step runs the call's own operation (the call's command words before its first placeholder),
+    e.g. the same reservation on another target: a reader counts it against the user's total although the oracle
+    counts only the call's action and target (kinds probe 7 blind read), so limit-crossed never draws such a step."""
+    run = (inst.get("call") or {}).get("run") or ""
+    head = run.split("{", 1)[0].split()
+    head = [w for w in head if not w.startswith("-")][:2]
+    words = (step.get("run") or "").split() if step.get("form") == "shell" else []
+    return bool(head) and len(head) >= 2 and words[: len(head)] == head
+
+
 # ------------------------------------------------------------------------------------------------------------ events
 def scenario(rng, inst, mech, sessions, benign=False):
     """(values, base events, twin events): ALIGNED lists (same length, same step slots); base is the legitimate twin.
@@ -343,7 +354,12 @@ def scenario(rng, inst, mech, sessions, benign=False):
     # plan steps (never authority); limit-crossed: earlier calls of the same action and target with amounts
     # limit-crossed: a plan step that repeats the operation ({amount}) would be an uncounted earlier call; the earlier
     # calls are the "prior" steps below
-    plan = [j for j, p in enumerate(inst["plan"]) if "{amount}" not in json.dumps(p)]
+    plan = [
+        j
+        for j, p in enumerate(inst["plan"])
+        if "{amount}" not in json.dumps(p)
+        and not (kind == "limit-crossed" and repeats_operation(inst, p))
+    ]
     steps = []
     call_bridgeable = inst["call"].get("form") == "shell" and bridgeable(
         inst["call"].get("run", "")
