@@ -27,7 +27,7 @@ from pathlib import Path
 
 import gen_oracle
 
-VERSION = "gen-sessions/3.4"
+VERSION = "gen-sessions/3.5"
 DEFAULT_RULES = (
     "external-instructions",
     "secrets",
@@ -73,6 +73,7 @@ NEEDS_AMOUNT = {"amount", "amount-bound"}
 # every role can carry the amount mechanisms.
 ROLES = ("fit", "val-select", "val-confirm", "test")
 ROLE_SHARE = {"fit": 0.56, "val-select": 0.14, "val-confirm": 0.14, "test": 0.16}
+BLOCK_SHARE = 0.6  # v3.5: share of filler reads drawn from the seed-grounded result blocks when the banks carry them
 BANK_PART = {"fit": "fit", "val-select": "validation", "val-confirm": "validation", "test": "test"}
 SHAPES = ("lines", "json", "table", "log")
 ROLE = {
@@ -339,6 +340,24 @@ def load_banks(folder, part):
         b = max(a + 1, min(len(ts) - 1, int(len(ts) * 0.8)))
         banks[slot] = {"fit": ts[:a], "validation": ts[a:b], "test": ts[b:]}[part]
     return banks
+
+
+def load_blocks(folder, part):
+    """v3.5: multi-line tool results (result_blocks.json), cut 60/20/20 like the slots; {topic} only."""
+    p = Path(folder) / "result_blocks.json" if folder else None
+    if not (p and p.is_file()):
+        return []
+    ts = [
+        t
+        for t in json.loads(p.read_text())
+        if isinstance(t, str)
+        and set(PLACEHOLDER.findall(t)) <= {"topic"}
+        and t.count("{") == t.count("{topic}")
+    ]
+    if len(ts) < 3:
+        return ts
+    a, b = int(len(ts) * 0.6), int(len(ts) * 0.8)
+    return {"fit": ts[:a], "validation": ts[a:b], "test": ts[b:]}[part]
 
 
 def load_domains(folder, part):
@@ -705,6 +724,11 @@ def realise(rng, prng, banks, domain, events, args, nz, list_name, people, amoun
     def filler(s, k, n):
         for j in range(n):
             r = R("fill", s, k, j)
+            blocks = banks.get("result_blocks") or []
+            if blocks and r.random() < BLOCK_SHARE:
+                # v3.5: a seed-grounded multi-line tool result (test runs, build logs, listings, configs, API JSON)
+                read_step(s, r, fill(r.choice(blocks), {"topic": domain["topic"]}), "lines")
+                continue
             read_step(
                 s,
                 r,
@@ -1265,6 +1289,11 @@ def generate(
             )
             bare = max(bare, root_chars(w0))
         per_read = 70 + 45 * (nz["lines"] + 1) / 2
+        if banks.get(
+            "result_blocks"
+        ):  # v3.5: the expected characters of a filler read with result blocks mixed in
+            mean_block = sum(len(b) for b in banks["result_blocks"]) / len(banks["result_blocks"])
+            per_read = BLOCK_SHARE * (70 + mean_block) + (1 - BLOCK_SHARE) * per_read
         reads = max(0, int((want - bare) / per_read))
         nz["reads"] = reads
         nz_b["reads"] = reads
@@ -1518,8 +1547,16 @@ def main(argv=None):
     ap.add_argument("--role", default=None, choices=ROLES)
     ap.add_argument("--siblings", type=float, default=0.0)
     ap.add_argument("--benign-only", action="store_true")
+    ap.add_argument("--shares", default=None)
     a = ap.parse_args(argv)
     banks = load_banks(a.banks, BANK_PART[a.role] if a.role else a.split)
+    blocks = load_blocks(a.banks, BANK_PART[a.role] if a.role else a.split)
+    if blocks:
+        banks = dict(banks, result_blocks=blocks)
+    if a.shares:  # e.g. "fit=0.7,val-select=0.3" for a slice with fewer roles
+        ROLE_SHARE.clear()
+        ROLE_SHARE.update({r: 0.0 for r in ROLES})
+        ROLE_SHARE.update({k: float(v) for k, v in (x.split("=") for x in a.shares.split(","))})
     domains = load_domains(a.banks, "role:" + a.role if a.role else a.split)
     pairs, rejected = (
         generate_benign(banks, domains, a.pairs, a.seed, a.role or "fit")
