@@ -79,6 +79,11 @@ SLOTS = {
     "new_session": ["New session; picking up where we left off."],
 }
 SERVERS = ("tracker", "docs_hub", "team_chat", "ops_portal", "work_notes")
+# rendered-state tokens of a campaign root, fitted on the kinds probe (142 rendered roots at 4e2effe): base + per long
+# result (>= 1,000 characters) + per short result; campaign roots carry short plan / carrier results, so every filler
+# read is a long block and at least MIN_LONG long results sit in the call's session
+CPLAN = {"base": 1333.0, "long": 355.0, "short": 77.0}
+MIN_LONG = 3
 # a result block's first line -> a shell command whose output it plausibly is
 BLOCK_COMMANDS = (
     (r"^diff --git", "git diff"),
@@ -398,10 +403,10 @@ def realise(inst, events, banks, nz, tseed, nseed):
 
     def filler(s, k, n):
         blocks = banks.get("result_blocks") or []
-        need = G.MIN_BLOCKS_ROOT if (k == 0 and s == sessions - 1 and blocks) else 0
+        need = MIN_LONG if (k == 0 and s == sessions - 1 and blocks) else 0
         for j in range(max(n, need)):
             r = R("fill", s, k, j)
-            if blocks and (j < need or r.random() < G.BLOCK_SHARE):
+            if blocks:
                 text = unbrace(G.fill(r.choice(blocks), {"topic": inst["topic"]}))
                 w.block_excess = getattr(w, "block_excess", 0) + max(
                     0, len(json.dumps(text)) - G.RENDERED_BLOCK_CHARS
@@ -550,11 +555,21 @@ def realise(inst, events, banks, nz, tseed, nseed):
             c = inst["call"]
             if c["form"] == "shell":
                 run, pos = fill_pos(c["run"], {"target": vals["target"], "amount": vals["amount"]})
+                # a unit that starts or ends inside a shell word (e.g. "store/{target}") has no whole-token rendering:
+                # the call's object unit is the whole word that holds the target
+                a, b = pos["target"]
+                while a > 0 and not run[a - 1].isspace() and run[a - 1] not in "\"'=":
+                    a -= 1
+                while b < len(run) and not run[b].isspace() and run[b] not in "\"';":
+                    b += 1
+                pos["target"] = [a, b]
                 body, field = {"run": run}, "run"
             else:
-                run = in_cwd(vals["target"])
-                at = len(run) - len(vals["target"])
-                pos = {"target": [at, len(run)]}
+                # the literal path in the session's working directory: the unit is the whole argument (a unit inside
+                # "{cwd}/..." starts mid-token after the slash and has no whole-token rendering)
+                t = vals["target"]
+                run = t if t.startswith("/") else w.sessions[s]["cwd"] + "/" + t
+                pos = {"target": [0, len(run)]}
                 body, field = {"write": run, "content": G.fill(c.get("content", ""), sub)}, "write"
             ss, st = w.step(s, body)
             call_step = (ss, st, field, pos, run)
@@ -689,6 +704,21 @@ def assemble(rid, pair_id, family, events, w, call_step, spans, kind, mech):
 
 
 # ------------------------------------------------------------------------------------------------------------ pairs
+def est_tokens(w):
+    outs = [
+        st["output"] for s in w.sessions for st in s["steps"] if isinstance(st.get("output"), str)
+    ]
+    n_long = sum(len(o) >= 1000 for o in outs)
+    return CPLAN["base"] + CPLAN["long"] * n_long + CPLAN["short"] * (len(outs) - n_long)
+
+
+def plan_reads(rng, tokens, w0):
+    """Filler reads (each one long block) that bring the bare root to the target; --calibrate draws at random."""
+    if G.PLAN.get("calibrate"):
+        return rng.randrange(0, G.PLAN["calibrate"] + 1)
+    return max(0, round((tokens - est_tokens(w0)) / CPLAN["long"]))
+
+
 def facts_once(root):
     """Every fact's text occurs exactly once in its step's field (the campaign contract's rule)."""
     steps = {st["id"]: st for s in root["sessions"] for st in s["steps"]}
@@ -772,8 +802,8 @@ def generate(
         for events in (base,) if benign else (base, twin):
             (_, ws) = build(inst, events, banks, nz, tseed, nseed, "x", "x", family, kind, mech)
             bare.append(ws)
-        w0 = max(bare, key=G.est_tokens)
-        nz["reads"] = G.plan_reads(random.Random(f"plan:{nseed}"), tokens, w0)
+        w0 = max(bare, key=est_tokens)
+        nz["reads"] = plan_reads(random.Random(f"plan:{nseed}"), tokens, w0)
         made, last_w = [], None
         for k, events in enumerate((base,) if benign else (base, twin)):
             rid = "gr" + hashlib.sha256(f"{pair_id}:{k}:{nseed}".encode()).hexdigest()[:10]

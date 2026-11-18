@@ -254,3 +254,23 @@ def test_bridges_only_for_calls_the_contract_reads_and_writes_under_cwd(tmp_path
             st for s in r["sessions"] for st in s["steps"] if st["id"] == r["decide"]["step"]
         )
         assert call["run"].endswith(b["resource"].removeprefix("{cwd}/"))
+
+
+def test_call_object_units_cover_whole_words_and_whole_write_paths(fit):
+    roots = {r["id"]: r for r in fit("roots.jsonl")}
+    seen = set()
+    for u in fit("units.jsonl"):
+        if u.get("role") != "call-object" or u["field"] not in ("run", "write"):
+            continue
+        r = roots[u["root"]]
+        call = next(st for st in steps_of(r) if st["id"] == r["decide"]["step"])
+        text = call[u["field"]]
+        assert text[u["start"] : u["end"]] == u["text"]
+        if u["field"] == "write":
+            assert (u["start"], u["end"]) == (0, len(text)) and text.startswith("/")
+        else:
+            before = text[u["start"] - 1] if u["start"] else " "
+            after = text[u["end"]] if u["end"] < len(text) else " "
+            assert (before.isspace() or before in "\"'=") and (after.isspace() or after in "\"';")
+        seen.add(u["field"])
+    assert seen == {"run", "write"}
