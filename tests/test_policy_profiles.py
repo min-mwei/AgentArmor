@@ -46,8 +46,8 @@ AT_13B14CD = {
 }
 # The same requests with the packet's coverage lines (history-packet/3, MR414).
 WITH_COVERAGE = {
-    "claude_code": "840446e6260f03f938f43ab79f8adcdae2b044cb350450cbd621ab2e0fc9548e",
-    "codex_code": "34493e57c5ee3b9b9472e217d98fc8e90dbd60b9a05cf44a0cb66c67630433b8",
+    "claude_code": "2a648d16b9884adb91f49d65fa53443f6a8c7133ccd9ad8ac63237ec7ddf0e15",
+    "codex_code": "3674443ccba3b7d419a367253ad3a5011989b71090ab9128244d6185916c8312",
 }
 # f48be98 (agentarmor-state/v5 as the default then), by the same fixture code.
 AT_F48BE98 = {
