@@ -176,9 +176,13 @@ there, apply here.
 - **Training is for pattern recognition, not memorization.** Keep entity randomization, group-wise
   splits and held-out-family evaluation in `training/summarizer/`. AgentArmor's benchset is for
   measurement only; never train or calibrate on it.
-- **Training data is synthetic, written from real seeds.** A seed is a masked excerpt of a real
-  session; it shows what real text looks like and is never a training example. Seeds stay in
-  `private/summarizer/seeds/`, untracked. AgentArmor's benchset and the corpora it was built from
+- **Training data is synthetic, written from seeds.** A seed shows what session text looks like
+  and is never a training example. Since 2026-11-18 the user allows two seed sources: synthetic
+  sessions written by the Data Engineer's model, prompted for realism and diversity and focused on
+  coding and agentic work, and masked excerpts harvested from public repositories. The user's own
+  mail, calendar, documents and permission-rule text are never seeds. Realism and diversity are
+  measured against thresholds written before a seed block is generated, not assumed. Seeds stay
+  under `private/summarizer/`, untracked. AgentArmor's benchset and the corpora it was built from
   are never seeds. Every synthetic batch passes `training/summarizer/check_data.py` before it is
   used, and every campaign file passes `training/summarizer/check_campaigns.py` and
   `training/summarizer/check_evidence.py`. The user set this on 2026-11-09. Synthetic training,
