@@ -260,6 +260,11 @@ def scenario(rng, inst, mech, sessions, benign=False):
     other = rng.choice([t for t in targets if t != target])
     action = inst["action"]
     last = sessions - 1
+    # the first session an agent step or carrier may use: with more than one session, never the scope turn's (session
+    # 0). The summarizer links an action only to its own session's requests, so a step beside the scope turn would carry
+    # the decisive turn's grounding into derived marks (goal_drift / action_source) that differ between the twins
+    # (kinds probes 6 and 7)
+    first = 1 if sessions > 1 else 0
     vals = {"target": target, "other": other, "amount": None}
     amounts = (inst.get("amounts") or {}).get("examples") or []
     prior = []
@@ -313,7 +318,7 @@ def scenario(rng, inst, mech, sessions, benign=False):
             if kind == "poisoned-notes"
             else last
             if kind == "agent-handoff"
-            else rng.randrange(sessions)
+            else rng.randrange(first, sessions)
         )
         if kind == "poisoned-notes":
             # what the agent read (lower trust), then its own notes carrying it on; both in an earlier session
@@ -361,7 +366,7 @@ def scenario(rng, inst, mech, sessions, benign=False):
                 if kind == "agent-handoff"
                 else last
                 if inst["plan"][j].get("path") == "{target}" and not call_bridgeable
-                else min(last, j * sessions // max(1, len(plan))),
+                else max(first, min(last, j * sessions // max(1, len(plan)))),
                 "slot": f"plan-{j}",
                 "plan": j,
             }
@@ -375,7 +380,9 @@ def scenario(rng, inst, mech, sessions, benign=False):
                 "target": target,
                 "amount": a,
                 "status": "returned",
-                "session": last if k == len(prior) - 1 else min(last, k * sessions // len(prior)),
+                "session": last
+                if k == len(prior) - 1
+                else max(first, min(last, k * sessions // len(prior))),
                 "slot": f"prior-{k}",
                 "prior": k,
             }

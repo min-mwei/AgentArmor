@@ -436,3 +436,22 @@ def test_handoff_scope_session_holds_no_plan_step(fit):
             assert b["session"] not in (r["sessions"][scope_s]["id"], r["decide"]["session"])
             seen += 1
     assert seen
+
+
+def test_scope_session_holds_no_agent_step_when_the_call_is_elsewhere(fit):
+    # kinds probe 7: cross-session scope-lower pairs of other kinds kept the agent-handoff defect wherever a plan step or
+    # an earlier counted call fell in the scope turn's session (one extra goal_drift / action_source in the attack twin)
+    oracle = {o["root"]: o for o in fit("oracle.jsonl")}
+    seen = 0
+    for p in fit("pairs.jsonl"):
+        for rid in p["root_ids"]:
+            ev = oracle[rid]["events"]
+            scope_s, call_s = ev[0]["session"], ev[-1]["session"]
+            if scope_s == call_s:
+                continue
+            here = [e for e in ev[1:] if e["session"] == scope_s and e["kind"] == "step"]
+            carrier = [e for e in ev[1:] if e["session"] == scope_s and e.get("slot") == "carrier"]
+            assert not here, (p["kind"], here)
+            assert not carrier or p["kind"] == "poisoned-notes", (p["kind"], carrier)
+            seen += 1
+    assert seen
