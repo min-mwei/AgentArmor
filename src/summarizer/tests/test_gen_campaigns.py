@@ -177,15 +177,79 @@ def test_nothing_private_in_sessions(fit):
         assert k not in text
 
 
-def test_benign_only_rows_are_allowed_and_short(tmp_path):
-    rows = run(tmp_path, "--pairs", "20", "--benign-only")
+def test_benign_only_rows_follow_the_paired_legitimate_twins(tmp_path, fit):
+    rows = run(tmp_path, "--pairs", "60", "--benign-only")
     oracle = rows("oracle.jsonl")
-    assert len(oracle) == 20 and all(o["label"] == "allow" for o in oracle)
-    assert all(sum(e["kind"] == "step" and "plan" in e for e in o["events"]) <= 2 for o in oracle)
+    assert len(oracle) == 60 and all(o["label"] == "allow" for o in oracle)
+
+    def shape(o):
+        return (sum(e["kind"] == "step" for e in o["events"]), o["events"][-1]["session"] + 1)
+
+    legit = [shape(o) for o in fit("oracle.jsonl") if o["label"] == "allow"]
+    benign = [shape(o) for o in oracle]
+    for i in (0, 1):  # plan depth and session count: same distribution (means within 15%)
+        a = sum(x[i] for x in legit) / len(legit)
+        b = sum(x[i] for x in benign) / len(benign)
+        assert abs(a - b) <= 0.15 * a, (i, a, b)
 
 
-def test_placement_is_recorded(fit):
-    assert {p["placement"] for p in fit("pairs.jsonl")} <= {"same-session", "cross-session"}
+def test_label_share_does_not_move_with_session_count_within_a_kind(tmp_path):
+    rows = run(tmp_path, "--pairs", "90", "--role", "fit", "--controls", "0.3")
+    (tmp_path / "b").mkdir()
+    benign = run(tmp_path / "b", "--pairs", "45", "--benign-only")
+    oracle = {o["root"]: o for o in rows("oracle.jsonl") + benign("oracle.jsonl")}
+    pairs = rows("pairs.jsonl") + benign("pairs.jsonl")
+    cells = {}
+    for p in pairs:
+        for r in p["root_ids"]:
+            o = oracle[r]
+            key = (p["kind"], o["events"][-1]["session"] + 1)
+            c = cells.setdefault(key, [0, 0])
+            c[0] += o["label"] == "deny"
+            c[1] += 1
+    for kind in {k for k, _ in cells}:
+        shares = [cells[(kind, n)][0] / cells[(kind, n)][1] for n in (1, 2) if (kind, n) in cells]
+        if len(shares) == 2:
+            assert abs(shares[0] - shares[1]) <= 0.12, (kind, cells[(kind, 1)], cells[(kind, 2)])
+
+
+def test_a_written_target_stays_in_the_call_session_unless_bridged(tmp_path):
+    inst = dict(instance("planted-file", 1), call={"form": "shell", "run": "go run {target}"})
+    inst["plan"] = [
+        inst["plan"][0],
+        {"form": "write", "path": "{target}", "content": "package main"},
+        inst["plan"][2],
+    ]
+    camp = tmp_path / "camp"
+    camp.mkdir()
+    (camp / "campaigns.json").write_text(
+        json.dumps([dict(inst, id=f"planted-file-{n:02d}") for n in range(1, 17)])
+    )
+    out = tmp_path / "out"
+    C.main(
+        [
+            "--banks",
+            str(tmp_path / "none"),
+            "--campaigns",
+            str(camp),
+            "--out",
+            str(out),
+            "--pairs",
+            "12",
+        ]
+    )
+    for r in map(json.loads, (out / "roots.jsonl").read_text().splitlines()):
+        writes = [s["id"] for s in r["sessions"] for st in s["steps"] if "write" in st]
+        assert writes and set(writes) == {r["decide"]["session"]} and "bridges" not in r
+
+
+def test_placement_is_where_the_scope_turn_sits_for_every_pair_type(fit):
+    oracle = {o["root"]: o for o in fit("oracle.jsonl")}
+    for p in fit("pairs.jsonl"):
+        o = oracle[p["root_ids"][0]]
+        scope = o["events"][0]  # the opening scope / task turn
+        want = "same-session" if scope["session"] == o["events"][-1]["session"] else "cross-session"
+        assert p["placement"] == want
 
 
 def test_placement_follows_the_flipped_event(fit):

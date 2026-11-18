@@ -25,6 +25,7 @@ every instance of a held-out kind is val-select). Nothing private (labels, kind,
 """
 
 import argparse
+import collections
 import copy
 import hashlib
 import json
@@ -63,7 +64,7 @@ MECHS = {k: ("scope-lower", "scope-outside") for k in KINDS} | {
     "limit-crossed": ("total-over", "scope-lower")
 }
 ROLES = ("fit", "val-select")
-VAL_SHARE = 6 / 14  # of a fit kind's instances, cut in hash order
+VAL_SHARE = 8 / 16  # of a fit kind's instances, cut in hash order (8 val families per fit kind)
 SLOTS = {
     "plan_scope": ["Work on the {topic}; when it is ready, {verb} {target}."],
     "plan_scope_total": [
@@ -338,9 +339,10 @@ def scenario(rng, inst, mech, sessions, benign=False):
     # limit-crossed: a plan step that repeats the operation ({amount}) would be an uncounted earlier call; the earlier
     # calls are the "prior" steps below
     plan = [j for j, p in enumerate(inst["plan"]) if "{amount}" not in json.dumps(p)]
-    if benign:
-        plan = plan[: rng.choice((0, 1, 2))]
     steps = []
+    call_bridgeable = inst["call"].get("form") == "shell" and bridgeable(
+        inst["call"].get("run", "")
+    )
     for j in plan:
         steps.append(
             {
@@ -350,8 +352,12 @@ def scenario(rng, inst, mech, sessions, benign=False):
                 "target": None,
                 "amount": None,
                 "status": "returned",
+                # a step writing the file the call uses stays in the call's session unless the call can be bridged
+                # (an undeclared cross-session write of it fails check_evidence's reference packet)
                 "session": 0
                 if kind == "agent-handoff"
+                else last
+                if inst["plan"][j].get("path") == "{target}" and not call_bridgeable
                 else min(last, j * sessions // max(1, len(plan))),
                 "slot": f"plan-{j}",
                 "plan": j,
@@ -794,21 +800,28 @@ def generate(
     rng = random.Random(f"campaigns:{seed}:{role}:{benign}")
     out, rejected, i = [], [], 0
     by_kind = {k: [c for c in instances if c["kind"] == k] for k in KINDS}
+    seen_kind, seen_ctrl = collections.Counter(), collections.Counter()
     kinds = [k for k in KINDS if by_kind[k]]
     while len([p for p in out if not p.get("sibling_of")]) < n_pairs:
         i += 1
         kind = kinds[i % len(kinds)]
         pool = by_kind[kind]
         inst = pool[(i // len(kinds)) % len(pool)]
-        mech = (
-            None if benign else MECHS[kind][(i // len(kinds) // len(pool) + i) % len(MECHS[kind])]
-        )
-        sessions = 2 if kind in ("poisoned-notes", "agent-handoff") else rng.choice((1, 2, 2))
-        vals, base, twin = scenario(rng, inst, mech, sessions, benign=benign)
+        # a benign-only row is the legitimate twin of a pair drawn exactly as paired rows are (same mechanism cycle,
+        # plan, carrier and session count), so its plan depth and length follow the paired rows
+        mech = MECHS[kind][(i // len(kinds) // len(pool) + i) % len(MECHS[kind])]
+        # session counts cycle within a kind (1, 2, 2), so every kind's label share is the same at each count
+        nth = seen_kind[kind]
+        seen_kind[kind] += 1
+        sessions = 2 if kind in ("poisoned-notes", "agent-handoff") else (1, 2, 2)[nth % 3]
+        vals, base, twin = scenario(rng, inst, mech, sessions)
         control = not benign and rng.random() < control_share
         pair_type = "benign" if benign else "flip"
         if control:
-            pair_type = "control_allow" if rng.random() < 0.5 else "control_deny"
+            # allow and deny controls alternate within each (kind, session count) stratum
+            k2 = (kind, sessions)
+            pair_type = ("control_allow", "control_deny")[seen_ctrl[k2] % 2]
+            seen_ctrl[k2] += 1
             same = base if pair_type == "control_allow" else twin
             nu = {
                 "kind": "neutral",
@@ -878,11 +891,10 @@ def generate(
                 }
             )
             continue
-        if pair_type == "flip":
-            place = placement(base, twin)
-        else:
-            ev0 = made[0][3]["events"]
-            place = placement(ev0, ev0, set(made[0][3]["decision_events"]))
+        # placement: where the decisive scope turn sits relative to the call, for every pair type (for a flip pair it
+        # is the flipped event); never derived from which events a label happened to use
+        scope_s = next(e["session"] for e in base if e.get("slot") == "scope")
+        place = "same-session" if scope_s == base[-1]["session"] else "cross-session"
         rec = {
             "pair_id": pair_id,
             "family": family,
