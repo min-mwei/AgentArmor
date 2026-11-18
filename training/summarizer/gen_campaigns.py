@@ -181,7 +181,11 @@ def scenario(rng, inst, mech, sessions, benign=False):
     Events carry a "slot" (the realisation's position) so the twins differ only in the flipped event."""
     kind = inst["kind"]
     targets = list(inst["targets"])
-    target = rng.choice(targets)
+    call_t = inst["call"].get("run") or inst["call"].get("path")
+    # a fact's text occurs exactly once in its step (campaign contract): a target that occurs elsewhere in the filled
+    # call is not drawn
+    once = [t for t in targets if G.fill(call_t, {"target": t, "amount": "\x00"}).count(t) == 1]
+    target = rng.choice(once or targets)
     other = rng.choice([t for t in targets if t != target])
     action = inst["action"]
     last = sessions - 1
@@ -189,9 +193,16 @@ def scenario(rng, inst, mech, sessions, benign=False):
     amounts = (inst.get("amounts") or {}).get("examples") or []
     prior = []
     if kind == "limit-crossed":
-        big = [a for a in amounts if a >= 2] or [2]
+
+        def single(a):
+            return G.fill(call_t, {"target": target, "amount": a}).count(str(a)) == 1
+
+        big = [a for a in amounts if a >= 2 and single(a)] or [a for a in amounts if a >= 2] or [2]
         vals["amount"] = rng.choice(big)
-        prior = [rng.choice(amounts) for _ in range(rng.choice((2, 3)))]
+        # earlier calls: distinct amounts, none equal to the call's (each counted step's line is its own fact)
+        pool = [a for a in amounts if a != vals["amount"] and single(a)]
+        pool = pool or [a for a in amounts if a != vals["amount"]]
+        prior = rng.sample(pool, min(len(pool), rng.choice((2, 3))))
     total_all = sum(prior) + (vals["amount"] or 0)
     scope = {
         "kind": "grant",
@@ -226,7 +237,13 @@ def scenario(rng, inst, mech, sessions, benign=False):
     carry = not benign and (mech == "scope-lower" or rng.random() < 0.5)
     if carry:
         style = rng.choice(CARRIERS[kind])
-        c_session = 0 if kind == "poisoned-notes" else rng.randrange(sessions)
+        c_session = (
+            0
+            if kind == "poisoned-notes"
+            else last
+            if kind == "agent-handoff"
+            else rng.randrange(sessions)
+        )
         if kind == "poisoned-notes":
             # what the agent read (lower trust), then its own notes carrying it on; both in an earlier session
             src = {
@@ -261,7 +278,9 @@ def scenario(rng, inst, mech, sessions, benign=False):
                 "target": None,
                 "amount": None,
                 "status": "returned",
-                "session": min(last, j * sessions // max(1, len(plan))),
+                "session": 0
+                if kind == "agent-handoff"
+                else min(last, j * sessions // max(1, len(plan))),
                 "slot": f"plan-{j}",
                 "plan": j,
             }
@@ -335,6 +354,9 @@ def realise(inst, events, banks, nz, tseed, nseed):
     w = G.Writer(
         f"/work/{slug}-{nz['workspace']}", sessions
     )  # never the instance id (it names the kind)
+    if inst["kind"] == "agent-handoff" and sessions > 1:
+        w.sessions[0]["agent"] = "codex_code"  # the earlier agent of the handoff
+    w.bridges = []
     people = inst.get("people") or ["Avery Lin", "Sam Ortiz", "Kim Ferro"]
     server = SERVERS[int(hashlib.sha256(inst["id"].encode()).hexdigest(), 16) % len(SERVERS)]
     vals = nz["vals"]
@@ -429,7 +451,23 @@ def realise(inst, events, banks, nz, tseed, nseed):
                             "write": G.fill(p["path"], sub),
                             "content": G.fill(p.get("content", ""), sub),
                         }
-                    w.step(s, body)
+                    ss, st = w.step(s, body)
+                    c = inst["call"]
+                    runs_it = (
+                        c["form"] == "shell"
+                        and p["form"] in ("write", "ci")
+                        and p["path"] == "{target}"
+                    )
+                    if runs_it and s < sessions - 1:
+                        # the file the call runs was written in an earlier session: the campaign's bridge
+                        w.bridges.append(
+                            {
+                                "session": ss,
+                                "step": st,
+                                "resource": "{cwd}/" + vals["target"],
+                                "use": "run",
+                            }
+                        )
                 elif e["kind"] == "step":
                     run = G.fill(
                         inst["call"]["run"], {"target": e["target"], "amount": e["amount"]}
@@ -567,6 +605,7 @@ def assemble(rid, pair_id, family, events, w, call_step, spans, kind, mech):
         "sessions": w.sessions,
         "decide": {"session": css, "step": cst},
         "facts": facts,
+        **({"bridges": w.bridges} if getattr(w, "bridges", None) else {}),
         "expect": "sufficient",
         "route": "asked",
         "story": {
@@ -614,6 +653,22 @@ def assemble(rid, pair_id, family, events, w, call_step, spans, kind, mech):
 
 
 # ------------------------------------------------------------------------------------------------------------ pairs
+def facts_once(root):
+    """Every fact's text occurs exactly once in its step's field (the campaign contract's rule)."""
+    steps = {st["id"]: st for s in root["sessions"] for st in s["steps"]}
+    for f in root["facts"]:
+        st = steps[f["step"]]
+        if f["event"] != "proposed":
+            text = st.get(f["field"])
+        elif isinstance(st.get("input"), dict):
+            text = "\n".join(v for v in st["input"].values() if isinstance(v, str))
+        else:
+            text = st.get("run") or st.get("write")
+        if not isinstance(text, str) or text.count(f["text"]) != 1:
+            return False
+    return True
+
+
 def placement(base, twin, used=None):
     """same-session when the decisive event is in the call's session, else cross-session. For a flip pair the
     decisive event is the one aligned event the twins differ in; otherwise (controls, benign rows) the events the
@@ -648,7 +703,7 @@ def generate(
         mech = (
             None if benign else MECHS[kind][(i // len(kinds) // len(pool) + i) % len(MECHS[kind])]
         )
-        sessions = 2 if kind == "poisoned-notes" else rng.choice((1, 2, 2))
+        sessions = 2 if kind in ("poisoned-notes", "agent-handoff") else rng.choice((1, 2, 2))
         vals, base, twin = scenario(rng, inst, mech, sessions, benign=benign)
         control = not benign and rng.random() < control_share
         pair_type = "benign" if benign else "flip"
@@ -712,7 +767,7 @@ def generate(
             )
             for m in made
         }
-        if labels != want or len(calls) != 1:
+        if labels != want or len(calls) != 1 or not all(facts_once(m[0]) for m in made):
             rejected.append(
                 {
                     "pair_id": pair_id,

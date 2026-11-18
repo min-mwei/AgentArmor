@@ -375,6 +375,10 @@ def load_blocks(folder, part):
         and set(PLACEHOLDER.findall(t)) <= {"topic"}
         and t.count("{") == t.count("{topic}")
     ]
+    if (
+        PLAN["version"] == "3.7"
+    ):  # a block carrying a word a reader must not see (check_pairs.BANNED) is dropped
+        ts = [t for t in ts if not any(re.search(b, t, re.I) for b in BANNED)]
     if len(ts) < 3:
         return ts
     # v3.6: cut in hash order, not file order (an author may list blocks by length; the cut must not split by length)
