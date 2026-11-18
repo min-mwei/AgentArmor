@@ -800,7 +800,11 @@ def generate(
     rng = random.Random(f"campaigns:{seed}:{role}:{benign}")
     out, rejected, i = [], [], 0
     by_kind = {k: [c for c in instances if c["kind"] == k] for k in KINDS}
-    seen_kind, seen_ctrl = collections.Counter(), collections.Counter()
+    seen_kind, seen_ctrl, seen_sib = (
+        collections.Counter(),
+        collections.Counter(),
+        collections.Counter(),
+    )
     kinds = [k for k in KINDS if by_kind[k]]
     while len([p for p in out if not p.get("sibling_of")]) < n_pairs:
         i += 1
@@ -911,7 +915,9 @@ def generate(
         }
         sib = None
         if not benign and not control and rng.random() < sibling_share:
-            side = rng.randrange(2)
+            # the side a sibling repeats alternates within each (kind, sessions) stratum, like controls
+            side = seen_sib[(kind, sessions)] % 2
+            seen_sib[(kind, sessions)] += 1
             events0 = (base, twin)[side]
             sid = "cp" + hashlib.sha256(f"{tag}:sib".encode()).hexdigest()[:10]
             sib_made = []
