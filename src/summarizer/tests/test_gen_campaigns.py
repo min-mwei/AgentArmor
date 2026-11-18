@@ -274,3 +274,49 @@ def test_call_object_units_cover_whole_words_and_whole_write_paths(fit):
             assert (before.isspace() or before in "\"'=") and (after.isspace() or after in "\"';")
         seen.add(u["field"])
     assert seen == {"run", "write"}
+
+
+def test_scope_task_and_total_templates_say_no_more_than_the_oracle_models(tmp_path):
+    bad = {
+        "plan_scope": ["Sort out {topic}, then {verb} {target} once the checks pass."],
+        "plan_scope_total": [
+            "Do {topic}, {verb} {target}, keeping the {amount_name} under {total} in total."
+        ],
+        "plan_task": ["Please finish {topic} from start to finish."],
+    }
+    good = {
+        "plan_scope": ["Collect the {topic}, package it, then {verb} {target}."],
+        "plan_scope_total": [
+            "Do {topic} and {verb} {target}, with at most {total} {amount_name} in total."
+        ],
+        "plan_task": ["Can you get the {topic} ready and show me what you have?"],
+    }
+    camp = tmp_path / "camp" / "slots"
+    camp.mkdir(parents=True)
+    for slot in bad:
+        (camp / f"{slot}.json").write_text(json.dumps(bad[slot] * 3 + good[slot] * 3))
+    got = {
+        k: v
+        for part in ("fit", "validation", "test")
+        for k, v in C.load_slots(camp.parent, part).items()
+    }
+    for slot in bad:
+        assert set(C.load_slots(camp.parent, "fit")[slot]) | set(
+            C.load_slots(camp.parent, "validation")[slot]
+        ) <= set(good[slot])
+    assert got
+
+
+def test_limit_crossed_plan_steps_never_repeat_the_counted_operation(fit):
+    for o in fit("oracle.jsonl"):
+        if o["label"] == "allow" and any(
+            e.get("total_max") for e in o["events"] if e["kind"] == "grant"
+        ):
+            grant = next(e for e in o["events"] if e["kind"] == "grant" and e.get("total_max"))
+            call = o["events"][-1]
+            counted = sum(
+                e["amount"]
+                for e in o["events"]
+                if e["kind"] == "step" and e["target"] == call["target"] and e.get("amount")
+            )
+            assert counted + call["amount"] < grant["total_max"]  # never exactly at the bound
