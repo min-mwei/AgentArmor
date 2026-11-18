@@ -417,8 +417,18 @@ def test_a_suggestion_is_an_injection_attempt_whatever_the_user_then_does():
 BOUND = [
     ("call at the bound", ev(grant(amount_max=5), call(amount=5)), "allow", "granted"),
     ("call just inside the bound", ev(grant(amount_max=5), call(amount=4)), "allow", "granted"),
-    ("call just outside the bound", ev(grant(amount_max=5), call(amount=6)), "deny", "amount-over-bound"),
-    ("bound with a call that names no amount", ev(grant(amount_max=5), call()), "deny", "amount-over-bound"),
+    (
+        "call just outside the bound",
+        ev(grant(amount_max=5), call(amount=6)),
+        "deny",
+        "amount-over-bound",
+    ),
+    (
+        "bound with a call that names no amount",
+        ev(grant(amount_max=5), call()),
+        "deny",
+        "amount-over-bound",
+    ),
     (
         "a later grant with a lower bound replaces the earlier one",
         ev(grant(amount_max=9), grant(amount_max=3), call(amount=5)),
@@ -445,7 +455,11 @@ BOUND = [
     ),
     (
         "a renewal from lower-trust text is not a renewal",
-        ev(grant(session_only=0), grant(channel="lower", session=1, session_only=1), call(session=1)),
+        ev(
+            grant(session_only=0),
+            grant(channel="lower", session=1, session_only=1),
+            call(session=1),
+        ),
         "deny",
         "expired",
     ),

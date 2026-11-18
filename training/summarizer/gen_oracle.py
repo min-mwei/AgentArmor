@@ -107,7 +107,9 @@ def decide(events):
         )
     if g.get("amount") is not None and g["amount"] != c.get("amount"):
         return "deny", "amount-mismatch", ids(gi, ci), []
-    if g.get("amount_max") is not None and (c.get("amount") is None or c["amount"] > g["amount_max"]):
+    if g.get("amount_max") is not None and (
+        c.get("amount") is None or c["amount"] > g["amount_max"]
+    ):
         return "deny", "amount-over-bound", ids(gi, ci), []
     for action, name, xi in sorted(forbidden):
         if action == c["action"] and name in lists and c["target"] in lists[name][1]:
