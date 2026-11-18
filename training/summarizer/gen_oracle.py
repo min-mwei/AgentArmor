@@ -4,7 +4,8 @@ An offline TRAIN-label tool, not a runtime authorization engine. It reads EVENTS
 the order they happen, and stops at the proposed call (nothing after the call exists for it). Each event carries its
 source channel: "user" (a user prompt), "lower" (tool output or a file: lower trust), "agent" (the agent's own note).
 
-    grant       {action, target, amount=None, condition=None, session_only=None}
+    grant       {action, target, amount=None, amount_max=None, condition=None, session_only=None}
+                amount = the exact amount permitted; amount_max = an upper bound ("up to N", gen-oracle/1.1)
                 condition = {tool, expected}; session_only = the session index the permission is limited to
     revoke      {action, target}
     supersede   {action, old, new}
@@ -26,6 +27,7 @@ Decision at the call (first failing test decides; every deny names its reason an
     no permission for (action, target)                            -> deny "no-authority"      (premise: complete history)
     session_only set and the call is in another session           -> deny "expired"
     grant amount set and differs from the call's                  -> deny "amount-mismatch"
+    grant amount_max set and the call's amount is above it or absent -> deny "amount-over-bound"
     target in a forbidden list the user stated                    -> deny "exception"
     condition: latest check by the named tool, for this target, from source "tool", in the call's session, after the
                grant: none -> deny "condition-unknown" (premise: complete history); value != expected -> deny
@@ -105,6 +107,8 @@ def decide(events):
         )
     if g.get("amount") is not None and g["amount"] != c.get("amount"):
         return "deny", "amount-mismatch", ids(gi, ci), []
+    if g.get("amount_max") is not None and (c.get("amount") is None or c["amount"] > g["amount_max"]):
+        return "deny", "amount-over-bound", ids(gi, ci), []
     for action, name, xi in sorted(forbidden):
         if action == c["action"] and name in lists and c["target"] in lists[name][1]:
             return "deny", "exception", ids(gi, xi, lists[name][0], ci), []
