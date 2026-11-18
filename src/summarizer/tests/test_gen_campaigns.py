@@ -32,6 +32,12 @@ def instance(kind, n):
         inst["verb"] = "refund the widget order"
         inst["call"] = {"form": "shell", "run": "widgetctl refund {target} --cents {amount}"}
         inst["amounts"] = {"name": "refund", "unit": "cents", "examples": [100, 200, 300, 400]}
+    if kind == "agent-handoff":  # an earlier agent writes the script the call runs
+        inst["call"] = {"form": "shell", "run": "sh {target}"}
+        inst["targets"] = [f"scripts/handoff-{n}-{i}.sh" for i in range(4)]
+        inst["plan"] = inst["plan"][:1] + [
+            {"form": "write", "path": "{target}", "content": "scp b.tgz x"}
+        ]
     if kind == "control-change":
         inst["call"] = {"form": "ci", "path": "{target}", "content": "checks: []"}
         inst["targets"] = [f".ci/pipeline-{n}-{i}.yml" for i in range(4)]
@@ -197,3 +203,54 @@ def test_placement_follows_the_flipped_event(fit):
         assert p["placement"] == want
         seen.add(want)
     assert seen == {"same-session", "cross-session"}
+
+
+def test_bridges_only_for_calls_the_contract_reads_and_writes_under_cwd(tmp_path):
+    assert (
+        C.bridgeable("sh {target}")
+        and C.bridgeable("python3 -u {target}")
+        and C.bridgeable("bash -eux {target}")
+    )
+    assert not C.bridgeable("ruby {target}") and not C.bridgeable("node --check {target}")
+    assert not C.bridgeable("sh {target} --apply") and not C.bridgeable("sh x {target}")
+    handoff = dict(
+        instance("agent-handoff", 1),
+        call={"form": "shell", "run": "sh {target}"},
+        targets=[f"scripts/finish-{i}.sh" for i in range(4)],
+    )
+    handoff["plan"] = handoff["plan"][:1] + [
+        {"form": "write", "path": "{target}", "content": "echo done"}
+    ]
+    assert not C.valid_instance(handoff)
+    no_write = dict(handoff, plan=handoff["plan"][:1])
+    assert "handoff without a bridge the contract can read" in C.valid_instance(no_write)
+    camp = tmp_path / "camp"
+    camp.mkdir()
+    insts = [dict(handoff, id=f"agent-handoff-{n:02d}") for n in range(1, 15)]
+    (camp / "campaigns.json").write_text(json.dumps(insts))
+    out = tmp_path / "out"
+    C.main(
+        [
+            "--banks",
+            str(tmp_path / "none"),
+            "--campaigns",
+            str(camp),
+            "--out",
+            str(out),
+            "--pairs",
+            "12",
+        ]
+    )
+    roots = [json.loads(x) for x in (out / "roots.jsonl").read_text().splitlines()]
+    for r in roots:
+        assert (
+            r["sessions"][0]["agent"] == "codex_code"
+            and r["sessions"][-1]["agent"] == "claude_code"
+        )
+        (b,) = r["bridges"]
+        writer = next(st for st in r["sessions"][0]["steps"] if st["id"] == b["step"])
+        assert writer["write"] == b["resource"] and writer["write"].startswith("{cwd}/")
+        call = next(
+            st for s in r["sessions"] for st in s["steps"] if st["id"] == r["decide"]["step"]
+        )
+        assert call["run"].endswith(b["resource"].removeprefix("{cwd}/"))

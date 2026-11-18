@@ -125,6 +125,31 @@ def load_slots(folder, part):
     return out
 
 
+# the interpreters and option words the campaign contract's call reading (campaign_contract.call_uses, version 10)
+# accepts before the file a call runs: a bridge is declared only for a call it can read
+RUN_FLAGS = {
+    "sh": {"-e", "-u", "-x", "-eu", "-ex", "-ux", "-eux"},
+    "bash": {"-e", "-u", "-x", "-eu", "-ex", "-ux", "-eux"},
+    "zsh": {"-e", "-u", "-x", "-eu", "-ex", "-ux", "-eux"},
+    "python": {"-u", "-B", "-E", "-s", "-I"},
+    "python3": {"-u", "-B", "-E", "-s", "-I"},
+    "node": set(),
+}
+
+
+def bridgeable(run):
+    """Whether a call template is an interpreter of RUN_FLAGS, its known options, then {target} and nothing else."""
+    words = run.split()
+    if not words or words[-1] != "{target}" or words[0] not in RUN_FLAGS:
+        return False
+    return all(w in RUN_FLAGS[words[0]] for w in words[1:-1])
+
+
+def in_cwd(path):
+    """A relative path written by a step, under the campaign's {cwd} placeholder (as the contract's own examples)."""
+    return path if path.startswith(("/", "{cwd}", "~")) else "{cwd}/" + path
+
+
 def valid_instance(c):
     """Problems with one campaigns.json instance (an instance with any is not used)."""
     bad = []
@@ -148,6 +173,14 @@ def valid_instance(c):
     for st in c.get("plan") or []:
         if st.get("form") not in ("shell", "read", "write", "ci"):
             bad.append("plan form")
+    if c.get("kind") == "agent-handoff" and not (
+        call.get("form") == "shell"
+        and bridgeable(call.get("run", ""))
+        and any(
+            st.get("form") == "write" and st.get("path") == "{target}" for st in c.get("plan") or []
+        )
+    ):
+        bad.append("handoff without a bridge the contract can read")
     if not c.get("plan"):
         bad.append("plan")
     for k in ("topic", "action", "verb"):
@@ -448,7 +481,7 @@ def realise(inst, events, banks, nz, tseed, nseed):
                         }
                     else:
                         body = {
-                            "write": G.fill(p["path"], sub),
+                            "write": in_cwd(G.fill(p["path"], sub)),
                             "content": G.fill(p.get("content", ""), sub),
                         }
                     ss, st = w.step(s, body)
@@ -457,6 +490,7 @@ def realise(inst, events, banks, nz, tseed, nseed):
                         c["form"] == "shell"
                         and p["form"] in ("write", "ci")
                         and p["path"] == "{target}"
+                        and bridgeable(c["run"])
                     )
                     if runs_it and s < sessions - 1:
                         # the file the call runs was written in an earlier session: the campaign's bridge
@@ -518,7 +552,9 @@ def realise(inst, events, banks, nz, tseed, nseed):
                 run, pos = fill_pos(c["run"], {"target": vals["target"], "amount": vals["amount"]})
                 body, field = {"run": run}, "run"
             else:
-                run, pos = vals["target"], {"target": [0, len(vals["target"])]}
+                run = in_cwd(vals["target"])
+                at = len(run) - len(vals["target"])
+                pos = {"target": [at, len(run)]}
                 body, field = {"write": run, "content": G.fill(c.get("content", ""), sub)}, "write"
             ss, st = w.step(s, body)
             call_step = (ss, st, field, pos, run)
