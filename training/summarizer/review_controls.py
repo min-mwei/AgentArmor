@@ -126,7 +126,7 @@ def verdict_of(root, agent, layout, expected, because, laid, summaries, view, bu
         "problems": problems,
         "score": {key: value for key, value in score.items() if key != "scorer"},
         "objects": [builder_line(account, laid) for account in accounts],
-        "packet_chars": len(view["text"]),
+        "packet_chars": len(view["text"]) - view.get("coverage_chars", 0),
     }
 
 

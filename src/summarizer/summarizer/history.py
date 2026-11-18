@@ -140,7 +140,7 @@ import json
 import os
 import re
 
-from . import effects
+from . import coverage, effects
 from .events import ENTRY_IOCS, TARGET_CHARS
 from .facts import PERSISTENT, expand, path_classes, shell_segments
 from .labels import combine, content_indicators
@@ -3209,8 +3209,9 @@ TITLE = "EARLIER SESSIONS"  # the section docs/multi-session-contract.md gives a
 # the code commit, the policy profile and its text hash, and this: the same policy text with
 # another selector is another input. 2 (MR369): a packet that left whole groups out for room is
 # built again with room kept only for the line it writes when nothing is left out, and taken
-# only if it is then complete and within its budget. Before, 1 (implicit).
-SELECTOR = "history-packet/2"
+# only if it is then complete and within its budget. Before, 1 (implicit). 3 (MR414): every
+# packet carries its coverage lines (summarizer.coverage), outside its budget and capped.
+SELECTOR = "history-packet/3"
 COMPLETE, INCOMPLETE = "history: ", "history: incomplete"  # how its second line begins
 OWN_SHARE = 2  # a session's own lines keep at least one part in this many of a packet's budget
 # Why a view of earlier sessions is incomplete: a fixed list, each with its one wording.
@@ -3274,7 +3275,47 @@ def _entry_of(summary, about):
     return None
 
 
-def packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=False):
+def packet(mine, call_id, others, home, budget=3000, call_sha256=None, unread=None):
+    """The packet for one proposed call (_packet()), with its coverage lines (summarizer.coverage)
+    after the session's own lines and before the EARLIER SESSIONS section (before the last line
+    when there is none), and its account under "coverage": what it shows of each session it
+    searched, user inputs, actions and results by event, through the call (MR414). unread is how
+    many sessions that might bear on the call could not be read, when the caller knows it
+    (earlier.scope()). The lines are outside the budget: the packet is byte for byte the one
+    _packet() builds in it, with the block (at most coverage.CAP characters) inserted, and
+    "coverage_chars" says how much longer that made the text."""
+    found = {}
+
+    def build(room):
+        view = _packet(mine, call_id, others, home, room, call_sha256)
+        found.update(view.pop("_found"))
+        return view
+
+    def account_of(view):
+        call = next(
+            e
+            for e in mine["summary"]["entries"]
+            if e.get("call_id") == call_id and e["type"] == "action"
+        )
+        shown = {}
+        for item in (view.get("history") or {}).get("items", ()):
+            shown.setdefault(item["alias"], []).append(item)
+        parts = found["parts"]
+        theirs = [
+            (parts[key]["alias"], parts[key]["summary"], shown.get(parts[key]["alias"], []))
+            + (found["unresolved"].get(key),)
+            for key in found["searched"]
+            if key in parts
+        ]
+        unbound = (found["unbound"] or {}).get("references", 0)
+        return coverage.account(
+            mine["summary"], call, view["shown"], theirs, found["set_aside"], unread, unbound
+        )
+
+    return coverage.framed(build, budget, account_of, before=TITLE)
+
+
+def _packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=False):
     """The packet for one proposed call: its own session's digest, focused on the call, and
     the section for other sessions that select() finds, written from each source's own
     lines. Returns the digest's view with "route" and, where there is a section, "history",
@@ -3324,6 +3365,10 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=Fa
     others = cut_at(others, float(call.get("ts") or 0))
     parts = {other["key"]: other for other in others}
     found = select(mine, call_id, others, home)
+    # What the coverage lines are written from (packet()): every session searched, as it stood.
+    coverage_found = {"parts": parts, "searched": found["searched"]}
+    coverage_found |= {"unresolved": found["unresolved"], "set_aside": len(found["excluded"])}
+    coverage_found["unbound"] = found["references_unbound"]
     # Each source's own lines, every one with the account of the entry it was written for
     # (text.entry_lines). A line of another session is shown as that session's summary
     # words it, for the very entry its account names, and is never found again by text.
@@ -3511,6 +3556,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=Fa
             "route": found["route"],
             "route_reason": found["route_reason"],
             "prior": prior,
+            "_found": coverage_found,
         }
     sources, seen = [], set()
     for source, *_ in items:
@@ -3609,7 +3655,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=Fa
     route = "undecided" if why else found["route"]
     reason = "history_incomplete" if why else found["route_reason"]
     told = {"text": text, "history": account, "route": route, "route_reason": reason}
-    built = view | told | {"fits": fits, "prior": prior}
+    built = view | told | {"fits": fits, "prior": prior, "_found": coverage_found}
     # The second line is reserved at its longest, the line that says what was left out. When whole
     # groups were left out for room and for nothing else, the whole packet may still fit with the
     # line it writes when nothing is left out, the shorter count (MR368: an earlier user request was
@@ -3621,7 +3667,7 @@ def packet(mine, call_id, others, home, budget=3000, call_sha256=None, _whole=Fa
     # same sources and cutoff; nothing is dropped, loosened or cut to make it complete.
     room_only = {"key_group_left_out", "context_left_out"}
     if not _whole and why and left and set(why) <= room_only:
-        whole = packet(mine, call_id, others, home, budget, call_sha256, _whole=True)
+        whole = _packet(mine, call_id, others, home, budget, call_sha256, _whole=True)
         complete = (whole.get("history") or {}).get("complete") is True
         if complete and whole.get("fits") and len(whole["text"]) <= budget:
             return whole

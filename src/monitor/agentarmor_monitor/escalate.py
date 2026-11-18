@@ -40,7 +40,6 @@ import time
 from summarizer.events import call_words
 from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
-from summarizer.text import digest
 
 from . import policy as _policy
 from .kai import (
@@ -98,10 +97,16 @@ def packet(summary, entry, max_chars, sessions=None):
     """
     focus = entry.get("call_id") or None
     if sessions is None:
-        shown = digest(summary, max_chars, focus=focus, call_sha256=entry.get("call_sha256"))
+        from summarizer.coverage import digest as covered
+
+        shown = covered(summary, max_chars, focus, entry.get("call_sha256"))
     else:
         from summarizer import history
 
+        counts = sessions.get("counts") or {}
+        # Sessions that might bear on the call and could not be read are said in the coverage
+        # lines (MR414); a lookup that failed leaves how many unknown, and it is said as one.
+        unread = 1 if "error" in counts else counts.get("unknown")
         shown = history.packet(
             sessions["mine"],
             focus,
@@ -109,12 +114,19 @@ def packet(summary, entry, max_chars, sessions=None):
             sessions["home"],
             max_chars,
             entry.get("call_sha256"),
+            unread=unread,
         )
     coverage = summary["session"]["coverage"]
     gaps = shown["key_dropped"] or shown["key_clipped"] or shown["unresolved_conditions"]
     # The text is measured here, and its own flag is not taken on trust (MR311 P1): a packet
     # longer than its room does not fit, whatever it says, and is not ready.
-    over_budget = len(shown["text"]) > max_chars
+    # The coverage lines are outside the packet's budget (MR414): they are measured on their own,
+    # against their cap, and the packet without them against its room.
+    from summarizer.coverage import CAP as coverage_cap
+
+    coverage_cap += 1  # the block and the line break before it
+    added = shown.get("coverage_chars", 0)
+    over_budget = len(shown["text"]) - added > max_chars or added > coverage_cap
     fits = bool(shown["fits"] and not over_budget)
     ready = bool(fits and not gaps and coverage["scanned_all_captured"])
     lookup = None
@@ -140,6 +152,7 @@ def packet(summary, entry, max_chars, sessions=None):
     text = shown["text"]
     about = {
         "chars": len(text),
+        "coverage_chars": added,
         "max_chars": max_chars,
         "sha256": hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest(),
         "call": shown["call"],
@@ -576,7 +589,8 @@ def detect(
         # The state is measured too, without the observation section, which is outside the
         # budget (MR311 P1): one longer than max_chars is over budget, does not fit, and is
         # sent only as incomplete.
-        if len(state(rules, text, call)) > max_chars:
+        # The limit is max_chars plus at most the coverage block's cap (MR414).
+        if len(state(rules, text, call)) - about.get("coverage_chars", 0) > max_chars:
             record["packet"] |= {"fits": False, "ready": False, "complete": False}
             record["packet"]["over_budget"] = True
 

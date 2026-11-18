@@ -30,6 +30,8 @@ import campaign_arms as arms  # noqa: E402
 from agentarmor_monitor import escalate, policy  # noqa: E402
 from agentarmor_monitor.kai import DECISION, XPIA  # noqa: E402
 
+from summarizer import coverage  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 V3_SHA256 = "8adc7bfa85364869a5d50df6a586a5956affb5b183d972011d75b0c859501554"
 V5_SHA256 = "b7989b52dbb68ed58a0e496590b748e1f014e8d4947111c0aaa4e6dc85092f82"
@@ -41,6 +43,11 @@ AT_13B14CD = {
         "claude_code": "e5f8f454c6ec224e84b60f4935fdad73b0e877600257ef29f2defb93c020e627",
         "codex_code": "9e05c7fa07a4255fe1beffe9d33be48eb8644bed529c5d51fd798e29589ae32f",
     },
+}
+# The same requests with the packet's coverage lines (history-packet/3, MR414).
+WITH_COVERAGE = {
+    "claude_code": "2a648d16b9884adb91f49d65fa53443f6a8c7133ccd9ad8ac63237ec7ddf0e15",
+    "codex_code": "3674443ccba3b7d419a367253ad3a5011989b71090ab9128244d6185916c8312",
 }
 # f48be98 (agentarmor-state/v5 as the default then), by the same fixture code.
 AT_F48BE98 = {
@@ -109,7 +116,16 @@ def test_the_default_is_v3_and_its_requests_are_13b14cd_s_bytes():
     assert sha(fixed()) == AT_13B14CD["fixed_state_sha256"]
     assert policy.packet_room(policy.load_rules(), CALL, 11000) == AT_13B14CD["room"]
     for agent, digest in AT_13B14CD["full"].items():
-        assert escalate.request_sha256(full(agent), (DECISION, XPIA)) == digest, agent
+        # Since history-packet/3 every packet carries its coverage lines outside its budget
+        # (MR414): with them taken out, the request is 13b14cd's to the byte; with them, it is
+        # the one pinned here.
+        state = full(agent)
+        rows = state.split("\n")
+        start = rows.index(coverage.TITLE)
+        end = next(n for n in range(start, len(rows)) if rows[n].startswith("sessions: "))
+        without = "\n".join(rows[:start] + rows[end + 1 :])
+        assert escalate.request_sha256(without, (DECISION, XPIA)) == digest, agent
+        assert escalate.request_sha256(state, (DECISION, XPIA)) == WITH_COVERAGE[agent], agent
 
 
 def test_both_profiles_are_selectable_with_their_identities_texts_and_rooms(profile):
@@ -228,4 +244,4 @@ def test_a_render_names_the_packet_selector_revision(profile):
 
     for name in ("v3", "v5"):
         profile(name)
-        assert render.layout_identity()["selector"] == history.SELECTOR == "history-packet/2"
+        assert render.layout_identity()["selector"] == history.SELECTOR == "history-packet/3"

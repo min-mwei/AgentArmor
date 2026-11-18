@@ -26,6 +26,8 @@ import campaign_arms as arms  # noqa: E402
 from agentarmor_monitor import escalate, panels  # noqa: E402
 from agentarmor_monitor.policy import load_rules, packet_room, state  # noqa: E402
 
+from summarizer import coverage  # noqa: E402
+
 STARTER = Path(TRAINING) / "data" / "starter" / "campaigns-v2.jsonl"
 BUDGET = 3000
 
@@ -95,8 +97,9 @@ def test_the_render_builds_every_packet_in_the_server_s_room(tmp_path, capsys):
         assert row["packet_budget"] == packet_room(rules, (tool, shown), BUDGET)
         assert row["budget"] == BUDGET
         # A packet within its room is a state within the budget, as the server would send it.
+        # The coverage lines are outside the budget, at most their cap (MR414).
         if arms.fits(row):
-            assert states[(row["run"], row["arm"])] <= BUDGET
+            assert states[(row["run"], row["arm"])] <= BUDGET + coverage.CAP + 1
     assert all(arms.fits(row) for row in rows if row["arm"] == "history")
 
 
@@ -198,13 +201,17 @@ def test_the_monitor_never_records_a_packet_over_its_room_as_fitting(
 ):
     text, about, _ = _monitor_packet(_release(files, earlier), agent, max_chars)
     assert about["chars"] == len(text)
-    if len(text) > max_chars:
+    # The coverage lines are outside the packet's room, within their cap (MR414): the packet is
+    # the text less them.
+    assert 0 < about["coverage_chars"] <= coverage.CAP + 1
+    packet = len(text) - about["coverage_chars"]
+    if packet > max_chars:
         assert about["over_budget"] and not about["fits"] and not about["ready"]
     else:
         assert not about["over_budget"]
     # Before, two files at 9,671 gave 9,909 characters (claude_code) called fitting and ready.
     if not earlier:
-        assert len(text) <= max_chars and about["fits"] and about["ready"]
+        assert packet <= max_chars and about["fits"] and about["ready"]
 
 
 def test_the_monitor_measures_the_text_whatever_its_flag_says(monkeypatch):
@@ -215,7 +222,7 @@ def test_the_monitor_measures_the_text_whatever_its_flag_says(monkeypatch):
     made = {"text": "x" * 500, "fits": True, "key_dropped": 0, "key_clipped": 0}
     made |= {"unresolved_conditions": 0, "call": "verified", "dropped": {}, "cut": {}}
     made |= {"later_events": 0, "shown": [], "history": {"complete": True, "why": []}}
-    monkeypatch.setattr(history, "packet", lambda *args: dict(made))
+    monkeypatch.setattr(history, "packet", lambda *args, **kwargs: dict(made))
     summary = {"session": {"coverage": {"scanned_all_captured": True}}}
     entry = {"type": "action", "call_id": "c1", "call_sha256": "0" * 64}
     sessions = {"mine": {}, "others": [], "counts": {"unknown": 0}, "home": "/home/dev"}

@@ -647,7 +647,9 @@ def test_the_proposed_call_is_shown_to_kai_whole_or_not_at_all(spool, service):
     # call took, and the state as a whole stayed within it.
     frame = len(policy.state(policy.load_rules(), "", ("Bash", "")))
     assert about["max_chars"] == 5000 - frame - about["call_chars"]
-    assert about["chars"] <= about["max_chars"] and about["state_chars"] <= 5000
+    # The coverage lines are outside the budget, within their cap (MR414).
+    packet = about["chars"] - about["coverage_chars"]
+    assert packet <= about["max_chars"] and about["state_chars"] - about["coverage_chars"] <= 5000
     # A call that leaves no room for the session is refused, not cut and sent.
     asked = len(service.seen)
     huge = PEEK + " # " + "x" * 5000 + tail
@@ -1084,7 +1086,7 @@ def test_the_requests_a_session_would_send_can_be_printed_without_sending(spool,
         assert row["layout"] == {
             "state": policy.LAYOUT,
             "packet": "summarizer/v2",
-            "selector": "history-packet/2",
+            "selector": "history-packet/3",
         }
         assert (
             row["request"]["state"]

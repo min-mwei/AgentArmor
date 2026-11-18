@@ -1798,7 +1798,9 @@ def score(laid, summaries, view, budget=None, rules=9):
     # The packet's length is measured here, never taken from its flag (MR311 P1): a packet
     # longer than its budget is not ready, and one that says it fits and is ready all the same
     # is false-ready, whatever its evidence.
-    over_budget = budget is not None and len(text) > budget
+    # The coverage lines are outside the budget (summarizer.coverage, MR414).
+    packet_chars = len(text) - view.get("coverage_chars", 0)
+    over_budget = budget is not None and packet_chars > budget
 
     def ready_if(fits):
         ready = view["call"] == "verified" and fits and not gaps and view.get("scanned", True)
