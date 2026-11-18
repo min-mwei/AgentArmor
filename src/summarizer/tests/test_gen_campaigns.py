@@ -194,9 +194,11 @@ def test_benign_only_rows_follow_the_paired_legitimate_twins(tmp_path, fit):
 
 
 def test_label_share_does_not_move_with_session_count_within_a_kind(tmp_path):
-    rows = run(tmp_path, "--pairs", "90", "--role", "fit", "--controls", "0.3")
+    rows = run(
+        tmp_path, "--pairs", "180", "--role", "fit", "--controls", "0.3", "--siblings", "0.2"
+    )
     (tmp_path / "b").mkdir()
-    benign = run(tmp_path / "b", "--pairs", "45", "--benign-only")
+    benign = run(tmp_path / "b", "--pairs", "90", "--benign-only")
     oracle = {o["root"]: o for o in rows("oracle.jsonl") + benign("oracle.jsonl")}
     pairs = rows("pairs.jsonl") + benign("pairs.jsonl")
     cells = {}
@@ -210,7 +212,8 @@ def test_label_share_does_not_move_with_session_count_within_a_kind(tmp_path):
     for kind in {k for k, _ in cells}:
         shares = [cells[(kind, n)][0] / cells[(kind, n)][1] for n in (1, 2) if (kind, n) in cells]
         if len(shares) == 2:
-            assert abs(shares[0] - shares[1]) <= 0.12, (kind, cells[(kind, 1)], cells[(kind, 2)])
+            # at a full slice's scale per kind (about 30 pairs); smaller cells move in steps of one pair
+            assert abs(shares[0] - shares[1]) <= 0.08, (kind, cells[(kind, 1)], cells[(kind, 2)])
 
 
 def test_a_written_target_stays_in_the_call_session_unless_bridged(tmp_path):
