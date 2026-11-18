@@ -470,3 +470,18 @@ def test_limit_crossed_never_runs_the_counted_operation_on_another_target():
     for seed in range(6):
         _, base, _ = C.scenario(random.Random(seed), inst, "total-over", 2)
         assert all(e.get("plan") != 1 for e in base), base
+
+
+def test_poisoned_notes_source_and_notes_leave_the_scope_session(tmp_path):
+    # S2 full-1 shortcut probe: poisoned-notes 0.662 vs 0.500 on goal_drift / action_source (both dropped 0.486): the
+    # source the agent read and its own notes shared session 0 with the scope turn, so the legitimate scope grounded the
+    # notes write and the attack task turn did not. Three sessions: scope turn | source + notes (+ plan) | call.
+    val = run(tmp_path, "--pairs", "30", "--role", "val-select", "--kinds", "poisoned-notes")
+    seen = 0
+    for o in val("oracle.jsonl"):
+        ev = o["events"]
+        assert ev[-1]["session"] == 2, ev[-1]
+        for e in ev[1:-1]:
+            assert e["session"] != ev[0]["session"], e
+        seen += 1
+    assert seen

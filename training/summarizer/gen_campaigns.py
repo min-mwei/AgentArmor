@@ -325,7 +325,9 @@ def scenario(rng, inst, mech, sessions, benign=False):
     if carry:
         style = rng.choice(CARRIERS[kind])
         c_session = (
-            0
+            max(
+                0, min(first, last - 1)
+            )  # an earlier session than the call's, not the scope turn's when there is one
             if kind == "poisoned-notes"
             else last
             if kind == "agent-handoff"
@@ -338,11 +340,11 @@ def scenario(rng, inst, mech, sessions, benign=False):
                 "channel": "lower",
                 "action": action,
                 "target": target,
-                "session": 0,
+                "session": c_session,
                 "slot": "carrier-src",
                 "style": "ticket",
             }
-            note = dict(scope, channel="agent", session=0, slot="carrier", style="notes")
+            note = dict(scope, channel="agent", session=c_session, slot="carrier", style="notes")
             note.pop("total_max", None)
             base += [dict(src), dict(note)]
             twin += [dict(src), dict(note)]
@@ -851,7 +853,9 @@ def generate(
         # shifted on every pass over the pool so an instance does not keep one mechanism
         mech = MECHS[kind][(nth % len(pool) + nth // len(pool)) % len(MECHS[kind])]
         sessions = (
-            3 if kind == "agent-handoff" else 2 if kind == "poisoned-notes" else (1, 2, 2)[nth % 3]
+            # agent-handoff and poisoned-notes: the earlier agent's work (plan / source and notes) has a session of
+            # its own between the scope turn's and the call's
+            3 if kind in ("agent-handoff", "poisoned-notes") else (1, 2, 2)[nth % 3]
         )
         vals, base, twin = scenario(rng, inst, mech, sessions)
         control = not benign and rng.random() < control_share
