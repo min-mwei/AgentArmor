@@ -132,7 +132,7 @@ def test_a_named_check_whose_result_is_not_whole_withholds_the_premise(runtime):
     at = seq_of(laid, "s", "c")
     word = dict(this(told)["results"])[at]
     assert word != "whole", view["text"]  # its middle found no room
-    ok, why = coverage.premise(told, coverage.MISSING_CHECK, checks=[at])
+    ok, why = coverage.premise(told, coverage.MISSING_CHECK, checks=[at], scope="session")
     assert not ok and any(reason.startswith(f"named check #{at}") for reason in why)
     # partial (k/n) and not shown are both told apart from a whole result
     assert word == "not shown" or "/" in word
@@ -143,19 +143,25 @@ def test_never_called_called_without_result_and_returned_are_told_apart(runtime)
     _, _, never = built(_check_story(None), runtime, budget=40000)
     told = read(never)
     assert this(told)["actions"]["all_shown"]
-    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[]) == (True, [])
+    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[], scope="session") == (True, [])
     # Called, no result observed: "none".
     laid, _, pending = built(_check_story(tool("c", "lookup_window", pending=True)), runtime)
     told = read(pending)
     at = seq_of(laid, "s", "c")
     assert dict(this(told)["results"])[at] == "none"
-    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[at]) == (True, [])
+    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[at], scope="session") == (
+        True,
+        [],
+    )
     # Returned, shown whole: the reader can tell a nonqualifying result.
     laid, _, back = built(_check_story(tool("c", "lookup_window", "window_open: false")), runtime)
     told = read(back)
     at = seq_of(laid, "s", "c")
     assert dict(this(told)["results"])[at] == "whole"
-    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[at]) == (True, [])
+    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[at], scope="session") == (
+        True,
+        [],
+    )
 
 
 def test_a_request_pointing_into_a_result_not_shown_whole_makes_it_material(runtime):
@@ -179,7 +185,11 @@ def test_an_unrelated_long_result_not_shown_whole_keeps_the_premise(runtime):
     assert dict(this(told)["results"])[seq_of(laid, "s", "r")] != "whole", view["text"]
     assert "content chunks 0" not in view["text"]  # the packet still says content was left out
     assert coverage.premise(told, coverage.NO_GRANT) == (True, [])
-    assert coverage.premise(told, coverage.SESSION_BOUNDARY) == (True, [])
+    # Expiry needs the grant's lifetime and the boundary or host time, not in the lines (MR416).
+    ok, why = coverage.premise(told, coverage.SESSION_BOUNDARY)
+    assert not ok and why == [
+        "expiry: grant lifetime and boundary or host time are not in the lines"
+    ]
 
 
 def test_an_earlier_session_request_the_history_does_not_show_withholds_no_grant(runtime):
@@ -307,7 +317,9 @@ def test_every_packet_carries_the_lines_and_they_read_back_as_written(runtime, a
             assert told["version"] == coverage.VERSION
             assert list(told["sessions"])[0] == coverage.THIS
             assert this(told)["call"] == "whole"
-            assert this(told)["results"] == view["coverage"]["sessions"][0]["results"]
+            made = view["coverage"]["sessions"][0]["results"]
+            assert this(told)["results"] == [(seq, word) for seq, word, _ in made]
+            assert this(told)["result_at"] == {seq: at for seq, _, at in made}
 
 
 @pytest.mark.parametrize("budget", [2500, 4500, 40000])
@@ -334,7 +346,7 @@ def test_a_packet_is_the_packet_it_was_with_the_lines_added_at_any_budget(runtim
 
 
 def test_a_block_over_its_cap_collapses_detail_and_says_so():
-    many = [(n, "whole" if n % 3 else f"1/{n}") for n in range(3, 400, 2)]
+    many = [(n, "whole" if n % 3 else f"1/{n}", n + 1) for n in range(3, 400, 2)]
     own = _whole_session(coverage.THIS, call="whole") | {"results": many}
     own["actions"] = own["actions"] | {"total": len(many), "shown": len(many)}
     others = [_whole_session(f"[s:{n:04x}]") | {"results": many[:30]} for n in range(12)]
@@ -349,7 +361,7 @@ def test_a_block_over_its_cap_collapses_detail_and_says_so():
     assert told["sessions"][coverage.EARLIER]["inputs"]["all_whole"]
     # no-grant stands on whole inputs; a premise on one result does not stand on counts
     assert coverage.premise(told, coverage.NO_GRANT) == (True, [])
-    ok, why = coverage.premise(told, coverage.MISSING_CHECK, checks=[5])
+    ok, why = coverage.premise(told, coverage.MISSING_CHECK, checks=[5], scope="session")
     assert not ok and why == ["named check #5: collapsed"]
     ok, _ = coverage.premise(told, coverage.NO_GRANT, material=[(coverage.THIS, 5)])
     assert not ok
@@ -403,3 +415,85 @@ def test_a_malformed_or_missing_block_supports_nothing():
     assert coverage.premise(None, coverage.NO_GRANT) == (False, ["no coverage lines"])
     told = coverage.read(f"x\n{coverage.TITLE}\nnonsense line\nNOT SHOWN: actions 0")
     assert coverage.premise(told, coverage.NO_GRANT) == (False, ["coverage lines malformed"])
+
+
+# --- MR416: result order, check scope, expiry, version, cap -----------------------------------
+
+ORDER = (
+    "COVERAGE agentarmor-coverage/1 (through the call under decision)\n"
+    "this session: call whole; user inputs 2, all whole; actions 2, all shown; "
+    "results of calls {results}\nsessions: 0 earlier searched; links resolved"
+)
+
+
+def test_the_previous_result_is_the_last_to_come_back_not_the_last_call():
+    # #3 returned (event 4) before #2 (event 5): before a request at 6, the previous result is #2.
+    told = coverage.read(ORDER.format(results="#2:5 whole, #3:4 whole"))
+    assert coverage.previous_result(told, coverage.THIS, 6) == 2
+    # A result that came back after the request (event 7) is not what it pointed into.
+    told = coverage.read(ORDER.format(results="#2:3 whole, #4:7 2/5"))
+    assert coverage.previous_result(told, coverage.THIS, 6) == 2
+    assert coverage.premise(told, coverage.NO_GRANT, material=[(coverage.THIS, 2)])[0]
+    # Nothing came back before the request: nothing to point into.
+    assert coverage.previous_result(told, coverage.THIS, 3) is None
+    # Without the result events the order cannot be told: withheld.
+    told = coverage.read(ORDER.format(results="#2 whole, #3 whole"))
+    assert coverage.previous_result(told, coverage.THIS, 6) == coverage.UNORDERED
+    ok, _ = coverage.premise(told, coverage.NO_GRANT, material=[(coverage.THIS, -1)])
+    assert not ok
+    # And the cutoff: a result at or after the call under decision does not count.
+    told = coverage.read(ORDER.format(results="#2:3 whole, #4:5 whole"))
+    assert coverage.previous_result(told, coverage.THIS, 9, cutoff=5) == 2
+
+
+def test_rendered_results_carry_their_result_event(runtime):
+    steps = [
+        ask("p0", "Review staging."),
+        tool("a", "get_record", "one"),
+        tool("b", "get_record", "two"),
+    ]
+    steps += [ask("p1", "Use the target in the previous result."), scale()]
+    laid, _, view = built(story(("s", steps)), runtime, budget=40000)
+    told = read(view)
+    b, back = seq_of(laid, "s", "b"), seq_of(laid, "s", "b", "result")
+    assert this(told)["result_at"][b] == back
+    assert coverage.previous_result(told, coverage.THIS, seq_of(laid, "s", "p1", "request")) == b
+
+
+def test_a_missing_check_is_unresolved_unless_the_policy_confines_it_to_this_session():
+    # One earlier action is not shown; every current action is: a check that may lie in the
+    # earlier session is not ruled out (MR416).
+    told = coverage.read(
+        "COVERAGE agentarmor-coverage/1 (through the call under decision)\n"
+        "this session: call whole; user inputs 1, all whole; actions 2, all shown; "
+        "results of calls #3:4 whole, #5:6 whole\n"
+        "[s:ab12]: user inputs 1, all whole; actions 3: 2 shown\n"
+        "sessions: 1 earlier searched; links resolved"
+    )
+    ok, why = coverage.premise(told, coverage.MISSING_CHECK, checks=[])
+    assert not ok and why == [
+        "named check not confined to this session by the policy: scope unresolved"
+    ]
+    assert coverage.premise(told, coverage.MISSING_CHECK, checks=[], scope="session") == (True, [])
+
+
+def test_another_version_supports_nothing():
+    text = ORDER.format(results="#2:5 whole")
+    assert coverage.premise(coverage.read(text), coverage.NO_GRANT) == (True, [])
+    other = coverage.read(text.replace("agentarmor-coverage/1", "agentarmor-coverage/99"))
+    assert coverage.premise(other, coverage.NO_GRANT) == (
+        False,
+        ["unsupported coverage version agentarmor-coverage/99"],
+    )
+
+
+def test_the_cap_falls_back_to_unknown_detail_and_never_exceeds_it():
+    flags = ["capture partial", "times not all known", "cutoff tied"] * 40
+    own = _whole_session(coverage.THIS, call="whole") | {"flags": flags}
+    links = {"searched": 1, "set_aside": 0, "unresolved": [], "unread": None, "unbound": 0}
+    block = coverage.lines({"sessions": [own, _whole_session("[s:ab12]")], "links": links})
+    assert len("\n".join(block)) <= coverage.CAP
+    assert block[1] == f"{coverage.THIS}: {coverage.UNKNOWN}"
+    told = coverage.read("\n".join(["x", *block, "NOT SHOWN: actions 0"]))
+    ok, why = coverage.premise(told, coverage.NO_GRANT)
+    assert not ok and "this session: user inputs not all whole" in why

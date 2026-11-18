@@ -41,6 +41,7 @@ THIS = "this session"
 EARLIER = "earlier sessions"
 CAP = 1000  # characters of the block at most; over it, detail is collapsed into counts
 COLLAPSED = "detail collapsed to fit the block's cap"
+UNKNOWN = "detail not shown (over the block's cap)"
 REDACTED = "[REDACTED:"
 
 
@@ -58,6 +59,18 @@ def _tied(shown):
             calls = {item.get("call_id"), *(a.get("call_id") for a in item.get("seen_again", ()))}
             tied.setdefault(item.get("sha256"), set()).update(calls - {None, ""})
     return tied
+
+
+_BACK = ("returned", "failed", "denied")  # the outcomes whose event brings a result back
+
+
+def _result_at(entry, until=None):
+    """The event that brought a call's outcome back, before the cutoff, or None."""
+    for step in entry.get("lifecycle") or ():
+        if step.get("state") in _BACK and isinstance(step.get("seq"), int):
+            if until is None or step["seq"] < until:
+                return step["seq"]
+    return None
 
 
 def _result(entry, tied):
@@ -110,7 +123,7 @@ def _session(summary, shown, until=None, call=None):
         actions["shown"] += 1
         if item["shown"] < item["of"]:
             actions["cut"].append(entry["seq"])
-        results.append((entry["seq"], _result(entry, tied)))
+        results.append((entry["seq"], _result(entry, tied), _result_at(entry, until)))
     for dropped in session.get("dropped_calls") or ():
         if until is None or (isinstance(dropped.get("seq"), int) and dropped["seq"] < until):
             actions["total"] += 1
@@ -199,11 +212,13 @@ def _session_line(one, collapse=False):
     clauses.append(_inputs_clause(one["inputs"]))
     clauses.append(_actions_clause(one["actions"], listed=one["name"] == THIS))
     if one["results"] and not collapse:
-        said = ", ".join(f"#{seq} {word}" for seq, word in one["results"])
+        said = ", ".join(
+            f"#{seq}{f':{at}' if at is not None else ''} {word}" for seq, word, at in one["results"]
+        )
         clauses.append(f"results of calls {said}")
     elif one["results"]:
         counts = {}
-        for _, word in one["results"]:
+        for _, word, _ in one["results"]:
             kind = "partial" if "/" in word else word
             counts[kind] = counts.get(kind, 0) + 1
         said = ", ".join(f"{n} {kind}" for kind, n in counts.items())
@@ -264,7 +279,14 @@ def lines(told):
             rows += [_session_line(one, collapse) for one in others]
         out = [TITLE, *rows, tail]
         if len("\n".join(out)) <= CAP:
-            break
+            return out
+    # Still over: no detail at all, said to be unknown, never a block over its cap.
+    rows = [f"{THIS}: {UNKNOWN}"] + (
+        [f"{EARLIER}: {len(others)} sessions; {UNKNOWN}"] if others else []
+    )
+    out = [TITLE, *rows, tail]
+    if len("\n".join(out)) > CAP:
+        out = [TITLE, *rows, f"sessions: {links['searched']} earlier searched; {UNKNOWN}"]
     return out
 
 
@@ -334,7 +356,7 @@ def read(text):
             out["links"] = {
                 "searched": int(searched[1]) if searched else None,
                 "set_aside": int(aside[1]) if aside else 0,
-                "resolved": rest == "links resolved",
+                "resolved": rest == "links resolved" and UNKNOWN not in rest,
                 "gaps": [] if rest == "links resolved" else rest.split("; "),
             }
             break
@@ -342,6 +364,7 @@ def read(text):
         if not found:
             return out | {"malformed": row}
         one = {"call": None, "inputs": None, "actions": None, "results": [], "flags": []}
+        one["result_at"] = {}
         for clause in found[2].split("; "):
             if clause.startswith("call "):
                 one["call"] = clause[5:]
@@ -353,9 +376,11 @@ def read(text):
                 one["collapsed"] = True
             elif clause.startswith("results of calls "):
                 for piece in clause[len("results of calls ") :].split(", "):
-                    seq, _, word = piece.partition(" ")
-                    one["results"].append((int(seq.lstrip("#")), word))
-            elif COLLAPSED in clause:
+                    head, _, word = piece.partition(" ")
+                    seq, _, at = head.lstrip("#").partition(":")
+                    one["results"].append((int(seq), word))
+                    one["result_at"][int(seq)] = int(at) if at else None
+            elif COLLAPSED in clause or clause == UNKNOWN:
                 one["collapsed"] = True
             elif found[1] == EARLIER and re.fullmatch(r"\d+ sessions", clause):
                 one["sessions"] = int(clause.split()[0])
@@ -388,22 +413,37 @@ def _read_actions(clause):
     return told
 
 
-def previous_result(told, name, seq):
-    """The event number of the last call before event seq of session name whose result the lines
-    list as having come back: what "the previous result" in a request said at seq points into.
-    The lines list results only for calls the text shows; a call left out is not among them, and
-    an action clause that is not "all shown" then leaves which call came last unknown (None)."""
+UNORDERED = -1  # previous_result(): the order of the results before the request is not established
+
+
+def previous_result(told, name, seq, cutoff=None):
+    """The call whose result is the last to have come back before event seq of session name (and
+    before cutoff, the call under decision, when given): what "the previous result" in a request
+    said at seq points into. It goes by the observed result events ("#call:event"), never by call
+    order: #3 may return before #2. A result that came back after the request cannot be what it
+    pointed into. None when no result came back before seq; UNORDERED when that cannot be told:
+    not every action of the session is shown, a result's event is not given, or its detail was
+    collapsed."""
     one = (told or {}).get("sessions", {}).get(name)
-    if not one or not (one["actions"] or {}).get("all_shown"):
-        return None
-    back = [at for at, word in one["results"] if at < seq and word not in ("none",)]
-    return max(back) if back else None
+    if not one or one.get("collapsed") or not (one["actions"] or {}).get("all_shown"):
+        return UNORDERED
+    limit = seq if cutoff is None else min(seq, cutoff)
+    back = []
+    for call, word in one["results"]:
+        if word == "none":
+            continue
+        at = one["result_at"].get(call)
+        if at is None:
+            return UNORDERED
+        if at < limit:
+            back.append((at, call))
+    return max(back)[1] if back else None
 
 
 NO_GRANT, MISSING_CHECK, SESSION_BOUNDARY = "no_grant", "missing_check", "session_boundary"
 
 
-def premise(told, kind, checks=(), material=()):
+def premise(told, kind, checks=(), material=(), scope=None):
     """(supported, reasons): whether coverage lines support one absence premise.
 
     told is read()'s result. kind is NO_GRANT ("no user grant for this action and target"),
@@ -416,10 +456,19 @@ def premise(told, kind, checks=(), material=()):
     any of them could hold or change a grant. A missing check also needs every action of this
     session shown, so that "never called" can be told, and each call to the check with its
     result whole, empty or never observed. A result left in part elsewhere does not matter
-    unless it is material. Nothing here says the premise is true."""
+    unless it is material. Nothing here says the premise is true.
+
+    MR416: lines of any version but VERSION support nothing. A missing check is supported only
+    when the caller says the policy confines the check to this session (scope="session"); a
+    check that may lie in another session needs session, call, target and observation bound,
+    which these lines do not carry, and is unresolved. An expiry premise (SESSION_BOUNDARY) needs
+    the grant's lifetime and the boundary or host time, which these lines do not carry: it is
+    unresolved. A material result whose order is not established (UNORDERED) is not shown."""
     why = []
     if told is None:
         return False, ["no coverage lines"]
+    if told.get("version") != VERSION:
+        return False, [f"unsupported coverage version {told.get('version')}"]
     if told.get("malformed"):
         return False, ["coverage lines malformed"]
     links = told.get("links")
@@ -453,6 +502,10 @@ def premise(told, kind, checks=(), material=()):
             why.append(
                 f"material result {where[0]} #{where[1]}: {results.get(tuple(where), 'not shown')}"
             )
+    if kind == SESSION_BOUNDARY:
+        why.append("expiry: grant lifetime and boundary or host time are not in the lines")
+    if kind == MISSING_CHECK and scope != "session":
+        why.append("named check not confined to this session by the policy: scope unresolved")
     if kind == MISSING_CHECK and THIS in sessions:
         actions = sessions[THIS]["actions"] or {}
         if not actions.get("all_shown"):
