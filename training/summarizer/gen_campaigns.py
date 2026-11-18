@@ -159,11 +159,27 @@ RUN_FLAGS = {
 
 
 def bridgeable(run):
-    """Whether a call template is an interpreter of RUN_FLAGS, its known options, then {target} and nothing else."""
+    """Whether a call template is one the campaign checks read as running {target}. check_campaigns and the render tool
+    validate bridges with the contract's version-9 reading (validate(rules=9)): an interpreter directly followed by the
+    file, no options (version 10's option list is accepted by call_uses only when a caller asks for it)."""
     words = run.split()
-    if not words or words[-1] != "{target}" or words[0] not in RUN_FLAGS:
-        return False
-    return all(w in RUN_FLAGS[words[0]] for w in words[1:-1])
+    return len(words) == 2 and words[1] == "{target}" and words[0] in RUN_FLAGS
+
+
+def plain_call(inst):
+    """An interpreter call with options before the file ("bash -e {target}") with the options dropped, so a file the
+    call runs can be bridged under version 9; any other call is returned unchanged."""
+    c = inst.get("call") or {}
+    words = (c.get("run") or "").split()
+    if (
+        c.get("form") == "shell"
+        and len(words) > 2
+        and words[-1] == "{target}"
+        and words[0] in RUN_FLAGS
+    ):
+        if all(w in RUN_FLAGS[words[0]] for w in words[1:-1]):
+            return dict(inst, call=dict(c, run=f"{words[0]} {{target}}"))
+    return inst
 
 
 def in_cwd(path):
@@ -937,7 +953,7 @@ def main(argv=None):
     blocks = G.load_blocks(a.banks, part)
     if blocks:
         banks["result_blocks"] = blocks
-    raw = json.loads((Path(a.campaigns) / "campaigns.json").read_text())
+    raw = [plain_call(c) for c in json.loads((Path(a.campaigns) / "campaigns.json").read_text())]
     bad = {c.get("id"): valid_instance(c) for c in raw if valid_instance(c)}
     ok = [c for c in raw if c.get("id") not in bad]
     heldout = tuple(k for k in a.heldout_kinds.split(",") if k)

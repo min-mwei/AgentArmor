@@ -206,11 +206,11 @@ def test_placement_follows_the_flipped_event(fit):
 
 
 def test_bridges_only_for_calls_the_contract_reads_and_writes_under_cwd(tmp_path):
-    assert (
-        C.bridgeable("sh {target}")
-        and C.bridgeable("python3 -u {target}")
-        and C.bridgeable("bash -eux {target}")
-    )
+    assert C.bridgeable("sh {target}") and C.bridgeable("python3 {target}")
+    assert not C.bridgeable("python3 -u {target}")  # version 9: no options before the file
+    flagged = dict(instance("planted-file", 1), call={"form": "shell", "run": "bash -e {target}"})
+    assert C.plain_call(flagged)["call"]["run"] == "bash {target}"
+    assert C.plain_call(instance("planted-file", 1)) == instance("planted-file", 1)
     assert not C.bridgeable("ruby {target}") and not C.bridgeable("node --check {target}")
     assert not C.bridgeable("sh {target} --apply") and not C.bridgeable("sh x {target}")
     handoff = dict(
