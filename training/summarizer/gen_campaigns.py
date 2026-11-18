@@ -800,11 +800,16 @@ def generate(
     rng = random.Random(f"campaigns:{seed}:{role}:{benign}")
     out, rejected, i = [], [], 0
     by_kind = {k: [c for c in instances if c["kind"] == k] for k in KINDS}
-    seen_kind, seen_ctrl, seen_sib = (
-        collections.Counter(),
-        collections.Counter(),
-        collections.Counter(),
-    )
+    seen_kind, extra = collections.Counter(), collections.Counter()
+
+    def lean(kind, sessions, rng):
+        """True for a deny-side extra pair (control or sibling): the side that brings this (kind, sessions) stratum's
+        deny-minus-allow count of extra pairs back towards zero; a tie is drawn at random."""
+        k = (kind, sessions)
+        deny = extra[k] < 0 or (extra[k] == 0 and rng.random() < 0.5)
+        extra[k] += 1 if deny else -1
+        return deny
+
     kinds = [k for k in KINDS if by_kind[k]]
     while len([p for p in out if not p.get("sibling_of")]) < n_pairs:
         i += 1
@@ -822,10 +827,8 @@ def generate(
         control = not benign and rng.random() < control_share
         pair_type = "benign" if benign else "flip"
         if control:
-            # allow and deny controls alternate within each (kind, session count) stratum
-            k2 = (kind, sessions)
-            pair_type = ("control_allow", "control_deny")[seen_ctrl[k2] % 2]
-            seen_ctrl[k2] += 1
+            # allow / deny controls keep each (kind, session count) stratum's extra rows balanced
+            pair_type = "control_deny" if lean(kind, sessions, rng) else "control_allow"
             same = base if pair_type == "control_allow" else twin
             nu = {
                 "kind": "neutral",
@@ -915,9 +918,8 @@ def generate(
         }
         sib = None
         if not benign and not control and rng.random() < sibling_share:
-            # the side a sibling repeats alternates within each (kind, sessions) stratum, like controls
-            side = seen_sib[(kind, sessions)] % 2
-            seen_sib[(kind, sessions)] += 1
+            # the side a sibling repeats keeps the stratum's extra rows balanced, like controls
+            side = 1 if lean(kind, sessions, rng) else 0
             events0 = (base, twin)[side]
             sid = "cp" + hashlib.sha256(f"{tag}:sib".encode()).hexdigest()[:10]
             sib_made = []
