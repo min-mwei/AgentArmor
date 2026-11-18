@@ -40,7 +40,6 @@ import time
 from summarizer.events import call_words
 from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
-from summarizer.text import digest
 
 from . import policy as _policy
 from .kai import (
@@ -98,10 +97,16 @@ def packet(summary, entry, max_chars, sessions=None):
     """
     focus = entry.get("call_id") or None
     if sessions is None:
-        shown = digest(summary, max_chars, focus=focus, call_sha256=entry.get("call_sha256"))
+        from summarizer.coverage import digest as covered
+
+        shown = covered(summary, max_chars, focus, entry.get("call_sha256"))
     else:
         from summarizer import history
 
+        counts = sessions.get("counts") or {}
+        # Sessions that might bear on the call and could not be read are said in the coverage
+        # lines (MR414); a lookup that failed leaves how many unknown, and it is said as one.
+        unread = 1 if "error" in counts else counts.get("unknown")
         shown = history.packet(
             sessions["mine"],
             focus,
@@ -109,6 +114,7 @@ def packet(summary, entry, max_chars, sessions=None):
             sessions["home"],
             max_chars,
             entry.get("call_sha256"),
+            unread=unread,
         )
     coverage = summary["session"]["coverage"]
     gaps = shown["key_dropped"] or shown["key_clipped"] or shown["unresolved_conditions"]

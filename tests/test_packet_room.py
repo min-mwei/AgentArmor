@@ -215,7 +215,7 @@ def test_the_monitor_measures_the_text_whatever_its_flag_says(monkeypatch):
     made = {"text": "x" * 500, "fits": True, "key_dropped": 0, "key_clipped": 0}
     made |= {"unresolved_conditions": 0, "call": "verified", "dropped": {}, "cut": {}}
     made |= {"later_events": 0, "shown": [], "history": {"complete": True, "why": []}}
-    monkeypatch.setattr(history, "packet", lambda *args: dict(made))
+    monkeypatch.setattr(history, "packet", lambda *args, **kwargs: dict(made))
     summary = {"session": {"coverage": {"scanned_all_captured": True}}}
     entry = {"type": "action", "call_id": "c1", "call_sha256": "0" * 64}
     sessions = {"mine": {}, "others": [], "counts": {"unknown": 0}, "home": "/home/dev"}
