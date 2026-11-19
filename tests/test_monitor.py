@@ -1086,7 +1086,7 @@ def test_the_requests_a_session_would_send_can_be_printed_without_sending(spool,
         assert row["layout"] == {
             "state": policy.LAYOUT,
             "packet": "summarizer/v2",
-            "selector": "history-packet/3",
+            "selector": "history-packet/4",
         }
         assert (
             row["request"]["state"]

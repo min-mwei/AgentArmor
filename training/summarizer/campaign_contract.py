@@ -1110,6 +1110,23 @@ def _oracle_paths(text, cwd, bare=False):
     return found
 
 
+def _oracle_glob_places(text, cwd):
+    """The directories a command's wildcards stand in: for each word with a *, ? or [, the
+    directory its part before the first wildcard names ("build/cache/*" and "build/cache/a*.db" are
+    in build/cache). What a glob matches is in there, whenever it is run. A wildcard with no
+    directory before it stands for no place here."""
+    found = set()
+    for word in str(text).split():
+        word = word.strip("'\"`(),;:")
+        cut = min((word.find(c) for c in "*?[" if c in word), default=-1)
+        if cut <= 0 or "/" not in word[:cut] or "://" in word or "@" in word:
+            continue
+        place = word[:cut].rsplit("/", 1)[0] or "/"
+        place = HOME + place[1:] if place == "~" or place.startswith("~/") else place
+        found.add(os.path.normpath(place if os.path.isabs(place) else os.path.join(cwd, place)))
+    return found
+
+
 def _values(value):
     """Every string inside a tool's input, however nested."""
     if isinstance(value, dict):
@@ -1117,6 +1134,58 @@ def _values(value):
     if isinstance(value, list):
         return [s for v in value for s in _values(v)]
     return [str(value)]
+
+
+# How the oracle reads the input of a tool that is no shell and no file tool (MR432, MR434), by
+# the contract docs/multi-session-contract.md states and with none of the runtime's code: a value
+# under a key one of whose words names an address or a host, and none a file, is no file
+# ("host", "next_hop", "nextHop", "servers"); a word written only in digits and dots, with a port
+# or a prefix length after it or not, is a number, a version or an address and no file
+# ("10.44.8.19", "198.51.100.7:8443", "2.14.1", "10.44.0.0/16"). An MCP tool's name is no file.
+_ORACLE_HOST_WORDS = {"host", "hosts", "hostname", "hostnames", "domain", "domains", "fqdn"}
+_ORACLE_HOST_WORDS |= {"ip", "ips", "ipv4", "ipv6", "addr", "address", "addresses", "server"}
+_ORACLE_HOST_WORDS |= {"servers", "gateway", "hop", "endpoint", "endpoints", "nameserver"}
+_ORACLE_HOST_WORDS |= {"nameservers", "resolver", "peer", "peers"}
+_ORACLE_FILE_WORDS = {"path", "paths", "file", "files", "filename", "filepath", "dir", "dirs"}
+_ORACLE_FILE_WORDS |= {"directory", "folder"}
+_ORACLE_DIGITS = re.compile(r"[0-9]+(\.[0-9]+)+(:[0-9]+)?(/[0-9]+)?")
+
+
+def _oracle_input_strings(given):
+    """The input's values that can name a file: every one, however nested, but those under a key
+    that names an address or a host."""
+    kept = []
+
+    def walk(value, key):
+        if key is not None:
+            spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(key)).lower()
+            words = set(re.split(r"[\s_.\-]+", spaced))
+            if words & _ORACLE_HOST_WORDS and not words & _ORACLE_FILE_WORDS:
+                return
+        if isinstance(value, dict):
+            for name, item in value.items():
+                walk(item, name)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, key)
+        else:
+            kept.append(str(value))
+
+    walk(given, None)
+    return kept
+
+
+def _oracle_input_paths(given, cwd):
+    """The paths a structured tool's input names, by the oracle's reading above."""
+    found = set()
+    for value in _oracle_input_strings(given if isinstance(given, dict) else {}):
+        try:
+            words = shlex.split(value)
+        except ValueError:
+            words = value.split()
+        words = [w for w in words if not _ORACLE_DIGITS.fullmatch(w.strip("'\"`(),;:[]{}"))]
+        found |= _oracle_paths(shlex.join(words), cwd) if words else set()
+    return found
 
 
 # The file tools whose inputs the oracle reads itself (MR200-1): a patch's headers, a file tool's
@@ -1256,10 +1325,11 @@ def _oracle_steps(laid, summaries):
                     outright = _oracle_paths(segment, cwd)
                     surely |= outright
                     maybe |= outright | _oracle_paths(segment, cwd, bare=True)
+                    maybe |= _oracle_glob_places(segment, cwd)  # what its globs may match
                     observing = observing or program in _OBSERVING
             else:
                 kind = "other"
-                maybe = _oracle_paths(" ".join(_values(step.get("input") or {})), cwd)
+                maybe = _oracle_input_paths(step.get("input") or {}, cwd)  # by its types (MR432)
             payload = part["laid"]["events"][marks["proposed"] - 1]
             result = _logged(part, marks.get("result") or marks.get("failed"))
             records.append(
@@ -1288,8 +1358,10 @@ def object_problems(laid, summaries, view):
         if s["id"] == laid["campaign"]["decide"]["step"]
     )
     words = step.get("run") or step.get("write") or step.get("read")
-    words = words or " ".join(_values(step.get("input") or {}))
-    named = _oracle_paths(words, deciding["cwd"])
+    if words or step.get("tool") in _ORACLE_SHELLS | _ORACLE_FILE_WRITES | {"Read", "apply_patch"}:
+        named = _oracle_paths(words or " ".join(_values(step.get("input") or {})), deciding["cwd"])
+    else:  # a structured tool's input, by its types (MR432)
+        named = _oracle_input_paths(step.get("input") or {}, deciding["cwd"])
     records, gaps = _oracle_steps(laid, summaries)
     accounts = {a["object"]: a for a in ((view.get("history") or {}).get("objects") or [])}
     # The sessions an account must say it searched, by the replay's own sessions (MR199-2).

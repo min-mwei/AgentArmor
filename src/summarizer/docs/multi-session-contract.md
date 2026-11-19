@@ -160,6 +160,18 @@ it is as strong as the evidence and no stronger.
    that leaves this join out says `controls: unsupported` in every account and never calls
    its history complete.
 
+**What a structured call names** (history-packet/4, MR432, MR434). A tool that is no shell and
+no file tool (an MCP server's tool, a tool of unknown origin) names the files that the values of
+its input name, read by their types; its keys are not read. Its display target, the
+`server/tool` label made from an MCP tool's name, is no file. A value under a key that names an
+address or a host (`host`, `next_hop`, `servers`, and none that also names a file, such as
+`server_config_path`) is no file, and neither is a word written only in digits and dots, with a
+port or a prefix length or not (`10.44.8.19`, `2.14.1`, `10.44.0.0/16`). The external-tool marker
+is unchanged. The campaign oracle reads an input by this rule with its own code, and holds a
+glob in an earlier command as possibly touching what lies in the directory before its first
+wildcard. Shell commands are read as before: a remote `name:path` operand and a program run by
+its path are still read differently by the runtime and the oracle, an open limit.
+
 **Time.** The index answers "is there any touch, limit or control for this resource" for the
 whole retained log, cheaply, by resource. `--history-days` (an option to measure, thirty by
 default) limits only how far back the surrounding context of a match is fetched. A limit

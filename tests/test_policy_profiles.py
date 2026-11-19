@@ -244,4 +244,4 @@ def test_a_render_names_the_packet_selector_revision(profile):
 
     for name in ("v3", "v5"):
         profile(name)
-        assert render.layout_identity()["selector"] == history.SELECTOR == "history-packet/3"
+        assert render.layout_identity()["selector"] == history.SELECTOR == "history-packet/4"

@@ -5120,6 +5120,135 @@ def test_a_structured_tool_names_the_paths_of_its_input_and_not_its_own_name():
     assert history.named_by_call(call, "/w", "/h") == {"/w/routes/plan.yaml"}
 
 
+# --- MR432/MR434: the object of a connector call. An MCP tool's display target ("notes/list")
+# is a label, never a file; a path given in its input is its object; an address or a host given in
+# its input is no file. The runtime and the campaign oracle each read this on their own.
+
+
+def _connector(tool, args):
+    from summarizer.events import describe_call
+
+    told = describe_call(tool, args, "/w", "/h")
+    return {"tool": tool, "target": told["target"], "text": told["whole"]}, told
+
+
+def _objects(call):
+    named = history.named_by_call(call, "/w", "/h")
+    effects = history.call_effects(call["tool"], call["target"], call["text"], "/w", "/h")
+    return named, effects
+
+
+def test_an_mcp_display_target_is_no_file_object():
+    call, told = _connector("mcp__notes__list", {"folder": "inbox"})
+    assert call["target"] == "notes/list" and told["flags"]["mcp"] == "notes/list"  # kept
+    assert _objects(call) == (set(), {})
+
+
+def test_a_path_argument_of_an_mcp_tool_is_its_object_and_its_label_is_not():
+    call, told = _connector("mcp__notes__export", {"path": "notes/a.md", "format": "md"})
+    assert told["flags"]["mcp"] == "notes/export"
+    assert _objects(call) == ({"/w/notes/a.md"}, {"unknown": ["/w/notes/a.md"]})
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"host": "203.0.113.9"},
+        {"name": "api", "value": "192.0.2.40"},
+        {"hostname": "db.internal.example"},
+        {"nextHop": "198.51.100.7:8443"},
+        {"servers": ["ns1.example.net", "ns2.example.net"]},
+        {"cidr": "10.44.0.0/16"},
+        {"release": "2.14.1", "ratio": 1.5},
+    ],
+)
+def test_an_address_a_host_or_a_number_in_a_connector_input_is_no_file_object(args):
+    call, told = _connector("mcp__dns__set_record", args)
+    assert told["flags"]["mcp"] == "dns/set_record"  # the external-tool marker stays
+    assert _objects(call) == (set(), {})
+
+
+def test_a_host_beside_a_path_leaves_the_path_its_object():
+    call, _ = _connector("mcp__dns__import_zone", {"host": "198.51.100.7", "file": "zones/a.zone"})
+    assert _objects(call) == ({"/w/zones/a.zone"}, {"unknown": ["/w/zones/a.zone"]})
+
+
+def _connector_campaign(earlier, call):
+    return story(
+        ("a", {}, [ask("Look over the notes service for me."), *earlier]),
+        ("b", {}, [{"id": "next", "prompt": "Carry on with the notes service."}, call]),
+    )
+
+
+def _held_to_the_oracle(campaign, runtime):
+    """Per agent: the view's object accounts, and what the oracle finds false or missing in them."""
+    found = {}
+    for agent in campaigns.AGENTS:
+        laid = campaigns.layout(campaign, agent)
+        summaries, _ = campaigns.replay(laid, runtime)
+        view = builder.build(builder.blind(laid), summaries, 10000)
+        objects = {a["object"]: a for a in view["history"].get("objects") or ()}
+        claims, missing = campaigns.object_problems(laid, summaries, view)
+        score = campaigns.score(laid, summaries, view, 10000, 16)
+        found[agent] = (objects, claims, missing, score["forged"])
+    return found
+
+
+def test_a_connector_call_named_only_by_its_display_target_has_no_object_account(runtime):
+    listing = {"id": "list1", "tool": "mcp__notes__list", "input": {"folder": "inbox"}}
+    campaign = _connector_campaign(
+        [listing | {"output": "3 notes"}],
+        {"id": "go", "tool": "mcp__notes__list", "input": {"folder": "archive"}},
+    )
+    for agent, (objects, claims, missing, forged) in _held_to_the_oracle(campaign, runtime).items():
+        assert not any(path.endswith("/notes/list") for path in objects), agent
+        assert (claims, missing, forged) == ([], [], 0), agent
+
+
+def test_a_connector_call_naming_a_file_gets_that_file_s_account_only(runtime):
+    write = {"id": "w", "write": "{cwd}/notes/a.md", "content": "draft\n"}
+    campaign = _connector_campaign(
+        [write], {"id": "go", "tool": "mcp__notes__export", "input": {"path": "notes/a.md"}}
+    )
+    for agent, (objects, claims, missing, forged) in _held_to_the_oracle(campaign, runtime).items():
+        assert [p.rsplit("/", 2)[-2:] for p in objects] == [["notes", "a.md"]], agent
+        assert len(next(iter(objects.values()))["events"]) == 1, agent
+        assert (claims, missing, forged) == ([], [], 0), agent
+
+
+def test_a_dotted_address_in_a_host_argument_has_no_object_account(runtime):
+    earlier = [
+        {"id": "plan", "run": "tofu plan -var next_hop=10.44.8.19 -no-color", "output": "ok"},
+        {"id": "look", "tool": "mcp__dns__lookup", "input": {"host": "10.44.8.19"}, "output": "a"},
+    ]
+    call = {"id": "go", "tool": "mcp__dns__set_record", "input": {"value": "10.44.8.19"}}
+    campaign = _connector_campaign(earlier, call)
+    for agent, (objects, claims, missing, forged) in _held_to_the_oracle(campaign, runtime).items():
+        assert objects == {}, agent
+        assert (claims, missing, forged) == ([], [], 0), agent
+
+
+def test_an_earlier_glob_may_touch_the_file_it_matches_for_the_oracle_too(runtime):
+    # A line the runtime cannot cut names the directory a glob stands in, so
+    # it lists that step as an event on a file there; the oracle read the glob as one literal path
+    # and refused the account as forged. A glob may touch what is in the directory before it.
+    look = "du -sh build/cache/*; sed -n '1,20p' src/main.rs"
+    earlier = [{"id": "size", "run": look, "output": "4M\tbuild/cache/alpha\nfn main() {}"}]
+    campaign = _connector_campaign(earlier, {"id": "go", "run": "rm -rf build/cache/alpha"})
+    for agent, (objects, claims, missing, forged) in _held_to_the_oracle(campaign, runtime).items():
+        (account,) = objects.values()
+        assert account["object"].endswith("/build/cache/alpha") and account["events"], agent
+        assert (claims, missing, forged) == ([], [], 0), agent
+
+
+def test_the_oracle_reads_a_connector_input_by_its_types():
+    cwd = "/w"
+    given = {"host": "10.44.8.19", "path": "notes/a.md", "version": "2.14.1", "next": "1.5"}
+    assert campaigns._oracle_input_paths(given, cwd) == {"/w/notes/a.md"}
+    assert campaigns._oracle_input_paths({"servers": ["a.example", "b.example"]}, cwd) == set()
+    assert campaigns._oracle_input_paths({"note": "see docs/run.md"}, cwd) == {"/w/docs/run.md"}
+
+
 ORIGIN = "routes/plan.yaml was last written by the partner-sync integration"
 
 
@@ -6145,4 +6274,4 @@ def test_a_packet_with_something_left_out_keeps_room_for_the_line_that_says_so(a
 
 
 def test_the_packet_selector_has_a_revision():
-    assert history.SELECTOR == "history-packet/3"
+    assert history.SELECTOR == "history-packet/4"

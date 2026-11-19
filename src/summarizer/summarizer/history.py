@@ -873,9 +873,11 @@ def uses(entry, cwd, home):
     else:
         # A tool that is no shell and no file tool has no command line: its words are its input
         # ({"path": "routes/proposed.yaml"}), and the paths there are named as a command's are
-        # (named_by_call reads them the same way). Its own name is no file ("mesh.apply").
-        words = {"text": _without_addresses(str(entry.get("text") or ""))}
-        found["named"] |= _said(words, cwd, home) - {expand(str(tool or ""), cwd, home)}
+        # (named_by_call reads them the same way), by their types (_input_said, MR432). Its own
+        # name is no file ("mesh.apply"), and neither is the label made of an MCP tool's name.
+        found["named"] |= _input_said(entry, cwd, home)
+        if _label_only(tool, target):
+            target = ""
     for piece in _PATHISH.findall(target):
         piece = _piece(piece)
         if "/" in piece or "." in piece.strip("."):
@@ -2093,7 +2095,7 @@ def named_by_call(call, cwd, home):
     if isinstance(call.get("named"), list):
         return named | set(call["named"])
     if call.get("tool") not in SHELLS | WRITES | READS:
-        named |= _said(words, cwd, home) - {expand(str(call.get("tool") or ""), cwd, home)}
+        named |= _input_said(words, cwd, home)
     return named
 
 
@@ -2112,7 +2114,7 @@ def _effects_of(entry, cwd, home):
     if tool in READS:
         return set(used["read"]), set(), set(), set()
     if tool not in SHELLS:
-        return set(), set(), set(used["named"]) | _said(entry, cwd, home), set()
+        return set(), set(), set(used["named"]) | _input_said(entry, cwd, home), set()
     cut = effects.commands(str(entry.get("target") or ""))
     if cut is None:
         return set(), set(), set(used["named"]), set()
@@ -3013,6 +3015,74 @@ def _said(entry, cwd, home):
     return {expand(piece, cwd, home) for piece in pieces if "/" in piece or "." in piece.strip(".")}
 
 
+# The object of a tool that is no shell and no file tool (an MCP server's tool, a tool of unknown
+# origin), by the types of its input (MR432, MR434). Its display target ("notes/list", made from an
+# MCP tool's server and name) is a label and no file; a path its input gives is its object; a value
+# given as an address or a host (a key below that names one: "host", "next_hop", "servers") is
+# no file, and neither is a number or an address written in digits and dots ("10.44.8.19",
+# "2.14.1", "10.44.0.0/16"), wherever in its input it stands. Only its input's values are read,
+# never their keys. The campaign oracle reads an input by the same contract with its own code.
+_HOST_KEYS = frozenset(
+    {"host", "hosts", "hostname", "hostnames", "domain", "domains", "fqdn", "ip", "ips", "ipv4"}
+    | {"ipv6", "addr", "address", "addresses", "server", "servers", "gateway", "hop", "endpoint"}
+    | {"endpoints", "nameserver", "nameservers", "resolver", "peer", "peers"}
+)
+_FILE_KEYS = frozenset({"path", "paths", "file", "files", "filename", "filepath", "dir", "folder"})
+_FILE_KEYS |= {"dirs", "directory"}
+_NUMBERED = re.compile(r"\d+(?:\.\d+)+(?:/\d+)?")  # a number, a version or an address, in digits
+
+
+def _host_key(key):
+    """Whether an input key names an address or a host: one of its words does ("next_hop",
+    "nextHop", "dns-server"), and none names a file ("server_config_path")."""
+    words = set(re.split(r"[^a-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key)).lower()))
+    return bool(words & _HOST_KEYS) and not words & _FILE_KEYS
+
+
+def _input_values(value, key=""):
+    """Every string of a tool's input that can name a file, however nested, but under a host key."""
+    if key and _host_key(key):
+        return
+    if isinstance(value, dict):
+        for name, item in value.items():
+            yield from _input_values(item, name)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _input_values(item, key)
+    elif isinstance(value, str):
+        yield value
+
+
+def _input_said(entry, cwd, home):
+    """The paths a structured tool call names, by the types of its input: describe_call() writes the
+    call as its tool's name, a space and its input as JSON. A call whose text is not that (cut
+    short, or another shape) is read as text, as _said() reads it, less its numbers in digits."""
+    tool, text = str(entry.get("tool") or ""), str(entry.get("text") or "")
+    given = None
+    if tool and text.startswith(tool + " "):
+        try:
+            given, _ = json.JSONDecoder().raw_decode(text, len(tool) + 1)
+        except ValueError:
+            given = None
+    strings = list(_input_values(given)) if isinstance(given, dict) else [text]
+    found = set()
+    for value in strings:
+        value = _without_addresses(value)
+        value = _VARIABLES.sub(
+            lambda m: (cwd if (m.group(1) or m.group(2)) == "PWD" else home) or m.group(0), value
+        )
+        for piece in map(_piece, _PATHISH.findall(value)):
+            if ("/" in piece or "." in piece.strip(".")) and not _NUMBERED.fullmatch(piece):
+                found.add(expand(piece, cwd, home))
+    return found - {expand(tool, cwd, home)}  # its own name is no file ("mesh.apply")
+
+
+def _label_only(tool, target):
+    """Whether a call's target is only the label describe_call() makes of an MCP tool's name."""
+    tool = str(tool or "")
+    return tool.startswith("mcp__") and target == "/".join(tool.split("__")[1:3])
+
+
 def _alike(prompt, there, named, cwd, home):
     """Whether what was said in another project names a file that sits there where a file
     this call names sits in the call's own project: the same name in another place."""
@@ -3210,8 +3280,10 @@ TITLE = "EARLIER SESSIONS"  # the section docs/multi-session-contract.md gives a
 # another selector is another input. 2 (MR369): a packet that left whole groups out for room is
 # built again with room kept only for the line it writes when nothing is left out, and taken
 # only if it is then complete and within its budget. Before, 1 (implicit). 3 (MR414): every
-# packet carries its coverage lines (summarizer.coverage), outside its budget and capped.
-SELECTOR = "history-packet/3"
+# packet carries its coverage lines (summarizer.coverage), outside its budget and capped. 4 (MR432,
+# MR434): a structured tool's object is read by the types of its input; an MCP tool's display
+# label, an address, a host or a number in digits is no file object (_input_said).
+SELECTOR = "history-packet/4"
 COMPLETE, INCOMPLETE = "history: ", "history: incomplete"  # how its second line begins
 OWN_SHARE = 2  # a session's own lines keep at least one part in this many of a packet's budget
 # Why a view of earlier sessions is incomplete: a fixed list, each with its one wording.
