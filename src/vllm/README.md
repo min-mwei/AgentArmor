@@ -263,6 +263,14 @@ answered in whole rows, differed from Kai's saved shared-prefix read by more tha
 188 requests (largest 0.453), while Kai's own scorer run in whole rows agreed with this loader
 to 0.0001. A package is therefore answered in the form it states and no other.
 
+The same day this loader answered the v3 `kai-35b-a3b` package (`kai.json` `c74cacce…fd66`,
+`forward: "shared-prefix"`) on 242 registered requests, 54 of them with two to eight questions
+in one request. All 380 compared questions were within 0.00008 of the training scorer's saved
+probabilities, with no decision change. Load took 25.5 s from a warm file cache, a request a
+median 0.55 s, and peak device memory was 25.4 GB on Apple silicon. This is numerical
+agreement on one machine for a research checkpoint, not an accuracy or deployment
+qualification. `policy_ready` stays `false`.
+
 Everything is checked before a tokenizer, a pointer or a weight is read: the package files,
 every base file, the installed versions, the installed mlx-lm sources and this module's own
 `delta.py`. A package made for another runtime is refused, never answered by the installed

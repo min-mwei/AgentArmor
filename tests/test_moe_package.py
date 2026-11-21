@@ -598,3 +598,71 @@ def test_both_forms_compute_the_same_function_on_a_small_sparse_moe_model(mlx, m
         whole = backbone.hidden({"ids": state + branch})
         assert shared.shape == whole.shape == (150 + len(branch), 64)
         np.testing.assert_allclose(shared, whole, rtol=2e-3, atol=2e-3)
+
+
+def test_the_service_runs_a_whole_request_in_the_form_its_package_states():
+    """Service.evaluate's dispatch: a shared-prefix package is answered by one hidden_rows call
+    with the state, every branch and Kai's padding id; a rows package by one hidden call per
+    question. The two give the same answers when the backbone computes the same states."""
+    from agentarmor_vllm.encode import tokenizer_sha256
+    from test_vllm_baseline import Tokenizer
+
+    class Both:
+        name = "mlx-lora"
+
+        def __init__(self):
+            self.whole, self.shared = [], []
+
+        @staticmethod
+        def states(length):
+            return np.asarray([[i, 1] for i in range(length)], dtype=np.float32)
+
+        def hidden(self, row):
+            self.whole.append(row["ids"])
+            return self.states(len(row["ids"]))
+
+        def hidden_rows(self, state, branches, pad_id):
+            self.shared.append((state, branches, pad_id))
+            return [self.states(len(state) + len(branch)) for branch in branches]
+
+    class Padded(Tokenizer):
+        pad_token_id, eos_token_id = None, 77  # no pad id: Kai pads with the eos id
+
+    tok = Padded()
+    pointer = engine.Pointer(
+        {
+            "q.weight": np.asarray([[1, 0], [0, 1]], dtype=np.float32),
+            "q.bias": np.zeros(2, dtype=np.float32),
+            "k.weight": np.asarray([[1, 0], [0, 1]], dtype=np.float32),
+            "k.bias": np.zeros(2, dtype=np.float32),
+        },
+        2,
+    )
+    request = {
+        "state": "abc",
+        "questions": {
+            "one": {"type": "noul", "instructions": "i"},
+            "two": {"type": "choice", "instructions": "longer", "criteria": {"a": "x", "b": "y"}},
+        },
+    }
+    answers, rows_form = {}, None
+    for forward in ("rows", "shared-prefix"):
+        meta = {"temperature": 1.0, "max_state": 512, "max_row": 1024, "max_packed": 2048}
+        meta |= {"pauses": 0, "pause_id": None, "tokenizer_sha256": tokenizer_sha256(tok)}
+        package = SimpleNamespace(
+            meta=meta, identity="x" * 64, forward=forward, model="kai-35b-a3b"
+        )
+        backbone = Both()
+        service = engine.Service(package, tok, pointer, backbone)
+        reply = service.evaluate(request)
+        answers[forward] = reply["answers"]
+        assert reply.get("forward") == (None if forward == "rows" else "shared-prefix")
+        if forward == "rows":
+            assert len(backbone.whole) == 2 and not backbone.shared
+        else:
+            ((state, branches, pad),) = backbone.shared
+            assert not backbone.whole and len(branches) == 2 and pad == 77
+            # Each whole row of the other form is this state followed by one of these branches.
+            assert [state + branch for branch in branches] == rows_form
+        rows_form = backbone.whole
+    assert answers["rows"] == answers["shared-prefix"]
