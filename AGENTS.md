@@ -29,10 +29,16 @@ running job or relabel old measurements as results from the new stack.
   `agentarmor-monitor hooks-config` prints. The older `agentarmor hook` command is the
   deny-all fixture in `agents/*/fixture`, for tests only. A hook process stays light: it
   requires Python and must not import vLLM, Torch, a GPU runtime or any model.
-- Kai-4B is the only serving model. Requests cannot switch models or trigger
-  downloads. Preserve attribution and source provenance in `src/ORIGIN.md` and
-  `src/NOTICE`.
-- Kai is a decision model based on Qwen3.5-4B-Base. Preserve its pointer readout,
+- A service serves one resident Kai model, the one its verified package is of. On 2026-11-21
+  the user asked for Kai on Qwen3.6-35B-A3B to be made ready here ("refactor and generalize
+  the code as needed"), which replaces the rule that Kai-4B is the only serving model. The
+  registered bases are the entries of `BASES` in `src/vllm/agentarmor_vllm/package.py`: Kai-4B
+  (`kai-4b`, Qwen3.5-4B-Base) and Kai-35B-A3B (`kai-35b-a3b`, Qwen3.6-35B-A3B, a sparse-MoE
+  base served unmerged on MLX). Kai-4B stays the published baseline. A new base is a new
+  registry entry with its own package, tests and numerical qualification. Requests cannot
+  switch models or trigger downloads. Preserve attribution and source provenance in
+  `src/ORIGIN.md` and `src/NOTICE`.
+- Kai is a decision model on a registered Qwen base. Preserve its pointer readout,
   delimiter escaping, isolated question rows, checkpoint temperature, and
   evidence offsets. Do not replace its head with generation or vocabulary logits.
   Kai owns checkpoint selection, merged exports, and numerical qualification.

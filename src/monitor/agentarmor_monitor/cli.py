@@ -31,7 +31,16 @@ import sys
 import threading
 
 from .escalate import LEVELS, append, detect, key_of, latest, read, settled, triggers
-from .kai import TOKEN_ENV, KaiClient, KaiMismatch, KaiUnavailable, Unsent, bearer, loopback
+from .kai import (
+    ADAPTERS,
+    TOKEN_ENV,
+    KaiClient,
+    KaiMismatch,
+    KaiUnavailable,
+    Unsent,
+    bearer,
+    loopback,
+)
 from .kai import profile as kai_profile
 from .local import PORT
 from .policy import writable
@@ -40,7 +49,12 @@ from .policy import writable
 def _expected(args):
     """The decision model the operator configured, or None when no package was named."""
     named = getattr(args, "kai_package_sha256", None)
-    return kai_profile(named) if named else None
+    return kai_profile(named, _adapter(args)) if named else None
+
+
+def _adapter(args):
+    """Which decision model the operator says Kai is (--kai-model); Kai-4B when not said."""
+    return getattr(args, "kai_model", None) or "kai-4b"
 
 
 def _kai(args):
@@ -156,10 +170,15 @@ def _judge(args):
             getattr(args, "kai_backend", None),
             getattr(args, "kai_base_dir", None),
         )
+        said = found.metadata()
         try:
-            loaded = kai_profile(found.metadata().get("package_sha256"))
+            loaded = kai_profile(said.get("package_sha256"), said.get("model", "kai-4b"))
         except ValueError:
             raise SystemExit("kai: the model loaded here does not name its package") from None
+        if _adapter(args) != loaded["model"] and (named or getattr(args, "kai_model", None)):
+            raise SystemExit(
+                f"kai: the package loaded is of {loaded['model']}: name it with --kai-model"
+            )
         if named is not None and named != loaded:
             raise SystemExit("kai: the package loaded is not the one --kai-package-sha256 names")
         return found, "local", loaded
@@ -195,7 +214,7 @@ def _with_session(args, asks, place):
     if place != "remote" or mode_of(args) != "shadow":
         raise SystemExit("kai: a session model is for --shadow, beside a --kai-url model")
     try:
-        expected = kai_profile(named)
+        expected = kai_profile(named, _adapter(args))
         token = bearer(args.kai_token_file, environment=not loopback(url))
         client = KaiClient(url, args.kai_timeout, args.allow_remote, token, expected)
         session = InProcess(Front(Relay(client), "remote", None, expected))
@@ -634,6 +653,12 @@ def main(argv=None):
         command.add_argument(
             "--kai-package-sha256",
             help="the package that service must be: an answer from anything else is not used",
+        )
+        command.add_argument(
+            "--kai-model",
+            choices=sorted(ADAPTERS),
+            help="the decision model that package is of (default kai-4b): an answer naming "
+            "another model is not used",
         )
 
     def server(command):

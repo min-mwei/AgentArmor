@@ -100,7 +100,13 @@ def wire_bytes(body):
 # The decision models an answer can be read from. An answer here is a probability from a
 # readout these questions were registered for. Another model needs its own entry, its own
 # questions and its own evaluation: these semantics are not laid over whatever it returns.
-ADAPTERS = {"kai-4b": {"model": "kai-4b", "readout": "pointer"}}
+# kai-35b-a3b (Qwen3.6-35B-A3B) was trained on Kai's same registered questions and options and
+# is read by the same pointer readout; its entry lets a deployment name it. No decision of it
+# is qualified: the service still says policy_ready false, and no cutoff is adopted for it.
+ADAPTERS = {
+    "kai-4b": {"model": "kai-4b", "readout": "pointer"},
+    "kai-35b-a3b": {"model": "kai-35b-a3b", "readout": "pointer"},
+}
 IDENTITY = ("model", "readout", "package_sha256")  # what a reply must name, and name alike
 
 

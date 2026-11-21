@@ -91,7 +91,12 @@ def handler(service, session=None):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=("kai-4b",), default="kai-4b", help="Kai-4B only")
+    parser.add_argument(
+        "--model",
+        choices=("kai-4b", "kai-35b-a3b"),
+        help="the served model the package must be of (its registered base's); default, "
+        "whatever the verified package is",
+    )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--package", help="local Kai vLLM export directory")
     source.add_argument(
@@ -113,8 +118,9 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--base-dir",
-        help="for an unmerged package (schema agentarmor-qwen-lora/v1, MLX only): the directory "
-        "of the registered base it is served beside; default, the local Hugging Face cache",
+        help="for an unmerged package (schema agentarmor-qwen-lora/v1 or v2, MLX only): the "
+        "directory of the registered base it is served beside; default, the local Hugging Face "
+        "cache",
     )
     parser.add_argument(
         "--verify-only",
@@ -142,6 +148,7 @@ def parse_args(argv=None):
 def unmerged_options(args):
     """What only an unmerged package or a verification needs; nothing when neither was asked."""
     options = {"base_dir": args.base_dir} if args.base_dir else {}
+    options |= {"model": args.model} if getattr(args, "model", None) else {}
     return options | ({"allocate": False} if args.verify_only else {})
 
 
@@ -164,7 +171,12 @@ def load_kai_service(args):
 
 def main(argv=None):
     args = parse_args(argv)
-    service = load_kai_service(args)
+    try:
+        service = load_kai_service(args)
+    except ValueError as refused:
+        if str(refused) == "the package is not of the model named":
+            raise SystemExit("the package is not of the model named by --model") from None
+        raise
     session = None
     if args.session_package:
         from .engine import load_service
@@ -178,6 +190,7 @@ def main(argv=None):
             about = {
                 "role": role,
                 "schema": found.package.meta["schema"],
+                "model": getattr(found.package, "model", "kai-4b"),
                 "weights": found.package.meta["weights"],
                 "package_sha256": found.package.identity,
                 "verified": "package, tokenizer and pointer; no weight loaded",

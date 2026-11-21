@@ -39,8 +39,10 @@ model or an unmerged training checkpoint cannot replace this export.
 | `--port PORT` | Loopback HTTP port; default 8009 |
 
 HF cache options apply only to `--kai-revision`. Otherwise Hugging Face uses
-`HF_HOME` / `HF_HUB_CACHE` or its standard cache directory. `--model kai-4b` is
-accepted for existing launch commands; Kai is the only supported model.
+`HF_HOME` / `HF_HUB_CACHE` or its standard cache directory. The service serves the
+model its verified package is of: `kai-4b` or `kai-35b-a3b` (see
+[Registered bases](#registered-bases)). `--model NAME` is optional; when given, a
+package of another model is refused at startup.
 Context limits come from the export and cannot be enlarged by a launch option.
 Keep the package/cache immutable while serving. No request triggers a model download.
 
@@ -66,8 +68,9 @@ For an HF-loaded export it also returns the repository and exact revision.
 history and proposed operation when asking about authorization. AgentArmor does
 not collect or authenticate that context for the caller.
 
-The optional `model` accepts `kai`, `kai-4b` or `Kai-4B`. Omit it to use the
-resident model; other values fail admission.
+The optional `model` accepts `kai` or the resident model's own name (`kai-4b` /
+`Kai-4B`, or `kai-35b-a3b` / `Kai-35B-A3B`). Omit it to use the resident model;
+other values, the other Kai model's name included, fail admission.
 
 | Question type | Criteria | Answer |
 |---|---|---|
@@ -218,8 +221,9 @@ answers: with the merged export, some probabilities differed from the scorer's b
 0.05. The second package kind keeps the scorer's numerical program instead. The adapter stays
 beside the BF16 base, the text body runs in training mode, and the recurrent update is the
 chunked Gated DeltaNet routine in `agentarmor_vllm/delta.py`, published from the Kai project.
-`--backend mlx` chooses this path when `kai.json` has schema `agentarmor-qwen-lora/v1`; health
-and every answer then report `backend: "mlx-lora"` and `weights: "lora-unmerged"`.
+`--backend mlx` chooses this path when `kai.json` has schema `agentarmor-qwen-lora/v1` or
+`agentarmor-qwen-lora/v2`; health and every answer then report `backend: "mlx-lora"` and
+`weights: "lora-unmerged"`.
 
 ```text
 DIR/
@@ -239,6 +243,15 @@ more fields:
 | `lora` | `rank`, `alpha` and the list of `targets` (projection names); every adapter tensor must be a paired factor of a listed target at that rank |
 | `runtime` | Exact `mlx`, `mlx-metal` and `mlx-lm` versions, `text_body: "train"`, `delta` (`impl: "agentarmor_vllm.delta"` and that file's SHA-256) and `mlx_lm_sources` (SHA-256 of mlx-lm's `qwen3_5.py` and `gated_delta.py`) |
 
+Schema v2 names any registered base and has one more field, `routed_experts`. It is `null`
+for a dense base. For a sparse-MoE base it is `{"quantization": {"bits", "group_size",
+"mode"}}`: how the frozen routed-expert banks are quantized as the base loads (MLX affine
+quantization; bits 4, 5, 6 or 8; group size 32, 64 or 128). The run's adapter and pointer
+were trained and read over those quantized banks, so the choice is part of the package and
+never a launch option. A v2 package of a sparse-MoE base also pins three more mlx-lm sources
+in `mlx_lm_sources`: `qwen3_5_moe.py`, `qwen3_next.py` and `switch_layers.py`. Schema v1
+remains the 4B base's, unchanged: a v1 package keeps its identity.
+
 Everything is checked before a tokenizer, a pointer or a weight is read: the package files,
 every base file, the installed versions, the installed mlx-lm sources and this module's own
 `delta.py`. A package made for another runtime is refused, never answered by the installed
@@ -257,6 +270,22 @@ within 0.05 (largest difference 0.038), and no answer on the other side of 0.5 e
 whose reference was itself within 0.05 of 0.5. Median request time was 0.83 s and peak device
 memory 10.2 GB on Apple silicon. This is numerical agreement on one machine, not an accuracy
 or deployment qualification, and it says nothing for vLLM. `policy_ready` stays `false`.
+
+### Registered bases
+
+`BASES` in `agentarmor_vllm/package.py` lists the bases a package may name. Each has its own
+served model name, text decoder and pinned mlx-lm sources.
+
+| Served model | Base and revision | Decoder | Package kinds |
+|---|---|---|---|
+| `kai-4b` | `Qwen/Qwen3.5-4B-Base` at `1001bb4d` | dense, 32 layers, width 2,560 | merged BF16 export (vLLM or MLX); unmerged v1 or v2 (MLX) |
+| `kai-35b-a3b` | `Qwen/Qwen3.6-35B-A3B` at `345d467b` | sparse MoE, 40 layers, width 2,048, 8 of 256 routed experts per token and a shared expert | unmerged v2 (MLX) only |
+
+For `kai-35b-a3b` the MLX loader reads the base lazily, drops the untied vocabulary head,
+quantizes the 120 routed-expert banks as the package states, then wires the adapter onto the
+attention, DeltaNet and shared-expert projections. The routed banks stay frozen and are never
+adapted. No merged export and no vLLM path exist for it. `policy_ready` stays `false` for
+both models, and Kai-4B remains the published baseline.
 
 ### Evidence spans
 

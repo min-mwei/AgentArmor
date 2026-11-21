@@ -164,6 +164,7 @@ def test_hf_loader_preserves_source_identity_and_cache_boundary(monkeypatch, tmp
                 "hf_blobs": blobs,
                 "source": {"hf_repo": KAI_REPO, "revision": revision},
                 "backend": "vllm",
+                "model": "kai-4b",  # a named model is checked before a weight is read
             },
         ),
     }

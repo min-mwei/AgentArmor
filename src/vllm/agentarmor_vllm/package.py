@@ -5,8 +5,14 @@ Two kinds, told apart by the schema in kai.json:
     agentarmor-qwen/v1        a merged BF16 export (Package), served by vLLM or MLX
     agentarmor-qwen-lora/v1   the adapter and pointer of one run beside the registered base, with
                               the MLX runtime it is to be answered by (LoraPackage), MLX only
+    agentarmor-qwen-lora/v2   the same beside any registered base (BASES): it also states how a
+                              sparse-MoE base's frozen routed-expert banks are quantized on load
+                              ("routed_experts"; null for a dense base)
 
 Either is verified whole before a tokenizer, a pointer or a weight is read.
+
+A base is registered here by its repository, exact revision and text decoder (BASES). Each has
+its own served model name: a package answers as the model of its base and as no other.
 """
 
 import hashlib
@@ -18,7 +24,75 @@ from .wire import read_json
 
 BASE = "Qwen/Qwen3.5-4B-Base"
 BASE_REVISION = "1001bb4d826a52d1f399e183466143f4da7b741b"
+MOE_BASE = "Qwen/Qwen3.6-35B-A3B"
+MOE_BASE_REVISION = "345d467b117d1fd5eda9b879a5988de9ae5f47a7"
 SCHEMA, LORA_SCHEMA = "agentarmor-qwen/v1", "agentarmor-qwen-lora/v1"
+LORA_SCHEMA_V2 = "agentarmor-qwen-lora/v2"
+LORA_SCHEMAS = (LORA_SCHEMA, LORA_SCHEMA_V2)
+DENSE_SOURCES = ("qwen3_5.py", "gated_delta.py")  # in mlx_lm/models: the text body and its update
+# A sparse-MoE text body is the same qwen3_5.py decoder with mlx-lm's routed-expert block
+# (qwen3_next.py) over its expert banks (switch_layers.py), built by qwen3_5_moe.py.
+MOE_SOURCES = (*DENSE_SOURCES, "qwen3_5_moe.py", "qwen3_next.py", "switch_layers.py")
+# The registered bases: {repository: what a package of it must be and is served as}. "model" is
+# the name the service answers under; "mlp" the decoder's MLP kind; "sources" the mlx-lm files an
+# unmerged package of it must pin. A new base is a new entry and its own qualification.
+BASES = {
+    BASE: {
+        "repo": BASE,
+        "revision": BASE_REVISION,
+        "model": "kai-4b",
+        "text_type": "qwen3_5_text",
+        "hidden_size": 2560,
+        "layers": 32,
+        "mlp": "dense",
+        "sources": DENSE_SOURCES,
+    },
+    MOE_BASE: {
+        "repo": MOE_BASE,
+        "revision": MOE_BASE_REVISION,
+        "model": "kai-35b-a3b",
+        "text_type": "qwen3_5_moe_text",
+        "hidden_size": 2048,
+        "layers": 40,
+        "mlp": "sparse-moe",
+        "experts": 256,
+        "experts_per_token": 8,
+        "sources": MOE_SOURCES,
+    },
+}
+EXPERT_BANKS = ("gate_proj", "up_proj", "down_proj")  # a sparse-MoE layer's routed-expert banks
+# The registered forms of a package's "routed_experts": MLX affine quantization of those banks.
+EXPERT_QUANTIZATION = {"bits": (4, 5, 6, 8), "group_size": (32, 64, 128), "mode": ("affine",)}
+
+
+def registered_base(repo, revision):
+    """The BASES entry a package's base and base_revision name, or a refusal."""
+    base = BASES.get(repo) if isinstance(repo, str) else None
+    if base is None or revision != base["revision"]:
+        raise ValueError("package must identify a registered base at its registered revision")
+    return base
+
+
+def check_routed_experts(spec, base):
+    """A package's "routed_experts" for its base: None for a dense base, and for a sparse-MoE
+    base exactly {"quantization": {bits, group_size, mode}} in a registered form. The banks
+    are frozen and never adapted; how they are quantized is part of what the run was trained
+    and read with, so it is stated and bound, never chosen at launch."""
+    if base["mlp"] != "sparse-moe":
+        if spec is not None:
+            raise ValueError("routed experts are stated for a sparse-MoE base only")
+        return None
+    told = (
+        spec.get("quantization")
+        if isinstance(spec, dict) and set(spec) == {"quantization"}
+        else None
+    )
+    if not isinstance(told, dict) or set(told) != set(EXPERT_QUANTIZATION):
+        raise ValueError("a sparse-MoE package states its routed experts' quantization")
+    for key, allowed in EXPERT_QUANTIZATION.items():
+        if type(told[key]) is not type(allowed[0]) or told[key] not in allowed:
+            raise ValueError("unregistered routed-expert quantization")
+    return dict(told)
 
 
 def sha256(path):
@@ -50,15 +124,22 @@ def check_context(m):
         raise ValueError("unexpected pause token")
 
 
-def check_backbone(config):
-    """The registered text backbone, from a config.json already read."""
+def check_backbone(config, base=None):
+    """The registered text backbone of ``base`` (default: the 4B base), from a config.json
+    already read."""
+    base = BASES[BASE] if base is None else base
     config = config.get("text_config", config)
     if (
-        config.get("model_type") != "qwen3_5_text"
-        or config.get("hidden_size") != 2560
-        or config.get("num_hidden_layers") != 32
+        config.get("model_type") != base["text_type"]
+        or config.get("hidden_size") != base["hidden_size"]
+        or config.get("num_hidden_layers") != base["layers"]
     ):
         raise ValueError("unexpected Qwen backbone")
+    if base["mlp"] == "sparse-moe" and (
+        config.get("num_experts") != base["experts"]
+        or config.get("num_experts_per_tok") != base["experts_per_token"]
+    ):
+        raise ValueError("unexpected routed-expert geometry")
 
 
 class Package:
@@ -115,12 +196,13 @@ class Package:
                 raise ValueError("package artifact hash mismatch")
         check_backbone(read_json((self.root / "model/config.json").read_bytes()))
         self.model_dir = self.root / "model"  # where the tokenizer and the weights are read
-        self.hidden_size = 2560
+        self.base = BASES[BASE]  # a merged export exists for the 4B base only
+        self.hidden_size, self.model = self.base["hidden_size"], self.base["model"]
         self.identity = sha256(self.root / "kai.json")
 
 
 RUNTIME_PACKAGES = ("mlx", "mlx-metal", "mlx-lm")
-MLX_LM_SOURCES = ("qwen3_5.py", "gated_delta.py")  # in mlx_lm/models: the text body and its update
+MLX_LM_SOURCES = DENSE_SOURCES  # the 4B base's; kept under its first name
 DELTA = "agentarmor_vllm.delta"
 ADAPTER, POINTER = "adapter_model.safetensors", "pointer.safetensors"
 EVIDENCE_HEAD = "evidence_head.safetensors"
@@ -151,19 +233,21 @@ def installed_runtime():
     models = Path(places[0]) / "models" if places else None
     return {
         "versions": versions,
-        "sources": {name: models / name if models else None for name in MLX_LM_SOURCES},
+        "sources": {name: models / name if models else None for name in MOE_SOURCES},
         "delta": Path(__file__).with_name("delta.py"),
     }
 
 
-def base_snapshot(cache_dir=None):
-    """The registered base as the local Hugging Face cache holds it. Never the network."""
+def base_snapshot(cache_dir=None, base=None):
+    """A registered base (default: the 4B base) as the local Hugging Face cache holds it.
+    Never the network."""
+    base = BASES[BASE] if base is None else base
     try:
         from huggingface_hub import snapshot_download
 
         found = snapshot_download(
-            BASE,
-            revision=BASE_REVISION,
+            base["repo"],
+            revision=base["revision"],
             cache_dir=cache_dir,
             local_files_only=True,
             token=False,
@@ -222,7 +306,11 @@ def adapter_layout(path, lora):
 
 
 class LoraPackage:
-    """One run's adapter and pointer beside the registered base, unmerged, with its runtime.
+    """One run's adapter and pointer beside a registered base, unmerged, with its runtime.
+
+    Schema v1 is the 4B base's, as first published; v2 names any registered base and adds
+    "routed_experts", the quantization of a sparse-MoE base's frozen expert banks (null for a
+    dense base). A v1 package keeps its identity: nothing about how it is read has changed.
 
     kai.json binds the two package files, every file of the base directory (weight shards
     included) and the runtime the package is to be answered by: the exact mlx, mlx-metal and
@@ -257,16 +345,21 @@ class LoraPackage:
             "evidence",
             "runtime",
         }
-        if not isinstance(m, dict) or set(m) != required or m["schema"] != LORA_SCHEMA:
+        if not isinstance(m, dict) or m.get("schema") not in LORA_SCHEMAS:
             raise ValueError("unsupported package schema")
-        if m["base"] != BASE or m["base_revision"] != BASE_REVISION:
+        second = m["schema"] == LORA_SCHEMA_V2
+        if set(m) != required | ({"routed_experts"} if second else set()):
+            raise ValueError("unsupported package schema")
+        if not second and (m["base"] != BASE or m["base_revision"] != BASE_REVISION):
             raise ValueError("package must identify the registered Qwen3.5-4B base")
+        self.base = base = registered_base(m["base"], m["base_revision"])
         if m["weights"] != self.weights or m["dtype"] != "bfloat16":
             raise ValueError("an unmerged LoRA beside the BF16 base is required")
+        self.routed_experts = check_routed_experts(m.get("routed_experts"), base)
         self.evidence = self._check_evidence(m["evidence"])
         check_context(m)
         self._check_lora(m["lora"])
-        self.runtime = self._check_runtime(m["runtime"])
+        self.runtime = self._check_runtime(m["runtime"], base["sources"])
         # The package's own files: the adapter and the pointer, with the evidence head when
         # the package has one, all inside it, nothing else.
         own = {ADAPTER, POINTER} | ({EVIDENCE_HEAD} if self.evidence else set())
@@ -278,8 +371,8 @@ class LoraPackage:
             if not path.is_relative_to(self.root) or sha256(path) != digest:
                 raise ValueError("package artifact hash mismatch")
         self.adapter = adapter_layout(self.root / ADAPTER, m["lora"])
-        self.model_dir = self._check_base(m["base_files"], base_dir, cache_dir)
-        self.hidden_size = 2560
+        self.model_dir = self._check_base(m["base_files"], base_dir, cache_dir, base)
+        self.hidden_size, self.model = base["hidden_size"], base["model"]
         self.identity = sha256(self.root / "kai.json")
 
     @staticmethod
@@ -360,9 +453,10 @@ class LoraPackage:
             raise ValueError("invalid LoRA targets")
 
     @staticmethod
-    def _check_runtime(runtime):
-        """The manifest's runtime against the installed one. Returns the files it was read from,
-        so that what is later imported can be shown to be what was hashed."""
+    def _check_runtime(runtime, pinned=DENSE_SOURCES):
+        """The manifest's runtime against the installed one. ``pinned`` names the mlx-lm sources
+        the package's base requires it to pin. Returns the files it was read from, so that what
+        is later imported can be shown to be what was hashed."""
         keys = {*RUNTIME_PACKAGES, "text_body", "delta", "mlx_lm_sources"}
         if not isinstance(runtime, dict) or set(runtime) != keys:
             raise ValueError("invalid runtime description")
@@ -375,7 +469,7 @@ class LoraPackage:
             or delta["impl"] != DELTA
             or not _digests({"delta": delta["sha256"]})
             or not _digests(sources)
-            or set(sources) != set(MLX_LM_SOURCES)
+            or set(sources) != set(pinned)
         ):
             raise ValueError("invalid runtime description")
         installed = installed_runtime()
@@ -384,8 +478,8 @@ class LoraPackage:
                 raise ValueError(
                     f"the package is for {name} {runtime[name]}, which is not installed"
                 )
-        for name in MLX_LM_SOURCES:
-            path = installed["sources"][name]
+        for name in pinned:
+            path = installed["sources"].get(name)
             if path is None or not path.is_file() or sha256(path) != sources[name]:
                 raise ValueError(f"installed mlx-lm {name} is not the source the package pins")
         if sha256(installed["delta"]) != delta["sha256"]:
@@ -393,8 +487,9 @@ class LoraPackage:
         return installed
 
     @staticmethod
-    def _check_base(listed, base_dir, cache_dir):
+    def _check_base(listed, base_dir, cache_dir, registered=None):
         """The base directory, every file of it bound and hashed, shards included."""
+        registered = BASES[BASE] if registered is None else registered
         if not _digests(listed) or any(Path(name).name != name for name in listed):
             raise ValueError("invalid base file list")
         shards = {n for n in listed if n.startswith("model") and n.endswith(".safetensors")}
@@ -404,7 +499,7 @@ class LoraPackage:
         if base_dir is not None:
             base = Path(base_dir).resolve(strict=True)
         else:
-            base = base_snapshot(cache_dir).resolve(strict=True)
+            base = base_snapshot(cache_dir, registered).resolve(strict=True)
         # mlx-lm reads every model*.safetensors it finds and optional side files (generation and
         # quantization configs); the tokenizer loader reads optional files too. So nothing may be
         # there that the package does not bind. Neither loader descends into a subdirectory.
@@ -417,7 +512,7 @@ class LoraPackage:
             if sha256(paths[name]) != listed[name]:
                 raise ValueError(f"base file hash mismatch: {name}")
         config = read_json((base / "config.json").read_bytes())
-        check_backbone(config)
+        check_backbone(config, registered)
         refuse_model_code(config)
         index = read_json((base / "model.safetensors.index.json").read_bytes())
         if set(index.get("weight_map", {}).values()) != shards:

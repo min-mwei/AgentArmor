@@ -156,7 +156,9 @@ def wire_lora(lm, package, mx):
 
     Strict in both directions, and decided before a factor is read: the projections found are
     exactly the adapter's (package.adapter, from the file's header), each with the adapter's
-    dimensions. Returns the number of projections adapted."""
+    dimensions. On a sparse-MoE base the routed-expert banks carry three of the target names;
+    they are frozen, never adapted, and must be exactly the quantized banks the package states
+    (routed_banks). Returns the number of projections adapted."""
     import mlx.nn as nn
     from mlx.utils import tree_unflatten
     from mlx_lm.tuner.lora import LoRALinear
@@ -164,8 +166,11 @@ def wire_lora(lm, package, mx):
     from .package import ADAPTER, MLX_PREFIX, PEFT_PREFIX
 
     lora, found = package.meta["lora"], {}
+    frozen = routed_banks(lm, package)
     for name, module in lm.named_modules():
         if name.startswith(MLX_PREFIX + "layers.") and name.rsplit(".", 1)[-1] in lora["targets"]:
+            if name in frozen:
+                continue
             if type(module) is not nn.Linear:
                 raise ValueError("a module under a LoRA target name is not a dense projection")
             found[name] = module
@@ -193,24 +198,94 @@ def wire_lora(lm, package, mx):
     return len(swaps)
 
 
+def moe_base(package):
+    """Whether a package's registered base has a sparse-MoE decoder (package.BASES)."""
+    return (getattr(package, "base", None) or {}).get("mlp") == "sparse-moe"
+
+
+def quantize_routed_experts(lm, spec, mx):
+    """Replace every routed-expert bank of a sparse-MoE text body with its MLX affine-quantized
+    form, as the package states (bits, group size, mode), evaluating layer by layer so that at
+    most one layer's stored banks are in memory beside the quantized model. This is how Kai's
+    training runtime loads such a base: the banks are frozen there too, and the run's adapter
+    and pointer were trained and read over these quantized banks, not the stored ones. Every
+    other weight keeps its stored precision. Returns the number of banks quantized."""
+    from mlx_lm.models.switch_layers import SwitchLinear
+
+    from .package import EXPERT_BANKS
+
+    count = 0
+    for layer in lm.language_model.model.layers:
+        glu = getattr(layer.mlp, "switch_mlp", None)
+        if glu is None:
+            raise ValueError("a decoder layer has no routed experts to quantize")
+        for name in EXPERT_BANKS:
+            bank = glu[name]
+            if type(bank) is not SwitchLinear or "bias" in bank:
+                raise ValueError("a stored, bias-free routed-expert bank is required")
+            glu[name] = bank.to_quantized(
+                group_size=spec["group_size"], bits=spec["bits"], mode=spec["mode"]
+            )
+            count += 1
+        mx.eval(glu.parameters())
+    return count
+
+
+def routed_banks(lm, package):
+    """{module name: bank} of a sparse-MoE base's routed-expert banks, after checking that they
+    are exactly what the package states: three quantized banks in every decoder layer, each
+    with the stated bits, group size and mode. Empty for a dense base, where nothing under a
+    target name may be anything but a dense projection."""
+    if not moe_base(package):
+        return {}
+    from mlx_lm.models.switch_layers import QuantizedSwitchLinear
+
+    from .package import EXPERT_BANKS, MLX_PREFIX
+
+    spec, found = package.routed_experts, {}
+    layers = lm.language_model.model.layers
+    for index, layer in enumerate(layers):
+        glu = getattr(layer.mlp, "switch_mlp", None)
+        for name in EXPERT_BANKS:
+            bank = glu[name] if glu is not None and name in glu else None
+            if type(bank) is not QuantizedSwitchLinear or (
+                bank.bits,
+                bank.group_size,
+                bank.mode,
+            ) != (spec["bits"], spec["group_size"], spec["mode"]):
+                raise ValueError("the routed experts are not quantized as the package states")
+            found[f"{MLX_PREFIX}layers.{index}.mlp.switch_mlp.{name}"] = bank
+    if len(layers) != package.base["layers"]:
+        raise ValueError("the loaded decoder is not the registered base's")
+    return found
+
+
 def delta_update(package):
     """(mlx-lm's qwen3_5 module, this package's gated-delta update), once it is certain that
     putting the second into the first gives the program the package pins. Refused when a module
     in use was imported from another file than the one whose hash the package verified, or when
     the text body's update is already something other than mlx-lm's own or this one: another
     substitution is never stacked on, replaced or left half in place."""
+    from importlib import import_module
+
     from mlx_lm.models import gated_delta as reference
     from mlx_lm.models import qwen3_5
 
     from . import delta
+    from .package import DENSE_SOURCES
 
     def read_from(module, path):
         return path is not None and Path(module.__file__).resolve() == Path(path).resolve()
 
     pinned = package.runtime
+    # Every mlx-lm source the package's base pins (a sparse-MoE base pins its expert block and
+    # banks too): the module in use must be the file that was hashed.
+    names = (getattr(package, "base", None) or {}).get("sources", DENSE_SOURCES)
     if not (
-        read_from(qwen3_5, pinned["sources"]["qwen3_5.py"])
-        and read_from(reference, pinned["sources"]["gated_delta.py"])
+        all(
+            read_from(import_module("mlx_lm.models." + name[:-3]), pinned["sources"].get(name))
+            for name in names
+        )
         and read_from(delta, pinned["delta"])
     ):
         raise ValueError("the imported runtime is not the one the package's hashes were taken of")
@@ -248,13 +323,28 @@ class MlxLoraBackbone(MlxBackbone):
 
             delta_update(package)  # refuse a runtime that cannot be made the pinned one, first
             mx.set_cache_limit(MLX_CACHE_BYTES)  # before the first allocation
-            lm = load_model(package.model_dir)[0]  # the verified directory only; no hub access
+            if moe_base(package):
+                # A sparse-MoE base: read lazily, drop the untied vocabulary head before anything
+                # evaluates it (Kai reads hidden states), then quantize the frozen routed-expert
+                # banks as the package states, a layer at a time. Kai's loader does the same.
+                lm = load_model(package.model_dir, lazy=True)[0]
+                if "lm_head" in lm.language_model:
+                    del lm.language_model["lm_head"]
+                quantize_routed_experts(lm, package.routed_experts, mx)
+            else:
+                lm = load_model(package.model_dir)[0]  # the verified directory only; no hub access
             lm.freeze()
             wire_lora(lm, package, mx)
             # The base as stored (BF16, FP32 where it keeps it) and the adapter in FP32, as it
-            # was trained. Any other number type, float16 above all, is refused.
+            # was trained. Any other number type, float16 above all, is refused. The quantized
+            # expert banks alone hold packed integers (their "weight"), with scales and offsets
+            # in the base's own BF16.
+            packed = {id(bank.weight) for bank in routed_banks(lm, package).values()}
             if any(
-                p.dtype not in (mx.bfloat16, mx.float32) for _, p in tree_flatten(lm.parameters())
+                p.dtype != mx.uint32
+                if id(p) in packed
+                else p.dtype not in (mx.bfloat16, mx.float32)
+                for _, p in tree_flatten(lm.parameters())
             ):
                 raise ValueError(
                     "MLX backbone requires bfloat16 weights (float32 where the base keeps it)"
@@ -372,7 +462,8 @@ class Service:
         return {
             **self.source,
             "backend": self.backbone.name,  # each backbone names itself: vllm or mlx
-            "model": "kai-4b",
+            # The served name of the package's registered base (package.BASES).
+            "model": getattr(self.package, "model", "kai-4b"),
             "readout": "pointer",
             "policy_ready": False,
             # True only with a head loaded. It says spans are computed, not that they are
@@ -385,7 +476,7 @@ class Service:
         }
 
     def evaluate(self, value):
-        req = validate_request(value)
+        req = validate_request(value, getattr(self.package, "model", "kai-4b"))
         rec, meta = to_record(req)
         m = self.package.meta
         enc = encode(
@@ -464,22 +555,30 @@ class Service:
 
 
 def load_service(
-    directory, *, hf_blobs=None, source=None, backend="vllm", base_dir=None, allocate=True
+    directory,
+    *,
+    hf_blobs=None,
+    source=None,
+    backend="vllm",
+    base_dir=None,
+    allocate=True,
+    model=None,
 ):
     """A Service for a package directory of either schema (package.py). The package, then its
     tokenizer and pointer, are verified before a backbone is built.
 
     base_dir is where an unmerged package's base is (default: the local Hugging Face cache); a
     merged export carries its own weights and does not use it. allocate=False stops after the
-    verification: the returned service has no backbone and cannot answer."""
+    verification: the returned service has no backbone and cannot answer. model, when given,
+    is the served model the package must be of; another is refused before a weight is read."""
     if backend not in ("vllm", "mlx"):
         raise ValueError("unknown serving backend")
     from safetensors.numpy import load_file
     from transformers import AutoTokenizer
 
-    from .package import LORA_SCHEMA, LoraPackage, Package, schema_of
+    from .package import LORA_SCHEMAS, LoraPackage, Package, schema_of
 
-    if schema_of(directory) == LORA_SCHEMA:
+    if schema_of(directory) in LORA_SCHEMAS:
         if backend != "mlx" or hf_blobs is not None:
             raise ValueError("an unmerged package is a local one, answered by the MLX backend")
         package, build = LoraPackage(directory, base_dir=base_dir), MlxLoraBackbone
@@ -491,6 +590,8 @@ def load_service(
     )
     pointer = Pointer(load_file(package.root / "pointer.safetensors"), package.hidden_size)
     # Validate tokenizer/head before allocating any backbone.
+    if model is not None and package.model != model:
+        raise ValueError("the package is not of the model named")
     service = Service(package, tokenizer, pointer, None, source=source)
     service.evidence, service.head_sha256 = evidence_head(package)
     if allocate:

@@ -6,13 +6,16 @@ from .wire import check_json
 
 MAX_TOTAL_TOKENS = 131072
 KAI_MODELS = ("kai", "kai-4b", "Kai-4B")
+# What a request may call each served model: "kai" (whichever is resident) or its own name.
+# A request naming another model is refused; it never switches models or starts a download.
+MODEL_NAMES = {"kai-4b": KAI_MODELS, "kai-35b-a3b": ("kai", "kai-35b-a3b", "Kai-35B-A3B")}
 
 
-def validate_request(value):
+def validate_request(value, resident="kai-4b"):
     check_json(value)
     if not isinstance(value, dict) or set(value) - {"state", "questions", "model"}:
         raise ValueError("unsupported request fields")
-    if value.get("model", KAI_MODELS[0]) not in KAI_MODELS:
+    if value.get("model", KAI_MODELS[0]) not in MODEL_NAMES[resident]:
         raise ValueError("request model differs from the resident model")
     if not isinstance(value.get("questions"), dict) or not 1 <= len(value["questions"]) <= 64:
         raise ValueError("request needs 1..64 questions")

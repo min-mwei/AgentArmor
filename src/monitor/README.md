@@ -117,7 +117,8 @@ tests with stand-ins and has not been exercised with a real model.
 
 **The decision model is the one configured, or its answer is not used.** An answer is read
 as Kai's only when the reply names the model, the readout and the package the operator
-configured (`kai-4b`, `pointer`, and the package hash). For a Kai at another address the
+configured (`kai-4b` unless `--kai-model kai-35b-a3b` says otherwise, `pointer`, and the
+package hash). For a Kai at another address the
 hash is `--kai-package-sha256`; for one loaded here it is the package that was loaded. Every
 answer is checked, not only the first: what is behind an address can change between two
 requests. A hash a service reports is its own claim and proves nothing by itself; it counts
