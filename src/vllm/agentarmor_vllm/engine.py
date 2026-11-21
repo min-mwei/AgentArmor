@@ -310,9 +310,10 @@ class MlxLoraBackbone(MlxBackbone):
 
     name = "mlx-lora"
 
-    def __init__(self, package, *, text=None, mx=None):
+    def __init__(self, package, *, text=None, mx=None, make_cache=None):
         self.width, self.max_row = package.hidden_size, package.meta["max_row"]
         self.in_place = None
+        self.make_cache = make_cache  # CPU tests pass a stand-in; a loaded model sets its own
         if text is None:
             from .package import refuse_model_code
 
@@ -355,6 +356,9 @@ class MlxLoraBackbone(MlxBackbone):
             qwen3_5, update = delta_update(package)
             qwen3_5.gated_delta_update = update
             self.in_place = lambda: qwen3_5.gated_delta_update is update and text.training
+            from mlx_lm.models.cache import make_prompt_cache
+
+            self.make_cache = lambda: make_prompt_cache(lm)  # a fresh cache for every request
         self.text, self.mx = text, mx
 
     def hidden(self, row):
@@ -362,6 +366,46 @@ class MlxLoraBackbone(MlxBackbone):
             # Not a caller's fault: the process no longer runs the package's program.
             raise RuntimeError("the package's runtime is no longer in place")
         return super().hidden(row)
+
+    def hidden_rows(self, state, branches, pad_id):
+        """The same raw states in the shared-prefix form, for every question of one request:
+        a list of [len(state) + len(branch), width] arrays, one per branch.
+
+        The state runs once into a fresh prompt cache; with more than one question the cache
+        is copied per question; the branches then run as one right-padded batch after it. This
+        is Kai's training and read forward, operation for operation (its forward module's
+        question_logits without the rows form), so a package trained and read in this form is
+        answered in it. Each branch still sees only the state and itself: the cache copies are
+        independent and attention is causal, so padding after a branch changes nothing in it.
+        """
+        if self.in_place is not None and not self.in_place():
+            raise RuntimeError("the package's runtime is no longer in place")
+        if self.make_cache is None:
+            raise ValueError("this backbone has no prompt cache for the shared-prefix form")
+        mx = self.mx
+        if not state or not branches or any(not branch for branch in branches):
+            raise ValueError("the shared-prefix form needs a state and nonempty branches")
+        if any(len(state) + len(branch) > self.max_row for branch in branches):
+            raise ValueError("row exceeds the checkpoint's row limit")
+        cache = self.make_cache()
+        prefix = self.text(mx.array([state], dtype=mx.int32), cache=cache)
+        if len(branches) > 1:
+            cache = [type(c).merge([c] * len(branches)) for c in cache]
+        longest = max(len(branch) for branch in branches)
+        padded = [list(branch) + [pad_id] * (longest - len(branch)) for branch in branches]
+        after = self.text(mx.array(padded, dtype=mx.int32), cache=cache)
+        prefix = np.array(prefix.astype(mx.float32))
+        after = np.array(after.astype(mx.float32))
+        if prefix.shape != (1, len(state), self.width) or after.shape != (
+            len(branches),
+            longest,
+            self.width,
+        ):
+            raise ValueError("backbone returned incomplete hidden states")
+        rows = [np.concatenate([prefix[0], after[i, : len(b)]]) for i, b in enumerate(branches)]
+        if not all(np.isfinite(row).all() for row in rows):
+            raise ValueError("nonfinite hidden states")
+        return rows
 
 
 # The evidence readouts this build can run: {name: class}. A class is made with (tensors,
@@ -473,6 +517,8 @@ class Service:
             "diagnostic": True,
             # Said only by a package that is not a merged export (LoraPackage: "lora-unmerged").
             **({"weights": w} if (w := getattr(self.package, "weights", None)) else {}),
+            # Said only by a package that states its forward form (schema v3).
+            **({"forward": f} if (f := getattr(self.package, "forward", "rows")) != "rows" else {}),
         }
 
     def evaluate(self, value):
@@ -500,13 +546,19 @@ class Service:
                 offsets = state_offsets(self.tok, rec["state"], state[1:])
             except ValueError:  # no places for this state: its evidence is an error, said so
                 offsets = ()
-        for r in branches:
+        together = None
+        if getattr(self.package, "forward", "rows") == "shared-prefix":
+            # One forward for the whole request, in the form the package was trained and read in.
+            pad = self.tok.pad_token_id
+            pad = self.tok.eos_token_id if pad is None else pad  # Kai's right-padding id
+            together = self.backbone.hidden_rows(state, [r["ids"] for r in branches], pad)
+        for number, r in enumerate(branches):
             row = {
                 "ids": state + r["ids"],
                 "decide": len(state) + r["decide"],
                 "opts": [len(state) + p for p in r["opts"]],
             }
-            hidden = self.backbone.hidden(row)
+            hidden = together[number] if together is not None else self.backbone.hidden(row)
             logits = self.pointer.logits(hidden, row).astype(np.float64)
             if offsets is not None:
                 marked.append(self._spans(hidden, row, offsets, rec["state"]))

@@ -8,6 +8,10 @@ Two kinds, told apart by the schema in kai.json:
     agentarmor-qwen-lora/v2   the same beside any registered base (BASES): it also states how a
                               sparse-MoE base's frozen routed-expert banks are quantized on load
                               ("routed_experts"; null for a dense base)
+    agentarmor-qwen-lora/v3   v2 with the forward form stated ("forward"): "rows", one whole causal
+                              row per question as v1 and v2 are answered, or "shared-prefix", the
+                              state once into a prompt cache and every question's branch in one
+                              batch after it, the form Kai trains and reads with
 
 Either is verified whole before a tokenizer, a pointer or a weight is read.
 
@@ -28,7 +32,13 @@ MOE_BASE = "Qwen/Qwen3.6-35B-A3B"
 MOE_BASE_REVISION = "345d467b117d1fd5eda9b879a5988de9ae5f47a7"
 SCHEMA, LORA_SCHEMA = "agentarmor-qwen/v1", "agentarmor-qwen-lora/v1"
 LORA_SCHEMA_V2 = "agentarmor-qwen-lora/v2"
-LORA_SCHEMAS = (LORA_SCHEMA, LORA_SCHEMA_V2)
+LORA_SCHEMA_V3 = "agentarmor-qwen-lora/v3"
+LORA_SCHEMAS = (LORA_SCHEMA, LORA_SCHEMA_V2, LORA_SCHEMA_V3)
+# How a package's questions are run. The two forms are the same function of the same tokens
+# and differ only in arithmetic order; on the sparse-MoE base that was measured to move some
+# probabilities by more than 0.05 (expert routing is discontinuous), so the form a run was
+# trained and read with is part of what the package is.
+FORWARDS = ("rows", "shared-prefix")
 DENSE_SOURCES = ("qwen3_5.py", "gated_delta.py")  # in mlx_lm/models: the text body and its update
 # A sparse-MoE text body is the same qwen3_5.py decoder with mlx-lm's routed-expert block
 # (qwen3_next.py) over its expert banks (switch_layers.py), built by qwen3_5_moe.py.
@@ -310,7 +320,8 @@ class LoraPackage:
 
     Schema v1 is the 4B base's, as first published; v2 names any registered base and adds
     "routed_experts", the quantization of a sparse-MoE base's frozen expert banks (null for a
-    dense base). A v1 package keeps its identity: nothing about how it is read has changed.
+    dense base); v3 adds "forward", the form its questions are run in (FORWARDS). A v1 or v2
+    package keeps its identity and its whole-row form: nothing about how it is read has changed.
 
     kai.json binds the two package files, every file of the base directory (weight shards
     included) and the runtime the package is to be answered by: the exact mlx, mlx-metal and
@@ -347,9 +358,14 @@ class LoraPackage:
         }
         if not isinstance(m, dict) or m.get("schema") not in LORA_SCHEMAS:
             raise ValueError("unsupported package schema")
-        second = m["schema"] == LORA_SCHEMA_V2
-        if set(m) != required | ({"routed_experts"} if second else set()):
+        second = m["schema"] != LORA_SCHEMA
+        third = m["schema"] == LORA_SCHEMA_V3
+        more = ({"routed_experts"} if second else set()) | ({"forward"} if third else set())
+        if set(m) != required | more:
             raise ValueError("unsupported package schema")
+        self.forward = m["forward"] if third else "rows"
+        if self.forward not in FORWARDS:
+            raise ValueError("unknown forward form")
         if not second and (m["base"] != BASE or m["base_revision"] != BASE_REVISION):
             raise ValueError("package must identify the registered Qwen3.5-4B base")
         self.base = base = registered_base(m["base"], m["base_revision"])

@@ -221,8 +221,8 @@ answers: with the merged export, some probabilities differed from the scorer's b
 0.05. The second package kind keeps the scorer's numerical program instead. The adapter stays
 beside the BF16 base, the text body runs in training mode, and the recurrent update is the
 chunked Gated DeltaNet routine in `agentarmor_vllm/delta.py`, published from the Kai project.
-`--backend mlx` chooses this path when `kai.json` has schema `agentarmor-qwen-lora/v1` or
-`agentarmor-qwen-lora/v2`; health and every answer then report `backend: "mlx-lora"` and
+`--backend mlx` chooses this path when `kai.json` has schema `agentarmor-qwen-lora/v1`,
+`/v2` or `/v3`; health and every answer then report `backend: "mlx-lora"` and
 `weights: "lora-unmerged"`.
 
 ```text
@@ -251,6 +251,17 @@ were trained and read over those quantized banks, so the choice is part of the p
 never a launch option. A v2 package of a sparse-MoE base also pins three more mlx-lm sources
 in `mlx_lm_sources`: `qwen3_5_moe.py`, `qwen3_next.py` and `switch_layers.py`. Schema v1
 remains the 4B base's, unchanged: a v1 package keeps its identity.
+
+Schema v3 is v2 with the forward form stated in `forward`. `"rows"` runs one whole causal row
+per question, as v1 and v2 packages are answered. `"shared-prefix"` runs the state once into a
+prompt cache, copies the cache per question and runs every question's branch in one
+right-padded batch after it. That is the form Kai trains and reads with, and health and every
+answer then report `forward: "shared-prefix"`. The two forms compute the same function of the
+same tokens, and each question still sees only the state and itself. They differ in arithmetic
+order. On the sparse-MoE base that matters: on 2026-11-21 the first `kai-35b-a3b` package,
+answered in whole rows, differed from Kai's saved shared-prefix read by more than 0.05 on 5 of
+188 requests (largest 0.453), while Kai's own scorer run in whole rows agreed with this loader
+to 0.0001. A package is therefore answered in the form it states and no other.
 
 Everything is checked before a tokenizer, a pointer or a weight is read: the package files,
 every base file, the installed versions, the installed mlx-lm sources and this module's own
@@ -284,7 +295,8 @@ served model name, text decoder and pinned mlx-lm sources.
 For `kai-35b-a3b` the MLX loader reads the base lazily, drops the untied vocabulary head,
 quantizes the 120 routed-expert banks as the package states, then wires the adapter onto the
 attention, DeltaNet and shared-expert projections. The routed banks stay frozen and are never
-adapted. No merged export and no vLLM path exist for it. `policy_ready` stays `false` for
+adapted. A `kai-35b-a3b` package should be schema v3 with `forward: "shared-prefix"`. No
+merged export and no vLLM path exist for it. `policy_ready` stays `false` for
 both models, and Kai-4B remains the published baseline.
 
 ### Evidence spans

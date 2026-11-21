@@ -19,6 +19,7 @@ from agentarmor_vllm.package import (
     BASES,
     LORA_SCHEMA,
     LORA_SCHEMA_V2,
+    LORA_SCHEMA_V3,
     MOE_BASE,
     MOE_BASE_REVISION,
     MOE_SOURCES,
@@ -467,3 +468,133 @@ def test_a_model_named_at_load_is_checked_before_a_backbone_exists(moe, monkeypa
     monkeypatch.setattr(engine, "MlxLoraBackbone", never)
     with pytest.raises(ValueError, match="not of the model named"):
         engine.load_service(moe.root, backend="mlx", base_dir=moe.base, model="kai-4b")
+
+
+# --- the forward form: stated by the package (schema v3) and run as stated ---
+
+
+def third(made, forward="shared-prefix"):
+    made.meta |= {"schema": LORA_SCHEMA_V3, "forward": forward}
+    made.write()
+    return made
+
+
+def test_a_third_schema_package_states_its_forward_form(moe, tmp_path_factory, monkeypatch):
+    assert LoraPackage(moe.root, base_dir=moe.base).forward == "rows"  # v2: whole rows, as before
+    third(moe)
+    package = LoraPackage(moe.root, base_dir=moe.base)
+    assert package.forward == "shared-prefix" and package.model == "kai-35b-a3b"
+    assert LoraPackage(third(moe, "rows").root, base_dir=moe.base).forward == "rows"
+    for unknown in ("merged-rows", None, ["shared-prefix"]):
+        with pytest.raises(ValueError):
+            LoraPackage(third(moe, unknown).root, base_dir=moe.base)
+    del moe.meta["forward"]  # v3 without the field, and v2 with it, are both refused
+    moe.write()
+    with pytest.raises(ValueError):
+        LoraPackage(moe.root, base_dir=moe.base)
+    moe.meta |= {"schema": LORA_SCHEMA_V2, "forward": "shared-prefix"}
+    moe.write()
+    with pytest.raises(ValueError):
+        LoraPackage(moe.root, base_dir=moe.base)
+
+
+class FakeArray:
+    def __init__(self, value):
+        self.value = np.asarray(value)
+
+    def astype(self, _):
+        return self.value.astype(np.float32)
+
+
+class FakeCache:
+    merged = []
+
+    def __init__(self, copies=1):
+        self.copies = copies
+
+    @classmethod
+    def merge(cls, caches):
+        cls.merged.append(len(caches))
+        return cls(len(caches))
+
+
+def test_the_shared_prefix_form_runs_the_state_once_and_the_branches_in_one_batch():
+    calls, width = [], 3
+    fake = SimpleNamespace(int32="int32", float32="float32", array=lambda rows, dtype: rows)
+
+    def text(ids, cache):
+        calls.append((ids, [c.copies for c in cache]))
+        return FakeArray(
+            [
+                [[10 * row + place] * width for place in range(len(ids[0]))]
+                for row in range(len(ids))
+            ]
+        )
+
+    FakeCache.merged = []
+    package = SimpleNamespace(hidden_size=width, meta={"max_row": 8})
+    backbone = engine.MlxLoraBackbone(
+        package, text=text, mx=fake, make_cache=lambda: [FakeCache(), FakeCache()]
+    )
+    rows = backbone.hidden_rows([5, 6, 7], [[1, 2], [3]], pad_id=99)
+    # The state alone, then every branch right-padded to the longest, over per-question copies.
+    assert calls == [([[5, 6, 7]], [1, 1]), ([[1, 2], [3, 99]], [2, 2])]
+    assert FakeCache.merged == [2, 2]
+    assert [row.shape for row in rows] == [(5, width), (4, width)]  # state + its own branch
+    assert rows[1][:, 0].tolist() == [0, 1, 2, 10]  # the pad position is not returned
+    calls.clear()
+    backbone.hidden_rows([5], [[1]], pad_id=99)  # one question: the cache is used as it is
+    assert calls == [([[5]], [1, 1]), ([[1]], [1, 1])]
+    with pytest.raises(ValueError):
+        backbone.hidden_rows([5] * 7, [[1, 2]], pad_id=99)  # over the row limit
+    with pytest.raises(ValueError):
+        backbone.hidden_rows([5], [], pad_id=99)
+    with pytest.raises(ValueError):
+        engine.MlxLoraBackbone(package, text=text, mx=fake).hidden_rows([5], [[1]], pad_id=99)
+
+
+def test_both_forms_compute_the_same_function_on_a_small_sparse_moe_model(mlx, monkeypatch):
+    from agentarmor_vllm import delta
+    from mlx_lm.models import qwen3_5, qwen3_5_moe
+    from mlx_lm.models.cache import make_prompt_cache
+
+    text_config = {
+        "model_type": "qwen3_5_moe_text",
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "num_hidden_layers": 4,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 16,
+        "vocab_size": 128,
+        "linear_num_value_heads": 4,
+        "linear_num_key_heads": 2,
+        "linear_key_head_dim": 16,
+        "linear_value_head_dim": 16,
+        "full_attention_interval": 4,
+        "num_experts": 8,
+        "num_experts_per_tok": 2,
+        "moe_intermediate_size": 32,
+        "shared_expert_intermediate_size": 32,
+        "norm_topk_prob": True,
+        "tie_word_embeddings": False,
+    }
+    mlx.mx.random.seed(7)
+    lm = qwen3_5_moe.Model(
+        qwen3_5_moe.ModelArgs.from_dict({"model_type": "qwen3_5_moe", "text_config": text_config})
+    )
+    body = lm.language_model.model
+    body.train()
+    monkeypatch.setattr(qwen3_5, "gated_delta_update", delta.gated_delta_update)
+    package = SimpleNamespace(hidden_size=64, meta={"max_row": 512})
+    backbone = engine.MlxLoraBackbone(
+        package, text=body, mx=mlx.mx, make_cache=lambda: make_prompt_cache(lm)
+    )
+    rng = np.random.default_rng(2)
+    state = rng.integers(0, 128, size=150).tolist()  # more than two DeltaNet chunks
+    branches = [rng.integers(0, 128, size=n).tolist() for n in (70, 9, 31)]
+    together = backbone.hidden_rows(state, branches, pad_id=0)
+    for branch, shared in zip(branches, together, strict=True):
+        whole = backbone.hidden({"ids": state + branch})
+        assert shared.shape == whole.shape == (150 + len(branch), 64)
+        np.testing.assert_allclose(shared, whole, rtol=2e-3, atol=2e-3)
