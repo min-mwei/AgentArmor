@@ -1,0 +1,18 @@
+{
+ "profile": "armor-hostfacts-urls-v1",
+ "reference_python_sha256": "b0985f886da3122dc8a75c3fe7350f57d047f446dac699fda6e97998defaf5c9",
+ "vectors_sha256": "286e4397dfc8bc29bb9f1108402862ed05cb8b2c934e4a8ef5ce503f726accb3",
+ "builder_sha256": "509c93bc770a9bfbb4e21518ee09c60345c8fe710dd76e45f4cde8fcabbc2043",
+ "cases": 193,
+ "policy_cases": 24,
+ "copies": {
+  "kai": [
+   "(proposed) train/kai/hostfacts/urls.py",
+   "(proposed) docs/contracts/armor-hostfacts-urls-v1/"
+  ],
+  "agentarmor": [
+   "src/hostfacts/urls.py",
+   "tests/fixtures/armor-hostfacts-urls-v1/"
+  ]
+ }
+}

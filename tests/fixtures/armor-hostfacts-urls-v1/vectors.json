@@ -1,0 +1,9150 @@
+{
+ "profile": "armor-hostfacts-urls-v1",
+ "status": "Hand-written expectations. The Python reference and any port must reproduce every case exactly.",
+ "cases": [
+  {
+   "id": "plain_https",
+   "why": "default port 443 made explicit",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "plain_http",
+   "why": "default port 80 made explicit",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "http://example.com:80"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "ws_default",
+   "why": "ws defaults to 80",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "ws://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "ws://example.com:80"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "wss_default",
+   "why": "wss defaults to 443",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "wss://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "wss://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "explicit_default_port",
+   "why": "an explicit default port is the same origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "explicit_other_port",
+   "why": "another port is another origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:8443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:8443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "http_on_443",
+   "why": "the scheme is part of the origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://example.com:443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "http://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "empty_port",
+   "why": "an empty port is the default (RFC 3986 3.2.3)",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "port_leading_zeros",
+   "why": "a port is a decimal number",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://example.com:080/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "http://example.com:80"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "port_zero",
+   "why": "port 0 is a number",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://example.com:0/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "http://example.com:0"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "case_scheme_host",
+   "why": "scheme and host are case-insensitive",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "HTTPS://Example.COM/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "trailing_dot",
+   "why": "one trailing dot names the same host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com./",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "trailing_dot_port",
+   "why": "trailing dot before a port",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com.:443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "userinfo",
+   "why": "userinfo is not the host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://user:pw@example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "userinfo_lookalike",
+   "why": "the host is what follows the @, not the familiar name before it",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com@evil.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://evil.example:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "userinfo_lookalike_port",
+   "why": "a colon before the @ belongs to the userinfo",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:443@evil.example:8443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://evil.example:8443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "subdomain",
+   "why": "a subdomain is another host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://api.example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://api.example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "suffix_lookalike",
+   "why": "a longer registered name that starts with the familiar one",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com.evil.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com.evil.example:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "no_path",
+   "why": "an empty path is /",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "query_only",
+   "why": "a query ends the authority",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com?next=/a/../b",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "fragment_only",
+   "why": "a fragment ends the authority",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com#/x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "at_in_path",
+   "why": "an @ after the first slash is in the path",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/@evil.example",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/@evil.example"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "underscore_label",
+   "why": "underscore labels exist in DNS",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://a_b.example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://a_b.example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_unicode",
+   "why": "a non-ASCII host is compared as A-labels",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://b\u00fccher.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://xn--bcher-kva.example:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_unicode_upper_dot",
+   "why": "IDNA mapping lowercases; trailing dot removed",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://B\u00dcCHER.example./",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://xn--bcher-kva.example:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_a_label",
+   "why": "an A-label written by the caller is kept",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://xn--bcher-kva.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://xn--bcher-kva.example:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_a_label_upper",
+   "why": "A-labels are case-insensitive ASCII",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://XN--BCHER-KVA.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://xn--bcher-kva.example:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_cyrillic_lookalike",
+   "why": "a Cyrillic a (U+0430) makes a different host than ASCII example.com",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://ex\u0430mple.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://xn--exmple-4nf.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_fullwidth",
+   "why": "IDNA 2003 maps a full-width letter to ASCII",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://\uff45xample.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "idn_ideographic_dot",
+   "why": "IDNA 2003 reads U+3002 as a label separator",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example\u3002com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "ipv4",
+   "why": "a plain dotted quad",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://127.0.0.1:8443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://127.0.0.1:8443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "ipv6",
+   "why": "an IPv6 literal with a port",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[::1]:8443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://[::1]:8443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "ipv6_long",
+   "why": "an IPv6 literal takes its compressed form",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[0:0:0:0:0:0:0:1]/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://[::1]:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "ipv6_upper",
+   "why": "IPv6 hex is lowercased",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[2001:DB8::A]/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://[2001:db8::a]:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "u_empty",
+   "why": "empty argument",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_url"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_long",
+   "why": "over the length limit",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "url_too_long"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_space",
+   "why": "a space inside the host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://exam ple.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "whitespace_or_control"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_leading_space",
+   "why": "clients strip leading spaces",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": " https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "whitespace_or_control"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_tab",
+   "why": "clients strip tabs",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://exa\tmple.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "whitespace_or_control"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_newline",
+   "why": "clients strip newlines",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/\n",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "whitespace_or_control"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_backslash_authority",
+   "why": "\\ read as / by some clients",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com\\@evil.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "backslash"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_backslash_path",
+   "why": "\\ in a path",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/a\\b",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "backslash"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_relative",
+   "why": "a relative reference has no origin here",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "/x/y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "no_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_scheme_relative",
+   "why": "a scheme-relative reference",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "//example.com/x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "no_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_bare_host",
+   "why": "no scheme",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "example.com/x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "no_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ftp",
+   "why": "only http, https, ws, wss",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "ftp://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "unsupported_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_file",
+   "why": "file URLs are path effects",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "file:///etc/passwd",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "unsupported_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_javascript",
+   "why": "no origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "javascript:alert(1)",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "unsupported_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_data",
+   "why": "no origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "data:text/plain,hello",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "unsupported_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_host_port_only",
+   "why": "host:port without a scheme parses as a scheme",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "example.com:443/x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "unsupported_scheme"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_one_slash",
+   "why": "clients repair https:/host differently",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https:/example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "missing_authority_slashes"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_three_slashes",
+   "why": "clients repair https:///host differently",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https:///example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "missing_authority_slashes"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_no_slashes",
+   "why": "no authority",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https:example.com",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "missing_authority_slashes"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_empty_host",
+   "why": "no host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https:///",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "missing_authority_slashes"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_empty_host_path",
+   "why": "no host before the query",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://?x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_empty_host_port",
+   "why": "a port without a host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://:443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_userinfo_only",
+   "why": "userinfo without a host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://user@/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_two_ats",
+   "why": "two @: parsers pick different hosts",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://a@b@example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_userinfo"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_pct_host",
+   "why": "a percent sequence in the host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://exa%6dple.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "percent_encoded_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_sharp_s",
+   "why": "IDNA 2003 maps sharp s to ss, IDNA 2008 keeps it",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://fa\u00df.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "idna_deviation_character"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_zwj",
+   "why": "a zero-width joiner",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://exa\u200dmple.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "idna_deviation_character"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_idna_bidi",
+   "why": "a label mixing left-to-right and right-to-left letters (RFC 3454 section 6)",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://a\u05d0.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "idna_failed"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_idna_prohibited",
+   "why": "U+FFFD is prohibited by Nameprep",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://\ufffd.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "idna_failed"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_bad_a_label",
+   "why": "an xn-- label that is not Punycode of a valid label",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://xn--zzzzzz/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_a_label"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_empty_label",
+   "why": "two dots",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://a..example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_two_trailing_dots",
+   "why": "two trailing dots",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com../",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_leading_hyphen",
+   "why": "a label starting with a hyphen",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://-a.example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_host_char",
+   "why": "a character outside letters, digits, hyphen, underscore",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://exa!mple.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_fullwidth_slash",
+   "why": "IDNA mapping yields a slash inside the host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com\uff0fevil.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_long_label",
+   "why": "a 64-character label",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv6_open",
+   "why": "no closing bracket",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[::1/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv6_bad",
+   "why": "not an IPv6 literal",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[::g]/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv6_junk",
+   "why": "text after the bracket",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[::1]x/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_host"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv6_zone",
+   "why": "a zone id",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://[fe80::1%25eth0]/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ipv6_zone"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv4_short",
+   "why": "127.1 is 127.0.0.1 to some clients, a name to others",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://127.1/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv4_hex",
+   "why": "hex octet",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://0x7f.0.0.1/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv4_octal",
+   "why": "leading zero octet",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://0177.0.0.1/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv4_integer",
+   "why": "one decimal integer",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://2130706433/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv4_range",
+   "why": "an octet above 255",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://1.2.3.256/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_ipv4_five",
+   "why": "five numeric labels",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://1.2.3.4.5/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_port_text",
+   "why": "a port that is not a number",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:https/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_port"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_port_range",
+   "why": "a port above 65535",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:65536/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_port"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_port_sign",
+   "why": "a signed port",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:+443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_port"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_two_colons",
+   "why": "two colons after the host",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:443:8443/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_port"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "u_port_fullwidth",
+   "why": "full-width digits are not ASCII digits",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:\uff14\uff14\uff13/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_port"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_plain__rfc3986",
+   "why": "nothing to decode",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a.txt",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a.txt"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_plain__decode_all_once",
+   "why": "nothing to decode",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a.txt",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a.txt"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_dot_segments__rfc3986",
+   "why": "literal dot segments leave the subtree",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/../../z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_dot_segments__decode_all_once",
+   "why": "literal dot segments leave the subtree",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/../../z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_single_dot__rfc3986",
+   "why": ". is dropped",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/./y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_single_dot__decode_all_once",
+   "why": ". is dropped",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/./y",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_trailing_dot_segment__rfc3986",
+   "why": "a final . leaves a trailing slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/.",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_trailing_dot_segment__decode_all_once",
+   "why": "a final . leaves a trailing slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/.",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_trailing_dotdot__rfc3986",
+   "why": "a final .. leaves a trailing slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/..",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_trailing_dotdot__decode_all_once",
+   "why": "a final .. leaves a trailing slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/..",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_above_root__rfc3986",
+   "why": ".. never climbs above the root",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/../../a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_above_root__decode_all_once",
+   "why": ".. never climbs above the root",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/../../a",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_to_root__rfc3986",
+   "why": "everything popped",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/..",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_to_root__decode_all_once",
+   "why": "everything popped",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/..",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_trailing_slash__rfc3986",
+   "why": "a trailing slash is kept",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_trailing_slash__decode_all_once",
+   "why": "a trailing slash is kept",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_query_excluded__rfc3986",
+   "why": "query and fragment are not the path",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y?next=/../z#/../w",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_query_excluded__decode_all_once",
+   "why": "query and fragment are not the path",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y?next=/../z#/../w",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dots_lower__rfc3986",
+   "why": "%2e is an unreserved dot in both profiles",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%2e%2e/z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dots_lower__decode_all_once",
+   "why": "%2e is an unreserved dot in both profiles",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%2e%2e/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dots_upper__rfc3986",
+   "why": "hex case does not matter",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%2E%2E/z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dots_upper__decode_all_once",
+   "why": "hex case does not matter",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%2E%2E/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dots_mixed__rfc3986",
+   "why": "one literal and one encoded dot",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/.%2e/z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dots_mixed__decode_all_once",
+   "why": "one literal and one encoded dot",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/.%2e/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_single_dot__rfc3986",
+   "why": "an encoded . segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%2e/y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_single_dot__decode_all_once",
+   "why": "an encoded . segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%2e/y",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dot_in_name__rfc3986",
+   "why": "a dot inside a name is not a dot segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%2etxt",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a.txt"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_dot_in_name__decode_all_once",
+   "why": "a dot inside a name is not a dot segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%2etxt",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a.txt"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_slash__rfc3986",
+   "why": "%2F is data under rfc3986 and a separator under decode_all_once",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%2F..%2F..%2Fz",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y%2F..%2F..%2Fz"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_slash__decode_all_once",
+   "why": "%2F is data under rfc3986 and a separator under decode_all_once",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%2F..%2F..%2Fz",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_slash_lower__rfc3986",
+   "why": "kept sequences get uppercase hex",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%2fa",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y%2Fa"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_slash_lower__decode_all_once",
+   "why": "kept sequences get uppercase hex",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%2fa",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_slash_empty_segment__rfc3986",
+   "why": "a decoded slash can make an empty segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%2Fy",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/%2Fy"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_slash_empty_segment__decode_all_once",
+   "why": "a decoded slash can make an empty segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%2Fy",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_path_segment"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_encoded_backslash__rfc3986",
+   "why": "%5C is data under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%5cb",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%5Cb"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_encoded_backslash__decode_all_once",
+   "why": "%5C is data under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%5cb",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "encoded_backslash"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_double_dots__rfc3986",
+   "why": "%25 decodes to %, and nothing is decoded twice",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%252e%252e/z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/%252e%252e/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_double_dots__decode_all_once",
+   "why": "%25 decodes to %, and nothing is decoded twice",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%252e%252e/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/%2e%2e/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_double_slash__rfc3986",
+   "why": "a doubly encoded slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%252Fz",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y%252Fz"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_double_slash__decode_all_once",
+   "why": "a doubly encoded slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%252Fz",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y%2Fz"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_percent_literal__rfc3986",
+   "why": "%25 before non-hex text is a literal percent",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/100%25/y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/100%25/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_percent_literal__decode_all_once",
+   "why": "%25 before non-hex text is a literal percent",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/100%25/y",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/100%/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_unreserved__rfc3986",
+   "why": "unreserved characters are decoded under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%41%62%7E%2D%5F",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/Ab~-_"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_unreserved__decode_all_once",
+   "why": "unreserved characters are decoded under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%41%62%7E%2D%5F",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/Ab~-_"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_reserved_kept__rfc3986",
+   "why": "a reserved character stays encoded under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%3Fb%23c%20d",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%3Fb%23c%20d"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_reserved_kept__decode_all_once",
+   "why": "a reserved character stays encoded under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%3Fb%23c%20d",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a?b#c d"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_utf8__rfc3986",
+   "why": "UTF-8 sequences",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%c3%a9",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/%C3%A9"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_utf8__decode_all_once",
+   "why": "UTF-8 sequences",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%c3%a9",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/\u00e9"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_non_ascii_literal__rfc3986",
+   "why": "a literal non-ASCII character",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/\u00e9",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/%C3%A9"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_non_ascii_literal__decode_all_once",
+   "why": "a literal non-ASCII character",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/\u00e9",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/\u00e9"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_case_sensitive__rfc3986",
+   "why": "path case is kept",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/X/y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/X/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_case_sensitive__decode_all_once",
+   "why": "path case is kept",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/X/y",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/X/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_semicolon__rfc3986",
+   "why": "path parameters are literal text",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y;v=1/z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y;v=1/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_semicolon__decode_all_once",
+   "why": "path parameters are literal text",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y;v=1/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y;v=1/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_nul__rfc3986",
+   "why": "an encoded NUL",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%00b",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%00b"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_nul__decode_all_once",
+   "why": "an encoded NUL",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%00b",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "encoded_control_character"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_non_utf8__rfc3986",
+   "why": "bytes that are not UTF-8",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%ffb",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%FFb"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "p_non_utf8__decode_all_once",
+   "why": "bytes that are not UTF-8",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%ffb",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "non_utf8_path"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_bad_percent__rfc3986",
+   "why": "a % without two hex digits",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%2",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_percent_encoding"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_bad_percent__decode_all_once",
+   "why": "a % without two hex digits",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%2",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_percent_encoding"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_bad_percent_hex__rfc3986",
+   "why": "a % before non-hex text",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%zz",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_percent_encoding"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_bad_percent_hex__decode_all_once",
+   "why": "a % before non-hex text",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%zz",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "bad_percent_encoding"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_empty_segment__rfc3986",
+   "why": "servers merge or keep //",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x//y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_path_segment"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_empty_segment__decode_all_once",
+   "why": "servers merge or keep //",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x//y",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_path_segment"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_leading_empty_segment__rfc3986",
+   "why": "a path that starts with //",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com//x/y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_path_segment"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "p_leading_empty_segment__decode_all_once",
+   "why": "a path that starts with //",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com//x/y",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_path_segment"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "c_inside",
+   "why": "beneath the prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_equal",
+   "why": "equal to the prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_equal_slash",
+   "why": "the prefix with a trailing slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_sibling_prefix",
+   "why": "/x/y-evil is not inside /x/y",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y-evil/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y-evil/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_parent",
+   "why": "the parent of the prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_dot_escape",
+   "why": "dot segments leave the subtree",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/../../z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_dot_return",
+   "why": "dot segments that stay inside",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a/../b",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/b"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_encoded_dot_escape",
+   "why": "encoded dot segments leave the subtree",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%2e%2e/%2E%2E/z",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_case",
+   "why": "path case differs",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/X/Y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/X/Y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_encoded_letter",
+   "why": "an encoded unreserved letter is the same segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%79/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_encoded_slash_rfc",
+   "why": "under rfc3986 the encoded slashes are data, so the URL stays beneath /x/y",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a%2F..%2F..%2F..%2Fz",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a%2F..%2F..%2F..%2Fz"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_encoded_slash_once",
+   "why": "under decode_all_once the same URL leaves the subtree",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a%2F..%2F..%2F..%2Fz",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      true
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_double_once",
+   "why": "decoded once, %252e%252e is the literal segment %2e%2e and stays beneath /x/y",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%252e%252e/%252e%252e/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/%2e%2e/%2e%2e/z"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_operation",
+   "why": "a rule for send joins the lists of a send",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/a",
+      "operation": "send",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "send-only"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "send-only"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_default_port",
+   "why": "an explicit default port is the same origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://EXAMPLE.com:443/x/y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_other_port",
+   "why": "another port is another origin: inside no prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com:8443/x/y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:8443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      []
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      []
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_other_scheme",
+   "why": "http is another origin than https",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://example.com/x/y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "http://example.com:80"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      []
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      []
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_userinfo_lookalike",
+   "why": "the familiar name is userinfo; the host is another origin",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com@api.example.com/x/y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://api.example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_idn_lookalike",
+   "why": "a look-alike host is a different origin from every rule",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://ex\u0430mple.com/x/y/a",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://xn--exmple-4nf.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      []
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/y/a"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      []
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "docs-subtree",
+       "whole-origin",
+       "other-origin"
+      ]
+     ]
+    ],
+    "unusable": []
+   }
+  },
+  {
+   "id": "c_two_effects",
+   "why": "two URL effects, the second unusable: its facts are one unusable fact",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/to",
+      "raw": "https://api.example.com/v1",
+      "operation": "send",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/from",
+      "raw": "https://127.1/x",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://api.example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      []
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/v1"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "other-origin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      []
+     ],
+     [
+      "call_url_2_unusable",
+      "ambiguous_ipv4_form"
+     ]
+    ],
+    "unusable": [
+     2
+    ]
+   }
+  },
+  {
+   "id": "c_unusable_with_rules",
+   "why": "an unusable URL is in no list, even with rules",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x//y",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_unusable",
+      "empty_path_segment"
+     ]
+    ],
+    "unusable": [
+     1
+    ]
+   }
+  },
+  {
+   "id": "c_no_effects",
+   "why": "a call with no URL effect has no URL fact",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [],
+    "url_rules": [
+     {
+      "rule_id": "docs-subtree",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "other-origin",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "send-only",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/y"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [],
+    "unusable": []
+   }
+  },
+  {
+   "id": "r_profile",
+   "why": "another profile",
+   "request": {
+    "profile": "armor-hostfacts-paths-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_missing_key",
+   "why": "no observed_at",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_extra_key",
+   "why": "an unknown key",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [],
+    "runtime": {}
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_observed_at",
+   "why": "a timestamp without an offset",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_effects_type",
+   "why": "effects is not a list",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": {},
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_too_many_effects",
+   "why": "nine effects",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/u0",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u1",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u2",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u3",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u4",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u5",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u6",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u7",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/u8",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_raw_type",
+   "why": "raw is not a string",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": null,
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_operation",
+   "why": "an unknown operation",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "read",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_decoding",
+   "why": "an unknown decoding profile",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "decode_twice"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_pointer",
+   "why": "argument is not a JSON pointer",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_duplicate_pointer",
+   "why": "two effects for one argument",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     },
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_effect_keys",
+   "why": "an effect with an unknown key",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "final_link": "follow"
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_request"
+   }
+  },
+  {
+   "id": "r_rules_type",
+   "why": "url_rules is not a list",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": {}
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_keys",
+   "why": "a rule in policy-file form, not compiled",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "id": "a",
+      "urls": {
+       "within": "https://example.com/"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_duplicate",
+   "why": "duplicate rule ids",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "whole-origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_origin_form",
+   "why": "an origin without its port",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "a",
+      "prefixes": [
+       {
+        "origin": "https://example.com",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_origin_case",
+   "why": "an origin that is not lowercased",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "a",
+      "prefixes": [
+       {
+        "origin": "https://Example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_path_slash",
+   "why": "a prefix path with a trailing slash",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "a",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_path_dots",
+   "why": "a prefix path with a dot segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "a",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/x/../y"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  },
+  {
+   "id": "r_rule_operations",
+   "why": "an empty operations list",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/",
+      "operation": "fetch",
+      "decoding": "rfc3986"
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "a",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": []
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "bad_url_rules"
+   }
+  }
+ ],
+ "policy_cases": [
+  {
+   "id": "plain_forms",
+   "why": "an origin, a prefix, a list and a default for; rules without urls are skipped",
+   "rules": [
+    {
+     "id": "origin",
+     "tier": "allow",
+     "description": "Rule origin.",
+     "urls": {
+      "within": "https://example.com"
+     }
+    },
+    {
+     "id": "prose",
+     "tier": "allow",
+     "description": "Rule prose."
+    },
+    {
+     "id": "prefix",
+     "tier": "allow",
+     "description": "Rule prefix.",
+     "urls": {
+      "within": "https://API.Example.com:443/v1/",
+      "for": [
+       "send"
+      ]
+     }
+    },
+    {
+     "id": "several",
+     "tier": "allow",
+     "description": "Rule several.",
+     "urls": {
+      "within": [
+       "http://localhost:8080/",
+       "wss://example.com/live"
+      ],
+      "for": [
+       "open",
+       "fetch"
+      ]
+     }
+    }
+   ],
+   "expect": {
+    "status": "ok",
+    "url_rules": [
+     {
+      "rule_id": "origin",
+      "prefixes": [
+       {
+        "origin": "https://example.com:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "prefix",
+      "prefixes": [
+       {
+        "origin": "https://api.example.com:443",
+        "path": "/v1"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "several",
+      "prefixes": [
+       {
+        "origin": "http://localhost:8080",
+        "path": "/"
+       },
+       {
+        "origin": "wss://example.com:443",
+        "path": "/live"
+       }
+      ],
+      "operations": [
+       "open",
+       "fetch"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "idn_origin",
+   "why": "a non-ASCII policy host is compiled to A-labels",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://b\u00fccher.example/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "ok",
+    "url_rules": [
+     {
+      "rule_id": "a",
+      "prefixes": [
+       {
+        "origin": "https://xn--bcher-kva.example:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "no_url_rules",
+   "why": "a policy with no urls field",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a."
+    },
+    {
+     "id": "b",
+     "tier": "allow",
+     "description": "Rule b."
+    }
+   ],
+   "expect": {
+    "status": "ok",
+    "url_rules": []
+   }
+  },
+  {
+   "id": "e_not_list",
+   "why": "the policy is not a list",
+   "rules": {
+    "id": "a"
+   },
+   "expect": {
+    "status": "error",
+    "code": "bad_policy"
+   }
+  },
+  {
+   "id": "e_duplicate_id",
+   "why": "duplicate rule ids",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a."
+    },
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a."
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_policy"
+   }
+  },
+  {
+   "id": "e_urls_string",
+   "why": "urls is not an object",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": "https://example.com/"
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_unknown_key",
+   "why": "an unknown key in urls",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/",
+      "origin": "x"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_no_within",
+   "why": "within is required",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "for": [
+       "send"
+      ]
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_empty_within",
+   "why": "within lists nothing",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": []
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_nine_urls",
+   "why": "more than eight URLs",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": [
+       "https://h0.example/",
+       "https://h1.example/",
+       "https://h2.example/",
+       "https://h3.example/",
+       "https://h4.example/",
+       "https://h5.example/",
+       "https://h6.example/",
+       "https://h7.example/",
+       "https://h8.example/"
+      ]
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_bad_operation",
+   "why": "an unknown operation",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/",
+      "for": [
+       "write"
+      ]
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_listed_twice",
+   "why": "one prefix written two ways",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": [
+       "https://example.com",
+       "HTTPS://example.com:443/"
+      ]
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_urls_field"
+   }
+  },
+  {
+   "id": "e_relative",
+   "why": "a host without a scheme",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "example.com"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_wildcard",
+   "why": "a wildcard host",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://*.example.com/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_userinfo",
+   "why": "userinfo in a prefix",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://user@example.com/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_query",
+   "why": "a query in a prefix",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/x?y=1"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_fragment",
+   "why": "a fragment in a prefix",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/x#y"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_percent",
+   "why": "a percent sequence in a prefix",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/a%20b/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_dot_segment",
+   "why": "a dot segment in a prefix",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/x/../y/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_empty_segment",
+   "why": "an empty segment in a prefix",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/x//y/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_trailing_dot",
+   "why": "a host ending in a dot",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com./"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_non_ascii_path",
+   "why": "a non-ASCII prefix path",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://example.com/caf\u00e9/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_ipv4_short",
+   "why": "an ambiguous numeric host",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://127.1/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_too_many",
+   "why": "more than 32 rules with urls",
+   "rules": [
+    {
+     "id": "r0",
+     "tier": "allow",
+     "description": "Rule r0.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r1",
+     "tier": "allow",
+     "description": "Rule r1.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r2",
+     "tier": "allow",
+     "description": "Rule r2.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r3",
+     "tier": "allow",
+     "description": "Rule r3.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r4",
+     "tier": "allow",
+     "description": "Rule r4.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r5",
+     "tier": "allow",
+     "description": "Rule r5.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r6",
+     "tier": "allow",
+     "description": "Rule r6.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r7",
+     "tier": "allow",
+     "description": "Rule r7.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r8",
+     "tier": "allow",
+     "description": "Rule r8.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r9",
+     "tier": "allow",
+     "description": "Rule r9.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r10",
+     "tier": "allow",
+     "description": "Rule r10.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r11",
+     "tier": "allow",
+     "description": "Rule r11.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r12",
+     "tier": "allow",
+     "description": "Rule r12.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r13",
+     "tier": "allow",
+     "description": "Rule r13.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r14",
+     "tier": "allow",
+     "description": "Rule r14.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r15",
+     "tier": "allow",
+     "description": "Rule r15.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r16",
+     "tier": "allow",
+     "description": "Rule r16.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r17",
+     "tier": "allow",
+     "description": "Rule r17.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r18",
+     "tier": "allow",
+     "description": "Rule r18.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r19",
+     "tier": "allow",
+     "description": "Rule r19.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r20",
+     "tier": "allow",
+     "description": "Rule r20.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r21",
+     "tier": "allow",
+     "description": "Rule r21.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r22",
+     "tier": "allow",
+     "description": "Rule r22.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r23",
+     "tier": "allow",
+     "description": "Rule r23.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r24",
+     "tier": "allow",
+     "description": "Rule r24.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r25",
+     "tier": "allow",
+     "description": "Rule r25.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r26",
+     "tier": "allow",
+     "description": "Rule r26.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r27",
+     "tier": "allow",
+     "description": "Rule r27.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r28",
+     "tier": "allow",
+     "description": "Rule r28.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r29",
+     "tier": "allow",
+     "description": "Rule r29.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r30",
+     "tier": "allow",
+     "description": "Rule r30.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r31",
+     "tier": "allow",
+     "description": "Rule r31.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    },
+    {
+     "id": "r32",
+     "tier": "allow",
+     "description": "Rule r32.",
+     "urls": {
+      "within": "https://example.com/"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "too_many_url_rules"
+   }
+  }
+ ]
+}
