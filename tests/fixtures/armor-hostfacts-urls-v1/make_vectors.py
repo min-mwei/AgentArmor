@@ -3,7 +3,8 @@
 The expected values below were written by hand from RFC 3986 (syntax, percent-encoding, dot
 segments), RFC 6454 (origin) and the profile's stated rules. This builder never imports or calls
 the reference implementation, so the vectors are an independent check of the Python reference and
-of any port. The two A-label strings are the Punycode of their hosts (RFC 3492).
+of any port. The two A-label strings are the Punycode of their hosts (RFC 3492). The cases of
+the 2026-11-22 independent review (ids rv_*) carry that review's probe policy and inputs.
 Usage: python3 -I make_vectors.py [PATH_TO_urls.py]
 """
 
@@ -21,8 +22,15 @@ EX = "https://example.com:443"
 CASES, POLICY_CASES = [], []
 
 
-def eff(raw, op="fetch", decoding="rfc3986", arg="/call/arguments/url"):
-    return {"argument": arg, "raw": raw, "operation": op, "decoding": decoding}
+def eff(raw, op="fetch", decoding="rfc3986", arg="/call/arguments/url", cs=True, semi=False):
+    return {
+        "argument": arg,
+        "raw": raw,
+        "operation": op,
+        "decoding": decoding,
+        "case_sensitive": cs,
+        "semicolon_is_data": semi,
+    }
 
 
 def rule(rid, *prefixes, ops=ALL):
@@ -36,7 +44,7 @@ def rule(rid, *prefixes, ops=ALL):
 def ok(
     origin, path, flag=False, double=False, same=None, diff=None, inside=None, outside=None, k=1
 ):
-    """The facts of readable URL effect k; the four lists only when the policy has URL rules."""
+    """The facts of URL effect k; the four lists only when the policy has URL rules."""
     out = [(f"call_url_{k}_origin", origin)]
     if same is not None:
         out += [
@@ -56,11 +64,7 @@ def ok(
     return out
 
 
-def bad(code, k=1):
-    return [(f"call_url_{k}_unusable", code)]
-
-
-def case(cid, why, effects, rules=(), values=None, unusable=(), refused=None, request=None):
+def case(cid, why, effects, rules=(), values=None, refused=None, request=None):
     if request is None:
         request = {
             "profile": PROFILE,
@@ -71,11 +75,7 @@ def case(cid, why, effects, rules=(), values=None, unusable=(), refused=None, re
     if refused:
         expect = {"status": "refused", "code": refused}
     else:
-        expect = {
-            "status": "ok",
-            "values": [list(v) for v in values],
-            "unusable": list(unusable),
-        }
+        expect = {"status": "ok", "values": [list(v) for v in values]}
     CASES.append({"id": cid, "why": why, "request": request, "expect": expect})
 
 
@@ -83,21 +83,22 @@ def origin(cid, why, raw, expected, path="/"):
     case(cid, why, [eff(raw)], values=ok(expected, path))
 
 
-def unusable(cid, why, raw, code, decoding="rfc3986"):
-    case(cid, why, [eff(raw, decoding=decoding)], values=bad(code), unusable=[1])
+def refused_url(cid, why, raw, code, decoding="rfc3986", rules=(), **declared):
+    """A URL the host does not read: the whole request is refused with this code."""
+    case(cid, why, [eff(raw, decoding=decoding, **declared)], rules, refused=code)
 
 
-def path(cid, why, raw_path, rfc, once, flag=False, double=False):
-    """One written path under both profiles; ``once`` may be ("unusable", code)."""
+def path(cid, why, raw_path, rfc, once, flag=False, double=False, **declared):
+    """One written path under both profiles; an expectation may be ("refused", code)."""
     for decoding, expected in (("rfc3986", rfc), ("decode_all_once", once)):
         raw = "https://example.com" + raw_path
         if isinstance(expected, tuple):
-            unusable(f"{cid}__{decoding}", why, raw, expected[1], decoding)
+            refused_url(f"{cid}__{decoding}", why, raw, expected[1], decoding, **declared)
         else:
             case(
                 f"{cid}__{decoding}",
                 why,
-                [eff(raw, decoding=decoding)],
+                [eff(raw, decoding=decoding, **declared)],
                 values=ok(EX, expected, flag, double),
             )
 
@@ -134,10 +135,20 @@ origin(
     "http://example.com:080/",
     "http://example.com:80",
 )
-origin("port_zero", "port 0 is a number", "http://example.com:0/", "http://example.com:0")
+refused_url("port_zero", "no client connects to port 0", "http://example.com:0/", "bad_port")
 origin("case_scheme_host", "scheme and host are case-insensitive", "HTTPS://Example.COM/", EX)
-origin("trailing_dot", "one trailing dot names the same host", "https://example.com./", EX)
-origin("trailing_dot_port", "trailing dot before a port", "https://example.com.:443/", EX)
+refused_url(
+    "trailing_dot",
+    "clients send another Host and SNI for example.com.",
+    "https://example.com./",
+    "trailing_dot_host",
+)
+refused_url(
+    "trailing_dot_port",
+    "trailing dot before a port",
+    "https://example.com.:443/",
+    "trailing_dot_host",
+)
 origin("userinfo", "userinfo is not the host", "https://user:pw@example.com/", EX)
 origin(
     "userinfo_lookalike",
@@ -186,10 +197,16 @@ origin(
     "https://xn--bcher-kva.example:443",
 )
 origin(
-    "idn_unicode_upper_dot",
-    "IDNA mapping lowercases; trailing dot removed",
-    "https://BÜCHER.example./",
+    "idn_unicode_upper",
+    "IDNA mapping lowercases",
+    "https://B\u00dcCHER.example/",
     "https://xn--bcher-kva.example:443",
+)
+refused_url(
+    "idn_unicode_dot",
+    "a trailing dot after IDNA mapping",
+    "https://b\u00fccher.example./",
+    "trailing_dot_host",
 )
 origin(
     "idn_a_label",
@@ -229,126 +246,132 @@ origin(
 )
 
 # --- URLs the host does not read -----------------------------------------------------------------
-unusable("u_empty", "empty argument", "", "empty_url")
-unusable("u_long", "over the length limit", "https://example.com/" + "a" * 4096, "url_too_long")
-unusable("u_space", "a space inside the host", "https://exam ple.com/", "whitespace_or_control")
-unusable(
+refused_url("u_empty", "empty argument", "", "empty_url")
+refused_url("u_long", "over the length limit", "https://example.com/" + "a" * 4096, "url_too_long")
+refused_url("u_space", "a space inside the host", "https://exam ple.com/", "whitespace_or_control")
+refused_url(
     "u_leading_space",
     "clients strip leading spaces",
     " https://example.com/",
     "whitespace_or_control",
 )
-unusable("u_tab", "clients strip tabs", "https://exa\tmple.com/", "whitespace_or_control")
-unusable("u_newline", "clients strip newlines", "https://example.com/\n", "whitespace_or_control")
-unusable(
+refused_url("u_tab", "clients strip tabs", "https://exa\tmple.com/", "whitespace_or_control")
+refused_url(
+    "u_newline", "clients strip newlines", "https://example.com/\n", "whitespace_or_control"
+)
+refused_url(
     "u_backslash_authority",
     "\\ read as / by some clients",
     "https://example.com\\@evil.example/",
     "backslash",
 )
-unusable("u_backslash_path", "\\ in a path", "https://example.com/a\\b", "backslash")
-unusable("u_relative", "a relative reference has no origin here", "/x/y", "no_scheme")
-unusable("u_scheme_relative", "a scheme-relative reference", "//example.com/x", "no_scheme")
-unusable("u_bare_host", "no scheme", "example.com/x", "no_scheme")
-unusable("u_ftp", "only http, https, ws, wss", "ftp://example.com/", "unsupported_scheme")
-unusable("u_file", "file URLs are path effects", "file:///etc/passwd", "unsupported_scheme")
-unusable("u_javascript", "no origin", "javascript:alert(1)", "unsupported_scheme")
-unusable("u_data", "no origin", "data:text/plain,hello", "unsupported_scheme")
-unusable(
+refused_url("u_backslash_path", "\\ in a path", "https://example.com/a\\b", "backslash")
+refused_url("u_relative", "a relative reference has no origin here", "/x/y", "no_scheme")
+refused_url("u_scheme_relative", "a scheme-relative reference", "//example.com/x", "no_scheme")
+refused_url("u_bare_host", "no scheme", "example.com/x", "no_scheme")
+refused_url("u_ftp", "only http, https, ws, wss", "ftp://example.com/", "unsupported_scheme")
+refused_url("u_file", "file URLs are path effects", "file:///etc/passwd", "unsupported_scheme")
+refused_url("u_javascript", "no origin", "javascript:alert(1)", "unsupported_scheme")
+refused_url("u_data", "no origin", "data:text/plain,hello", "unsupported_scheme")
+refused_url(
     "u_host_port_only",
     "host:port without a scheme parses as a scheme",
     "example.com:443/x",
     "unsupported_scheme",
 )
-unusable(
+refused_url(
     "u_one_slash",
     "clients repair https:/host differently",
     "https:/example.com/",
     "missing_authority_slashes",
 )
-unusable(
+refused_url(
     "u_three_slashes",
     "clients repair https:///host differently",
     "https:///example.com/",
     "missing_authority_slashes",
 )
-unusable("u_no_slashes", "no authority", "https:example.com", "missing_authority_slashes")
-unusable("u_empty_host", "no host", "https:///", "missing_authority_slashes")
-unusable("u_empty_host_path", "no host before the query", "https://?x", "empty_host")
-unusable("u_empty_host_port", "a port without a host", "https://:443/", "empty_host")
-unusable("u_userinfo_only", "userinfo without a host", "https://user@/", "empty_host")
-unusable(
+refused_url("u_no_slashes", "no authority", "https:example.com", "missing_authority_slashes")
+refused_url("u_empty_host", "no host", "https:///", "missing_authority_slashes")
+refused_url("u_empty_host_path", "no host before the query", "https://?x", "empty_host")
+refused_url("u_empty_host_port", "a port without a host", "https://:443/", "empty_host")
+refused_url("u_userinfo_only", "userinfo without a host", "https://user@/", "empty_host")
+refused_url(
     "u_two_ats",
     "two @: parsers pick different hosts",
     "https://a@b@example.com/",
     "ambiguous_userinfo",
 )
-unusable(
+refused_url(
     "u_pct_host", "a percent sequence in the host", "https://exa%6dple.com/", "percent_encoded_host"
 )
-unusable(
+refused_url(
     "u_sharp_s",
     "IDNA 2003 maps sharp s to ss, IDNA 2008 keeps it",
     "https://faß.example/",
     "idna_deviation_character",
 )
-unusable("u_zwj", "a zero-width joiner", "https://exa‍mple.com/", "idna_deviation_character")
-unusable(
+refused_url("u_zwj", "a zero-width joiner", "https://exa‍mple.com/", "idna_deviation_character")
+refused_url(
     "u_idna_bidi",
     "a label mixing left-to-right and right-to-left letters (RFC 3454 section 6)",
     "https://a\u05d0.example/",
     "idna_failed",
 )
-unusable(
+refused_url(
     "u_idna_prohibited",
     "U+FFFD is prohibited by Nameprep",
     "https://\ufffd.example/",
     "idna_failed",
 )
-unusable(
+refused_url(
     "u_bad_a_label",
     "an xn-- label that is not Punycode of a valid label",
     "https://xn--zzzzzz/",
     "bad_a_label",
 )
-unusable("u_empty_label", "two dots", "https://a..example.com/", "bad_host")
-unusable("u_two_trailing_dots", "two trailing dots", "https://example.com../", "bad_host")
-unusable(
+refused_url("u_empty_label", "two dots", "https://a..example.com/", "bad_host")
+refused_url(
+    "u_two_trailing_dots", "two trailing dots", "https://example.com../", "trailing_dot_host"
+)
+refused_url(
     "u_leading_hyphen", "a label starting with a hyphen", "https://-a.example.com/", "bad_host"
 )
-unusable(
+refused_url(
     "u_host_char",
     "a character outside letters, digits, hyphen, underscore",
     "https://exa!mple.com/",
     "bad_host",
 )
-unusable(
+refused_url(
     "u_fullwidth_slash",
     "IDNA mapping yields a slash inside the host",
     "https://example.com／evil.example/",
     "bad_host",
 )
-unusable("u_long_label", "a 64-character label", "https://" + "a" * 64 + ".example/", "bad_host")
-unusable("u_ipv6_open", "no closing bracket", "https://[::1/", "bad_host")
-unusable("u_ipv6_bad", "not an IPv6 literal", "https://[::g]/", "bad_host")
-unusable("u_ipv6_junk", "text after the bracket", "https://[::1]x/", "bad_host")
-unusable("u_ipv6_zone", "a zone id", "https://[fe80::1%25eth0]/", "ipv6_zone")
-unusable(
+refused_url("u_long_label", "a 64-character label", "https://" + "a" * 64 + ".example/", "bad_host")
+refused_url("u_ipv6_open", "no closing bracket", "https://[::1/", "bad_host")
+refused_url("u_ipv6_bad", "not an IPv6 literal", "https://[::g]/", "bad_host")
+refused_url("u_ipv6_junk", "text after the bracket", "https://[::1]x/", "bad_host")
+refused_url("u_ipv6_zone", "a zone id", "https://[fe80::1%25eth0]/", "ipv6_zone")
+refused_url(
     "u_ipv4_short",
     "127.1 is 127.0.0.1 to some clients, a name to others",
     "https://127.1/",
     "ambiguous_ipv4_form",
 )
-unusable("u_ipv4_hex", "hex octet", "https://0x7f.0.0.1/", "ambiguous_ipv4_form")
-unusable("u_ipv4_octal", "leading zero octet", "https://0177.0.0.1/", "ambiguous_ipv4_form")
-unusable("u_ipv4_integer", "one decimal integer", "https://2130706433/", "ambiguous_ipv4_form")
-unusable("u_ipv4_range", "an octet above 255", "https://1.2.3.256/", "ambiguous_ipv4_form")
-unusable("u_ipv4_five", "five numeric labels", "https://1.2.3.4.5/", "ambiguous_ipv4_form")
-unusable("u_port_text", "a port that is not a number", "https://example.com:https/", "bad_port")
-unusable("u_port_range", "a port above 65535", "https://example.com:65536/", "bad_port")
-unusable("u_port_sign", "a signed port", "https://example.com:+443/", "bad_port")
-unusable("u_two_colons", "two colons after the host", "https://example.com:443:8443/", "bad_port")
-unusable(
+refused_url("u_ipv4_hex", "hex octet", "https://0x7f.0.0.1/", "ambiguous_ipv4_form")
+refused_url("u_ipv4_octal", "leading zero octet", "https://0177.0.0.1/", "ambiguous_ipv4_form")
+refused_url("u_ipv4_integer", "one decimal integer", "https://2130706433/", "ambiguous_ipv4_form")
+refused_url("u_ipv4_range", "an octet above 255", "https://1.2.3.256/", "ambiguous_ipv4_form")
+refused_url("u_ipv4_five", "five numeric labels", "https://1.2.3.4.5/", "ambiguous_ipv4_form")
+refused_url("u_port_text", "a port that is not a number", "https://example.com:https/", "bad_port")
+refused_url("u_port_range", "a port above 65535", "https://example.com:65536/", "bad_port")
+refused_url("u_port_sign", "a signed port", "https://example.com:+443/", "bad_port")
+refused_url(
+    "u_two_colons", "two colons after the host", "https://example.com:443:8443/", "bad_port"
+)
+refused_url(
     "u_port_fullwidth",
     "full-width digits are not ASCII digits",
     "https://example.com:４４３/",
@@ -417,7 +440,7 @@ path(
     "a decoded slash can make an empty segment",
     "/x/%2Fy",
     "/x/%2Fy",
-    ("unusable", "empty_path_segment"),
+    ("refused", "empty_path_segment"),
     flag=True,
 )
 path(
@@ -425,7 +448,7 @@ path(
     "%5C is data under rfc3986",
     "/x/a%5cb",
     "/x/a%5Cb",
-    ("unusable", "encoded_backslash"),
+    ("refused", "encoded_backslash"),
     flag=True,
 )
 path(
@@ -463,38 +486,237 @@ path(
 path("p_utf8", "UTF-8 sequences", "/x/%c3%a9", "/x/%C3%A9", "/x/é")
 path("p_non_ascii_literal", "a literal non-ASCII character", "/x/é", "/x/%C3%A9", "/x/é")
 path("p_case_sensitive", "path case is kept", "/X/y", "/X/y", "/X/y")
-path("p_semicolon", "path parameters are literal text", "/x/y;v=1/z", "/x/y;v=1/z", "/x/y;v=1/z")
-path("p_nul", "an encoded NUL", "/x/a%00b", "/x/a%00b", ("unusable", "encoded_control_character"))
 path(
-    "p_non_utf8", "bytes that are not UTF-8", "/x/a%ffb", "/x/a%FFb", ("unusable", "non_utf8_path")
+    "p_semicolon",
+    "servers of the Tomcat family strip ;v=1 from a segment",
+    "/x/y;v=1/z",
+    ("refused", "path_parameter"),
+    ("refused", "path_parameter"),
+)
+path(
+    "p_semicolon_encoded",
+    "an encoded ; is refused as well: the host does not model which layer strips it",
+    "/x/y%3Bv=1/z",
+    ("refused", "path_parameter"),
+    ("refused", "path_parameter"),
+)
+path(
+    "p_semicolon_declared_data",
+    "the tool profile declares ; as path data",
+    "/x/y;v=1/z",
+    "/x/y;v=1/z",
+    "/x/y;v=1/z",
+    semi=True,
+)
+path(
+    "p_semicolon_encoded_declared_data",
+    "declared data: %3B stays encoded under rfc3986 and is decoded under decode_all_once",
+    "/x/y%3bv=1",
+    "/x/y%3Bv=1",
+    "/x/y;v=1",
+    semi=True,
+)
+path(
+    "p_disallowed_ascii",
+    "ASCII that RFC 3986 does not allow in a path takes its percent form under rfc3986",
+    '/x/a|b{c}^`"<>[]',
+    "/x/a%7Cb%7Bc%7D%5E%60%22%3C%3E%5B%5D",
+    '/x/a|b{c}^`"<>[]',
+)
+path(
+    "p_disallowed_ascii_encoded",
+    "the encoded spelling of the same name gives the same decoded path",
+    "/x/a%7cb%7Bc%7D",
+    "/x/a%7Cb%7Bc%7D",
+    "/x/a|b{c}",
+)
+path(
+    "p_sub_delims",
+    "sub-delimiters, : and @ are allowed literally and stay as written",
+    "/x/a!$&'()*+,=:@b",
+    "/x/a!$&'()*+,=:@b",
+    "/x/a!$&'()*+,=:@b",
+)
+path(
+    "p_overlong_utf8",
+    "an overlong encoding of / is not UTF-8 under either profile",
+    "/x/..%c0%af..%c0%afz",
+    ("refused", "non_utf8_path"),
+    ("refused", "non_utf8_path"),
+)
+path(
+    "p_encoded_surrogate",
+    "a UTF-8 encoded surrogate is not UTF-8",
+    "/x/%ed%a0%80",
+    ("refused", "non_utf8_path"),
+    ("refused", "non_utf8_path"),
+)
+path(
+    "p_crlf",
+    "an encoded CR LF",
+    "/x/a%0d%0aHost:evil",
+    ("refused", "encoded_control_character"),
+    ("refused", "encoded_control_character"),
+)
+path(
+    "p_c1_control",
+    "an encoded C1 control (U+0085)",
+    "/x/a%C2%85b",
+    ("refused", "encoded_control_character"),
+    ("refused", "encoded_control_character"),
+)
+path(
+    "p_line_separator",
+    "U+2028 would break the fact line where decoded text is shown",
+    "/x/a%E2%80%A8b",
+    "/x/a%E2%80%A8b",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_bidi_override",
+    "U+202E would reorder the shown text",
+    "/x/%E2%80%AEtxt.exe",
+    "/x/%E2%80%AEtxt.exe",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_zero_width_space",
+    "U+200B is invisible",
+    "/x/ad%E2%80%8Bmin",
+    "/x/ad%E2%80%8Bmin",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_no_break_space",
+    "U+00A0 looks like a space",
+    "/x/a%C2%A0b",
+    "/x/a%C2%A0b",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_private_use",
+    "U+E000 has no agreed meaning",
+    "/x/a%EE%80%80b",
+    "/x/a%EE%80%80b",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_bidi_literal",
+    "a literal U+202E in the URL",
+    "/x/\u202etxt",
+    "/x/%E2%80%AEtxt",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_double_nul",
+    "decoded a second time, the path holds a NUL",
+    "/x/a%2500b",
+    ("refused", "ambiguous_double_decoding"),
+    ("refused", "ambiguous_double_decoding"),
+)
+path(
+    "p_double_empty_segment",
+    "decoded a second time, the path holds an empty segment",
+    "/x/%252Fy",
+    ("refused", "ambiguous_double_decoding"),
+    ("refused", "ambiguous_double_decoding"),
+)
+path(
+    "p_case_insensitive_plain",
+    "a case-insensitive declaration does not change the decoded path",
+    "/X/y",
+    "/X/y",
+    "/X/y",
+    cs=False,
+)
+path(
+    "p_case_insensitive_non_ascii",
+    "case folding beyond ASCII is not reproduced",
+    "/x/%c3%89",
+    ("refused", "non_ascii_case_insensitive"),
+    ("refused", "non_ascii_case_insensitive"),
+    cs=False,
+)
+path(
+    "p_case_insensitive_trailing_dot",
+    "servers of the Windows family drop a trailing dot of a segment",
+    "/x/admin./keys",
+    ("refused", "trailing_dot_or_space_segment"),
+    ("refused", "trailing_dot_or_space_segment"),
+    cs=False,
+)
+path(
+    "p_case_insensitive_encoded_dot",
+    "the trailing dot may be encoded",
+    "/x/admin%2e/keys",
+    ("refused", "trailing_dot_or_space_segment"),
+    ("refused", "trailing_dot_or_space_segment"),
+    cs=False,
+)
+path(
+    "p_case_insensitive_trailing_space",
+    "and a trailing space",
+    "/x/admin%20/keys",
+    ("refused", "trailing_dot_or_space_segment"),
+    ("refused", "trailing_dot_or_space_segment"),
+    cs=False,
+)
+path(
+    "p_case_insensitive_three_dots",
+    "a segment of three dots",
+    "/x/.../y",
+    ("refused", "trailing_dot_or_space_segment"),
+    ("refused", "trailing_dot_or_space_segment"),
+    cs=False,
+)
+path(
+    "p_case_sensitive_trailing_dot",
+    "on a server declared case-sensitive these are ordinary names",
+    "/x/admin./.../y",
+    "/x/admin./.../y",
+    "/x/admin./.../y",
+)
+path(
+    "p_nul",
+    "an encoded NUL: servers that truncate there read another path",
+    "/x/a%00b",
+    ("refused", "encoded_control_character"),
+    ("refused", "encoded_control_character"),
+)
+path(
+    "p_non_utf8",
+    "bytes that are not UTF-8",
+    "/x/a%ffb",
+    ("refused", "non_utf8_path"),
+    ("refused", "non_utf8_path"),
 )
 path(
     "p_bad_percent",
     "a % without two hex digits",
     "/x/a%2",
-    ("unusable", "bad_percent_encoding"),
-    ("unusable", "bad_percent_encoding"),
+    ("refused", "bad_percent_encoding"),
+    ("refused", "bad_percent_encoding"),
 )
 path(
     "p_bad_percent_hex",
     "a % before non-hex text",
     "/x/a%zz",
-    ("unusable", "bad_percent_encoding"),
-    ("unusable", "bad_percent_encoding"),
+    ("refused", "bad_percent_encoding"),
+    ("refused", "bad_percent_encoding"),
 )
 path(
     "p_empty_segment",
     "servers merge or keep //",
     "/x//y",
-    ("unusable", "empty_path_segment"),
-    ("unusable", "empty_path_segment"),
+    ("refused", "empty_path_segment"),
+    ("refused", "empty_path_segment"),
 )
 path(
     "p_leading_empty_segment",
     "a path that starts with //",
     "//x/y",
-    ("unusable", "empty_path_segment"),
-    ("unusable", "empty_path_segment"),
+    ("refused", "empty_path_segment"),
+    ("refused", "empty_path_segment"),
 )
 
 # --- comparison with policy rules ---------------------------------------------------------------
@@ -506,15 +728,29 @@ RULES = [SUBTREE, WHOLE, OTHER, SEND]
 
 
 def compared(
-    cid, why, raw, decoded, inside, flag=False, double=False, decoding="rfc3986", op="fetch"
+    cid,
+    why,
+    raw,
+    decoded,
+    inside,
+    flag=False,
+    double=False,
+    decoding="rfc3986",
+    op="fetch",
+    refused=None,
+    **declared,
 ):
     """Same origin as example.com; ``inside`` lists the selected rules that contain the URL."""
+    effects = [eff(raw, op=op, decoding=decoding, **declared)]
+    if refused:
+        case(cid, why, effects, RULES, refused=refused)
+        return
     selected = [r["rule_id"] for r in RULES if op in r["operations"]]
     same = [r for r in selected if r != "other-origin"]
     case(
         cid,
         why,
-        [eff(raw, op=op, decoding=decoding)],
+        effects,
         RULES,
         values=ok(
             EX,
@@ -607,12 +843,87 @@ compared(
 )
 compared(
     "c_double_once",
-    "decoded once, %252e%252e is the literal segment %2e%2e and stays beneath /x/y",
+    "decoded once it stays beneath /x/y, decoded twice it is /z: the lists would change",
     "https://example.com/x/y/%252e%252e/%252e%252e/z",
-    "/x/y/%2e%2e/%2e%2e/z",
+    None,
+    None,
+    decoding="decode_all_once",
+    refused="ambiguous_double_decoding",
+)
+compared(
+    "c_double_rfc",
+    "the same URL under rfc3986: a second full decoding still changes the lists",
+    "https://example.com/x/y/%252e%252e/%252e%252e/z",
+    None,
+    None,
+    refused="ambiguous_double_decoding",
+)
+compared(
+    "c_double_harmless",
+    "double encoded, but both readings are beneath /x/y: the facts stand and the flag says so",
+    "https://example.com/x/y/a%2541",
+    "/x/y/a%41",
     ["docs-subtree", "whole-origin"],
     double=True,
     decoding="decode_all_once",
+)
+compared(
+    "c_double_harmless_rfc",
+    "the same under rfc3986, where %25 stays encoded",
+    "https://example.com/x/y/a%2541",
+    "/x/y/a%2541",
+    ["docs-subtree", "whole-origin"],
+    double=True,
+)
+compared(
+    "c_double_into_prefix",
+    "decoded twice the first segment becomes x: the lists would change",
+    "https://example.com/%2578/y/a",
+    None,
+    None,
+    decoding="decode_all_once",
+    refused="ambiguous_double_decoding",
+)
+compared(
+    "c_case_insensitive_inside",
+    "a server declared case-insensitive: /X/Y is the declared /x/y",
+    "https://example.com/X/Y/a",
+    "/X/Y/a",
+    ["docs-subtree", "whole-origin"],
+    cs=False,
+)
+compared(
+    "c_case_insensitive_once",
+    "the same under decode_all_once, with an encoded letter",
+    "https://example.com/%58/y/A",
+    "/X/y/A",
+    ["docs-subtree", "whole-origin"],
+    decoding="decode_all_once",
+    cs=False,
+)
+compared(
+    "c_case_insensitive_sibling",
+    "case folding does not make a sibling a child",
+    "https://example.com/X/Y-evil/a",
+    "/X/Y-evil/a",
+    ["whole-origin"],
+    cs=False,
+)
+compared(
+    "c_semicolon",
+    "a ..; segment would stay beneath /x/y as text and leave it on a Tomcat-family server",
+    "https://example.com/x/y/..;/..;/z",
+    None,
+    None,
+    refused="path_parameter",
+)
+compared(
+    "c_semicolon_declared_data",
+    "declared data: ..; is an ordinary name",
+    "https://example.com/x/y/..;/z",
+    "/x/y/..;/z",
+    ["docs-subtree", "whole-origin"],
+    semi=True,
 )
 compared(
     "c_operation",
@@ -687,10 +998,10 @@ case(
 )
 case(
     "c_two_effects",
-    "two URL effects, the second unusable: its facts are one unusable fact",
+    "two readable URL effects: facts in inventory order",
     [
         eff("https://api.example.com/v1", op="send", arg="/call/arguments/to"),
-        eff("https://127.1/x", arg="/call/arguments/from"),
+        eff("http://example.com/x", arg="/call/arguments/from"),
     ],
     [OTHER],
     values=ok(
@@ -701,18 +1012,483 @@ case(
         inside=["other-origin"],
         outside=[],
     )
-    + bad("ambiguous_ipv4_form", k=2),
-    unusable=[2],
+    + ok(
+        "http://example.com:80",
+        "/x",
+        same=[],
+        diff=["other-origin"],
+        inside=[],
+        outside=["other-origin"],
+        k=2,
+    ),
 )
 case(
-    "c_unusable_with_rules",
-    "an unusable URL is in no list, even with rules",
+    "c_two_effects_second_refused",
+    "the second effect cannot be read: the whole request is refused, not half answered",
+    [
+        eff("https://api.example.com/v1", op="send", arg="/call/arguments/to"),
+        eff("https://127.1/x", arg="/call/arguments/from"),
+    ],
+    [OTHER],
+    refused="ambiguous_ipv4_form",
+)
+case(
+    "c_refused_with_rules",
+    "an unreadable URL refuses the request, with rules",
     [eff("https://example.com/x//y")],
     RULES,
-    values=bad("empty_path_segment"),
-    unusable=[1],
+    refused="empty_path_segment",
+)
+case(
+    "c_refused_uncovered_operation",
+    "an unreadable URL refuses the request even when no rule covers its operation",
+    [eff("https://example.com/x//y", op="open")],
+    [SEND],
+    refused="empty_path_segment",
+)
+case(
+    "c_uncovered_operation",
+    "no rule covers open: all four lists are present and empty",
+    [eff("https://example.com/x/y", op="open")],
+    [SEND],
+    values=ok(EX, "/x/y", same=[], diff=[], inside=[], outside=[]),
 )
 case("c_no_effects", "a call with no URL effect has no URL fact", [], RULES, values=[])
+
+# --- the 2026-11-22 independent review: its probe policy and every input it reported ----------
+FILES = "https://files.example.com:443"
+PARTNER = "https://partner.example.net:443"
+PROBE = [
+    rule("uploads", (FILES, "/team/uploads"), ops=["send"]),
+    rule("no-admin", (FILES, "/admin")),
+    rule("partner", (PARTNER, "/"), ops=["send"]),
+    rule("no-local", ("http://127.0.0.1:8080", "/")),
+]
+PROBE_IDS = ["uploads", "no-admin", "partner", "no-local"]
+
+
+def rv_refused(cid, why, raw, code, decoding="rfc3986", **declared):
+    case(
+        f"rv_{cid}", why, [eff(raw, op="send", decoding=decoding, **declared)], PROBE, refused=code
+    )
+
+
+def rv(cid, why, raw, origin, decoded, same, inside, flag=False, double=False, **declared):
+    case(
+        f"rv_{cid}",
+        why,
+        [eff(raw, op="send", **declared)],
+        PROBE,
+        values=ok(
+            origin,
+            decoded,
+            flag,
+            double,
+            same=same,
+            diff=[r for r in PROBE_IDS if r not in same],
+            inside=inside,
+            outside=[r for r in PROBE_IDS if r not in inside],
+        ),
+    )
+
+
+F = "https://files.example.com"
+BOTH = ["uploads", "no-admin"]
+# fix 2: host characters newer than Unicode 3.2
+rv_refused(
+    "modifier_small_a",
+    "U+1D43: UTS 46 clients reach partner.example.net",
+    "https://p\u1d43rtner.example.net/",
+    "idna_unassigned_character",
+)
+rv_refused(
+    "squared_a",
+    "U+1F130: UTS 46 clients reach partner.example.net",
+    "https://p\U0001f130rtner.example.net/",
+    "idna_unassigned_character",
+)
+rv_refused(
+    "subscript_j",
+    "U+2C7C: UTS 46 clients reach files.examjple.com",
+    "https://files.exam\u2c7cple.com/",
+    "idna_unassigned_character",
+)
+rv_refused(
+    "capital_sharp_s",
+    "U+1E9E: IDNA 2003 folds it to ss, UTS 46 clients reach the sharp-s name",
+    "https://fa\u1e9e.example/",
+    "idna_unassigned_character",
+)
+# fix 3: path parameters
+rv_refused(
+    "tomcat_dotdot_semicolon",
+    "the ..;/ escape from the allowed subtree",
+    F + "/team/uploads/..;/..;/admin/keys",
+    "path_parameter",
+)
+rv_refused(
+    "semicolon_on_deny_prefix",
+    "/admin;x is /admin on a Tomcat-family server",
+    F + "/admin;x/keys",
+    "path_parameter",
+)
+rv_refused(
+    "semicolon_on_deny_prefix_once",
+    "the same under decode_all_once",
+    F + "/admin;x/keys",
+    "path_parameter",
+    "decode_all_once",
+)
+rv_refused(
+    "encoded_dotdot_semicolon",
+    "%2e%2e%3b decodes to ..;",
+    F + "/team/uploads/%2e%2e%3b/admin",
+    "path_parameter",
+    "decode_all_once",
+)
+# fix 4: a second decoding, and bytes that are not readable text
+rv_refused(
+    "double_dots_allow_side",
+    "inside uploads once, /admin/keys twice",
+    F + "/team/uploads/%252e%252e/%252e%252e/admin/keys",
+    "ambiguous_double_decoding",
+    "decode_all_once",
+)
+rv_refused(
+    "double_slash_allow_side",
+    "inside uploads once, /admin twice",
+    F + "/team/uploads/..%252f..%252fadmin",
+    "ambiguous_double_decoding",
+    "decode_all_once",
+)
+rv_refused(
+    "double_deny_prefix",
+    "outside no-admin once, /admin/keys twice",
+    F + "/%2561dmin/keys",
+    "ambiguous_double_decoding",
+    "decode_all_once",
+)
+rv_refused(
+    "overlong_slash_rfc",
+    "overlong UTF-8 for / under rfc3986",
+    F + "/team/uploads/..%C0%AF..%C0%AFadmin",
+    "non_utf8_path",
+)
+rv_refused(
+    "overlong_slash_once",
+    "and under decode_all_once",
+    F + "/team/uploads/..%c0%af..%c0%afadmin",
+    "non_utf8_path",
+    "decode_all_once",
+)
+rv_refused(
+    "nul_rfc", "a NUL under rfc3986", F + "/team/uploads/..%00/admin", "encoded_control_character"
+)
+rv_refused(
+    "crlf_rfc",
+    "CR LF under rfc3986",
+    F + "/team/uploads/a%0d%0aHost:evil",
+    "encoded_control_character",
+)
+rv_refused(
+    "encoded_surrogate",
+    "an encoded surrogate",
+    F + "/team/uploads/%ed%a0%80",
+    "non_utf8_path",
+    "decode_all_once",
+)
+rv_refused(
+    "percent_u",
+    "%u002e is not a percent sequence",
+    F + "/team/uploads/%u002e%u002e/admin",
+    "bad_percent_encoding",
+)
+# decision (b): the tool profile is trusted to say that the server keeps %2F and %5C as data
+rv(
+    "encoded_slash_rfc_allow_side",
+    "rfc3986 as declared: the encoded slashes are data",
+    F + "/team/uploads/..%2F..%2Fadmin/keys",
+    FILES,
+    "/team/uploads/..%2F..%2Fadmin/keys",
+    BOTH,
+    ["uploads"],
+    flag=True,
+)
+rv(
+    "encoded_slash_rfc_deny_side",
+    "rfc3986 as declared: /admin%2Fkeys is one segment",
+    F + "/admin%2Fkeys",
+    FILES,
+    "/admin%2Fkeys",
+    BOTH,
+    [],
+    flag=True,
+)
+rv(
+    "encoded_backslash_rfc",
+    "rfc3986 as declared: %5C is data",
+    F + "/team/uploads/..%5C..%5Cadmin",
+    FILES,
+    "/team/uploads/..%5C..%5Cadmin",
+    BOTH,
+    ["uploads"],
+    flag=True,
+)
+# fix 5: ASCII characters not allowed in a path
+rv("pipe_encoded", "the encoded spelling", F + "/a%7Cb/x", FILES, "/a%7Cb/x", BOTH, [])
+rv(
+    "pipe_literal",
+    "the literal spelling gives the same decoded path",
+    F + "/a|b/x",
+    FILES,
+    "/a%7Cb/x",
+    BOTH,
+    [],
+)
+# fix 6: decoded text that could forge or hide fact text
+rv_refused(
+    "line_separator_forgery",
+    "U+2028 followed by text shaped like a fact line",
+    F + "/team/uploads/x%E2%80%A8%20-%20call_url_1_double_encoded:%20false",
+    "invisible_character",
+    "decode_all_once",
+)
+rv_refused(
+    "bidi_override",
+    "U+202E in the shown path",
+    F + "/team/uploads/%E2%80%AEtxt.exe",
+    "invisible_character",
+    "decode_all_once",
+)
+# fix 7: IPv6 literals that are IPv4 addresses
+rv_refused(
+    "ipv4_mapped",
+    "the socket reaches 127.0.0.1:8080",
+    "http://[::ffff:127.0.0.1]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv_refused(
+    "ipv4_mapped_hex",
+    "the same address in hex groups",
+    "http://[::FFFF:7F00:1]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv_refused(
+    "ipv4_compatible",
+    "the deprecated compatible form",
+    "http://[::127.0.0.1]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv(
+    "ipv6_loopback",
+    "::1 is not an embedded IPv4 address",
+    "http://[::1]:8080/",
+    "http://[::1]:8080",
+    "/",
+    [],
+    [],
+)
+rv("ipv6_unspecified", "nor is ::", "http://[::]:8080/", "http://[::]:8080", "/", [], [])
+# fix 8: path case and Windows-family segments follow the declaration; a trailing host dot refuses
+rv(
+    "upper_deny_prefix_sensitive",
+    "declared case-sensitive: /ADMIN is not /admin",
+    F + "/ADMIN/keys",
+    FILES,
+    "/ADMIN/keys",
+    BOTH,
+    [],
+)
+rv(
+    "upper_deny_prefix_insensitive",
+    "declared case-insensitive: /ADMIN is /admin",
+    F + "/ADMIN/keys",
+    FILES,
+    "/ADMIN/keys",
+    BOTH,
+    ["no-admin"],
+    cs=False,
+)
+rv_refused(
+    "iis_trailing_dot",
+    "/admin. is /admin on a Windows-family server",
+    F + "/admin./keys",
+    "trailing_dot_or_space_segment",
+    cs=False,
+)
+rv_refused(
+    "three_dots",
+    "a ... segment",
+    F + "/team/uploads/.../admin",
+    "trailing_dot_or_space_segment",
+    cs=False,
+)
+rv_refused(
+    "dotdot_space",
+    "a segment of .. and a space",
+    F + "/team/uploads/..%20/admin",
+    "trailing_dot_or_space_segment",
+    "decode_all_once",
+    cs=False,
+)
+rv_refused(
+    "trailing_dot_host",
+    "partner.example.net. is another Host and SNI",
+    "https://partner.example.net./",
+    "trailing_dot_host",
+)
+rv_refused(
+    "ideographic_dots_trailing",
+    "U+3002 separators with a trailing one",
+    "https://partner\u3002example\u3002net\u3002/",
+    "trailing_dot_host",
+)
+# what the review verified as right, pinned
+rv(
+    "userinfo_lookalike",
+    "the host follows the @",
+    "https://partner.example.net@evil.example/",
+    "https://evil.example:443",
+    "/",
+    [],
+    [],
+)
+rv(
+    "percent_in_userinfo",
+    "%40 inside userinfo is not an @",
+    "https://partner.example.net%40evil.example@x.example/",
+    "https://x.example:443",
+    "/",
+    [],
+    [],
+)
+rv(
+    "fragment_then_at",
+    "a # ends the authority",
+    "https://partner.example.net#@evil.example/",
+    PARTNER,
+    "/",
+    ["partner"],
+    ["partner"],
+)
+rv(
+    "query_path_like",
+    "a query is not the path",
+    F + "/team/uploads?/../admin",
+    FILES,
+    "/team/uploads",
+    BOTH,
+    ["uploads"],
+)
+rv(
+    "port_leading_zeros",
+    "000443 is 443",
+    "https://partner.example.net:000443/",
+    PARTNER,
+    "/",
+    ["partner"],
+    ["partner"],
+)
+rv(
+    "empty_port",
+    "an empty port is the default",
+    "https://partner.example.net:/",
+    PARTNER,
+    "/",
+    ["partner"],
+    ["partner"],
+)
+rv_refused("port_zero", "port 0", "https://partner.example.net:0/", "bad_port")
+rv_refused("ipv6_zone", "a zone id", "http://[fe80::1%25en0]:8080/", "ipv6_zone")
+rv_refused(
+    "semicolon_in_authority",
+    "a ; in the host",
+    "https://partner.example.net;evil.example/",
+    "bad_host",
+)
+rv_refused("hex_last_label", "1.2.3.0x4", "https://1.2.3.0x4/", "ambiguous_ipv4_form")
+rv_refused("numeric_last_label", "example.123", "https://example.123/", "ambiguous_ipv4_form")
+rv_refused(
+    "a_label_of_sharp_s",
+    "an A-label IDNA 2003 would never produce",
+    "https://xn--fa-hia.example/",
+    "bad_a_label",
+)
+rv(
+    "mixed_a_u_label",
+    "an A-label and a U-label in one host",
+    "https://xn--bcher-kva.b\u00fccher.example/",
+    "https://xn--bcher-kva.xn--bcher-kva.example:443",
+    "/",
+    [],
+    [],
+)
+rv(
+    "soft_hyphen",
+    "U+00AD is mapped to nothing by IDNA 2003 and by UTS 46",
+    "https://part\u00adner.example.net/",
+    PARTNER,
+    "/",
+    ["partner"],
+    ["partner"],
+)
+rv(
+    "zero_width_space_host",
+    "U+200B likewise",
+    "https://part\u200bner.example.net/",
+    PARTNER,
+    "/",
+    ["partner"],
+    ["partner"],
+)
+rv(
+    "fullwidth_digits_ipv4",
+    "full-width digits map to ASCII in both",
+    "http://\uff11\uff12\uff17.0.0.1:8080/",
+    "http://127.0.0.1:8080",
+    "/",
+    ["no-local"],
+    ["no-local"],
+)
+rv(
+    "zero_address",
+    "0.0.0.0 is a plain dotted quad and its own origin",
+    "http://0.0.0.0:8080/",
+    "http://0.0.0.0:8080",
+    "/",
+    [],
+    [],
+)
+rv(
+    "one_dot_leader",
+    "U+2024 maps to a dot in IDNA 2003; WHATWG and httpx reject the URL (optional 8)",
+    "https://partner\u2024example.net/",
+    PARTNER,
+    "/",
+    ["partner"],
+    ["partner"],
+)
+case(
+    "rv_decoded_question_and_hash",
+    "decoded ? and # are path data under decode_all_once",
+    [eff(F + "/team/uploads/a%3Fb%23c", op="send", decoding="decode_all_once")],
+    PROBE,
+    values=ok(
+        FILES,
+        "/team/uploads/a?b#c",
+        same=BOTH,
+        diff=["partner", "no-local"],
+        inside=["uploads"],
+        outside=["no-admin", "partner", "no-local"],
+    ),
+)
+case(
+    "rv_uncovered_open_refused",
+    "an unreadable URL refuses although no probe rule set covers it differently for open",
+    [eff("https://files.example.com/team//x", op="open")],
+    [PROBE[0]],
+    refused="empty_path_segment",
+)
 
 # --- refusals: the request itself is malformed ---------------------------------------------------
 GOOD = {
@@ -762,6 +1538,33 @@ refuse(
     "r_effect_keys",
     "an effect with an unknown key",
     effects=[dict(eff("https://example.com/"), final_link="follow")],
+)
+refuse(
+    "r_effect_missing_declaration",
+    "an effect without the case declaration",
+    effects=[{k: v for k, v in eff("https://example.com/").items() if k != "case_sensitive"}],
+)
+refuse(
+    "r_case_type",
+    "case_sensitive is not a boolean",
+    effects=[dict(eff("https://example.com/"), case_sensitive="yes")],
+)
+refuse(
+    "r_semicolon_type",
+    "semicolon_is_data is not a boolean",
+    effects=[dict(eff("https://example.com/"), semicolon_is_data=None)],
+)
+refuse(
+    "r_rule_origin_port_zero",
+    "an origin with port 0",
+    code="bad_url_rules",
+    url_rules=[rule("a", ("https://example.com:0", "/"))],
+)
+refuse(
+    "r_rule_path_character",
+    "a prefix path with a character outside letters, digits and - . _ ~",
+    code="bad_url_rules",
+    url_rules=[rule("a", (EX, "/a|b"))],
 )
 refuse("r_rules_type", "url_rules is not a list", code="bad_url_rules", url_rules={})
 refuse(
@@ -950,6 +1753,78 @@ policy(
     "an ambiguous numeric host",
     [line("a", {"within": "https://127.1/"})],
     error="bad_prefix",
+)
+policy(
+    "e_pipe",
+    "a character RFC 3986 does not allow in a path",
+    [line("a", {"within": "https://files.example.com/a|b"})],
+    error="bad_prefix",
+)
+policy(
+    "e_colon_at",
+    "sub-delimiters, : and @ have two spellings under rfc3986",
+    [line("a", {"within": "https://example.com/a:b@c"})],
+    error="bad_prefix",
+)
+policy(
+    "e_plus",
+    "a + in a prefix",
+    [line("a", {"within": "https://example.com/a+b"})],
+    error="bad_prefix",
+)
+policy(
+    "e_semicolon",
+    "a ; in a prefix",
+    [line("a", {"within": "https://example.com/a;b"})],
+    error="bad_prefix",
+)
+policy(
+    "e_brace",
+    "braces in a prefix",
+    [line("a", {"within": "https://files.example.com/a{b}"})],
+    error="bad_prefix",
+)
+policy(
+    "e_port_zero", "port 0", [line("a", {"within": "https://example.com:0"})], error="bad_prefix"
+)
+policy(
+    "e_ipv4_mapped",
+    "an IPv4-mapped IPv6 origin",
+    [line("a", {"within": "https://[::ffff:127.0.0.1]:8080"})],
+    error="bad_prefix",
+)
+policy(
+    "e_unassigned_host",
+    "a host character newer than Unicode 3.2",
+    [line("a", {"within": "https://p\u1d43rtner.example.net"})],
+    error="bad_prefix",
+)
+policy(
+    "e_capital_sharp_s",
+    "U+1E9E in a policy host",
+    [line("a", {"within": "https://fa\u1e9e.example"})],
+    error="bad_prefix",
+)
+policy(
+    "e_within_number", "within is not a string", [line("a", {"within": 443})], error="bad_prefix"
+)
+policy(
+    "e_within_empty", "within is an empty string", [line("a", {"within": ""})], error="bad_prefix"
+)
+policy(
+    "e_within_surrogate",
+    "within holds a lone surrogate",
+    [line("a", {"within": "https://example.com/\ud800"})],
+    error="bad_prefix",
+)
+policy(
+    "e_rule_not_object", "a policy line that is not an object", [line("a"), "b"], error="bad_policy"
+)
+policy(
+    "upper_and_tilde",
+    "the characters a prefix path may hold; its case is kept",
+    [line("a", {"within": "https://example.com/Team_A/v1.2/~x-y/"})],
+    [rule("a", (EX, "/Team_A/v1.2/~x-y"))],
 )
 policy(
     "e_too_many",

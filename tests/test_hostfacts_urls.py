@@ -36,12 +36,23 @@ def request(effects, rules=()):
     }
 
 
-def effect(raw, operation="fetch", decoding="rfc3986", argument="/call/arguments/url"):
-    return {"argument": argument, "raw": raw, "operation": operation, "decoding": decoding}
+def effect(raw, operation="fetch", decoding="rfc3986", case_sensitive=True, semicolon=False):
+    return {
+        "argument": "/call/arguments/url",
+        "raw": raw,
+        "operation": operation,
+        "decoding": decoding,
+        "case_sensitive": case_sensitive,
+        "semicolon_is_data": semicolon,
+    }
 
 
 def values(out):
     return {f["name"]: f["value"] for f in out["facts"]}
+
+
+def note(out, name):
+    return next(f["note"] for f in out["facts"] if f["name"] == name)
 
 
 def test_manifest_pins_the_reference_and_the_fixture():
@@ -53,12 +64,19 @@ def test_manifest_pins_the_reference_and_the_fixture():
     assert VECTORS["profile"] == MANIFEST["profile"] == U.PROFILE
 
 
+def test_the_vector_builder_never_imports_the_reference():
+    builder = (FIXTURE / "make_vectors.py").read_text(encoding="utf-8")
+    imported = [line for line in builder.split("\n") if line.startswith(("import ", "from "))]
+    assert imported == ["import hashlib", "import json", "import sys", "from pathlib import Path"]
+    assert "importlib" not in builder and "exec(" not in builder
+
+
 def test_the_new_kind_leaves_the_path_and_measure_references_as_pinned():
     # A new kind is a new profile beside the others: neither existing reference file changes.
-    for kind, name in (("paths", "paths"), ("measures", "measures")):
+    for kind in ("paths", "measures"):
         manifest = ROOT / f"tests/fixtures/armor-hostfacts-{kind}-v1/MANIFEST.json"
         pinned = json.loads(manifest.read_text(encoding="utf-8"))["reference_python_sha256"]
-        assert sha(ROOT / f"src/hostfacts/{name}.py") == pinned
+        assert sha(ROOT / f"src/hostfacts/{kind}.py") == pinned
 
 
 @pytest.mark.parametrize("case", VECTORS["cases"], ids=[c["id"] for c in VECTORS["cases"]])
@@ -67,14 +85,16 @@ def test_hand_written_vector(case):
     expect = case["expect"]
     if expect["status"] == "refused":
         assert (out["status"], out.get("code")) == ("refused", expect["code"])
+        assert set(out) == {"profile", "status", "code", "detail"}
         return
     assert out["status"] == "ok", out
+    assert set(out) == {"profile", "status", "facts"}  # as paths.py: no other key
     assert [[f["name"], f["value"]] for f in out["facts"]] == expect["values"]
-    assert out["unusable"] == expect["unusable"]
     for fact in out["facts"]:
         assert set(fact) == {"name", "value", "unit", "provenance", "as_of", "note"}
         assert (fact["unit"], fact["provenance"]) == (None, "host_computed")
         assert fact["as_of"] == case["request"]["observed_at"] and fact["note"].endswith(".")
+        assert "unusable" not in fact["name"]
 
 
 @pytest.mark.parametrize(
@@ -92,21 +112,42 @@ def test_hand_written_policy_case(case):
         assert U.compute(request([], compiled))["facts"] == []  # compiled rules are accepted
 
 
-def test_every_unusable_code_and_refusal_code_has_a_vector():
-    seen = {
-        value
-        for case in VECTORS["cases"]
-        if case["expect"]["status"] == "ok"
-        for name, value in case["expect"]["values"]
-        if name.endswith("_unusable")
-    }
-    assert seen == set(U.UNUSABLE_CODES)
+def test_every_refusal_code_and_policy_error_has_a_vector():
     refused = {c["expect"]["code"] for c in VECTORS["cases"] if c["expect"]["status"] == "refused"}
     assert refused == set(U.REFUSAL_CODES)
     errors = {
         c["expect"]["code"] for c in VECTORS["policy_cases"] if c["expect"]["status"] == "error"
     }
     assert errors == set(U.POLICY_ERRORS)
+
+
+def test_an_unreadable_url_refuses_the_request_and_never_becomes_a_fact():
+    """The user's decision: AgentArmor refuses; Kai is never shown an "unusable" fact."""
+    rules = U.compile_policy([{"id": "docs", "urls": {"within": "https://example.com/"}}])
+    made = request([effect("https://example.com\\@evil.example/")], rules)
+    with pytest.raises(U.Refusal) as refused:
+        U.compute(made)
+    assert refused.value.code == "backslash" and "evil" not in refused.value.detail
+    assert U.compute_or_refusal(made) == {
+        "profile": U.PROFILE,
+        "status": "refused",
+        "code": "backslash",
+        "detail": "the URL holds a backslash",
+    }
+    assert not hasattr(U, "Unusable") and not hasattr(U, "UNUSABLE_CODES")
+    # Whether or not any rule covers the operation, and whatever the effect's position.
+    assert U.compute_or_refusal(request([effect("https://127.1/", "open")]))["status"] == "refused"
+    second = dict(effect("https://127.1/"), argument="/call/arguments/other")
+    out = U.compute_or_refusal(request([effect("https://example.com/"), second], rules))
+    assert (out["status"], out["code"]) == ("refused", "ambiguous_ipv4_form")
+
+
+def test_a_policy_url_the_host_cannot_read_is_a_load_time_policy_error():
+    for text in ("https://example.com./", "https://127.1/", "https://example.com/a\\b"):
+        with pytest.raises(U.PolicyError) as exc:
+            U.compile_policy([{"id": "r", "urls": {"within": text}}])
+        assert exc.value.code == "bad_prefix" and exc.value.rule_id == "r"
+        assert exc.value.hint.startswith("code ")
 
 
 @pytest.mark.parametrize(
@@ -120,12 +161,11 @@ def test_every_unusable_code_and_refusal_code_has_a_vector():
             ["explicit port 80 kept (leading zeros dropped); it is the default for http"],
         ),
         (
-            "HTTPS://user@Example.COM.:443/",
+            "HTTPS://user@Example.COM:443/",
             [
                 "uppercase scheme letters lowercased",
                 "userinfo before @ is not part of the origin and was ignored",
                 "uppercase host letters lowercased",
-                "one trailing dot removed from the host",
                 "explicit port 443 kept; it is the default for https",
             ],
         ),
@@ -144,47 +184,86 @@ def test_every_unusable_code_and_refusal_code_has_a_vector():
             ],
         ),
         (
-            "https://[0:0:0:0:0:0:0:1]:8443/",
+            "https://[2001:DB8:0:0:0:0:0:A]:8443/",
             ["IPv6 literal written in its compressed lowercase form", "explicit port 8443 kept"],
         ),
     ],
 )
 def test_the_origin_note_names_every_normalization_step_that_changed_something(raw, steps):
     out = U.compute(request([effect(raw)]))
-    note = out["facts"][0]["note"]
     assert out["facts"][0]["name"] == "call_url_1_origin"
-    assert note.endswith("Applied here: " + "; ".join(steps) + ".")
-    assert "without network access" in note
+    assert out["facts"][0]["note"] == (
+        "Host reading of call argument /call/arguments/url for fetch as scheme://host:port, "
+        "without network access: scheme and host lowercased, userinfo ignored, non-ASCII host "
+        "as IDNA A-labels, the scheme's default port when none is written. Applied here: "
+        + "; ".join(steps)
+        + "."
+    )
 
 
 def test_the_path_note_states_the_one_decoding_profile_and_never_the_other():
     for decoding, other in (("rfc3986", "decode_all_once"), ("decode_all_once", "rfc3986")):
         out = U.compute(request([effect("https://example.com/../a%2Fb", decoding=decoding)]))
-        note = next(f["note"] for f in out["facts"] if f["name"] == "call_url_1_decoded_path")
-        assert f"decoding profile {decoding}:" in note and other not in note
-        assert note.endswith("Applied here: a .. segment at the root was dropped.")
+        told = note(out, "call_url_1_decoded_path")
+        assert f"decoding profile {decoding}:" in told and other not in told
+        assert told.endswith("Applied here: a .. segment at the root was dropped.")
     out = U.compute(request([effect("https://example.com")]))
-    note = next(f["note"] for f in out["facts"] if f["name"] == "call_url_1_decoded_path")
-    assert note.endswith("Applied here: empty path read as /.")
+    assert note(out, "call_url_1_decoded_path") == (
+        "Path of call argument /call/arguments/url for fetch under decoding profile rfc3986: "
+        "percent sequences of unreserved characters (letters, digits, - . _ ~) decoded, every "
+        "other percent sequence kept with uppercase hex, non-ASCII characters and ASCII "
+        "characters not allowed in a path written as UTF-8 percent sequences, so an encoded / "
+        "(%2F) stays inside its segment; then . segments dropped and .. popping one segment, "
+        "never above the root. Query and fragment excluded. Applied here: empty path read as /."
+    )
+    out = U.compute(request([effect("https://example.com/a", decoding="decode_all_once")]))
+    assert note(out, "call_url_1_decoded_path") == (
+        "Path of call argument /call/arguments/url for fetch under decoding profile "
+        "decode_all_once: every percent sequence decoded exactly once as UTF-8, a decoded / "
+        "separates segments, and any percent sequence left is literal text that is not decoded "
+        "again, so any ? or # shown is decoded data; then . segments dropped and .. popping one "
+        "segment, never above the root. Query and fragment excluded. Applied here: nothing "
+        "changed."
+    )
+
+
+def test_the_notes_say_what_the_tool_profile_declared():
+    rules = U.compile_policy([{"id": "r", "urls": {"within": "https://example.com/x"}}])
+    for sensitive, words in ((True, "case-sensitive"), (False, "ASCII case-insensitive")):
+        out = U.compute(
+            request([effect("https://example.com/X/a", case_sensitive=sensitive)], rules)
+        )
+        assert note(out, "call_url_1_inside_prefixes_of") == (
+            "Policy rules with a declared URL prefix of origin call_url_1_origin whose path "
+            "contains call_url_1_decoded_path (equal or beneath, segment by segment, "
+            f"{words} as the tool profile declares, never by string prefix). Rules whose urls "
+            "field does not cover fetch are in neither list. Comparison only: not a rule match, "
+            "exception or decision."
+        )
+        assert values(out)["call_url_1_inside_prefixes_of"] == ([] if sensitive else ["r"])
+    plain = U.compute(request([effect("https://example.com/a")]))
+    data = U.compute(request([effect("https://example.com/a;b", semicolon=True)]))
+    sentence = "A ; is path data, as the tool profile declares. "
+    assert sentence not in note(plain, "call_url_1_decoded_path")
+    assert sentence + "Applied here:" in note(data, "call_url_1_decoded_path")
 
 
 def test_the_flag_notes_count_what_was_found():
-    out = U.compute(request([effect("https://example.com/a%2fb/%2E%2e/%5Cc/%252F")]))
+    out = U.compute(request([effect("https://example.com/a%2fb/%2E%2e/%5Cc")]))
     facts = {f["name"]: f for f in out["facts"]}
     flag = facts["call_url_1_encoded_separator_or_dot_segment"]
     assert flag["value"] is True
     assert "Found: 2 encoded separator(s), 1 encoded dot segment(s)." in flag["note"]
+    assert facts["call_url_1_double_encoded"]["value"] is False
+    out = U.compute(request([effect("https://example.com/a/b%2541")]))
+    facts = {f["name"]: f for f in out["facts"]}
     assert facts["call_url_1_double_encoded"]["value"] is True
-
-
-def test_an_unusable_url_is_one_fact_that_says_so_and_never_a_guess():
-    rules = U.compile_policy([{"id": "docs", "urls": {"within": "https://example.com/"}}])
-    out = U.compute(request([effect("https://example.com\\@evil.example/")], rules))
-    assert out["status"] == "ok" and out["unusable"] == [1] and len(out["facts"]) == 1
-    fact = out["facts"][0]
-    assert (fact["name"], fact["value"]) == ("call_url_1_unusable", "backslash")
-    assert "none may be inferred from its raw text" in fact["note"]
-    assert "evil" not in fact["note"]  # the note never repeats caller text
+    assert facts["call_url_1_double_encoded"]["note"] == (
+        "Whether decoding every percent sequence of the path once leaves a percent sequence, so "
+        "that a second decoding would change it again. call_url_1_decoded_path is never decoded "
+        "a second time; the host refuses a URL whose comparison lists a second decoding would "
+        "change."
+    )
 
 
 def test_facts_are_comparisons_never_a_rule_match_or_a_decision():
@@ -198,9 +277,22 @@ def test_facts_are_comparisons_never_a_rule_match_or_a_decision():
     assert not any(word in names for word in ("match", "allow", "deny", "authorized"))
 
 
+def test_no_readable_path_can_put_a_line_break_or_hidden_character_into_a_fact():
+    """Every character of every string value in the vectors is printable, visible text."""
+    import unicodedata
+
+    for case in VECTORS["cases"]:
+        out = U.compute_or_refusal(case["request"])
+        for fact in out.get("facts", []):
+            for text in [fact["value"], fact["note"]]:
+                if isinstance(text, str):
+                    assert text.isprintable(), (case["id"], fact["name"])
+                    assert not any(unicodedata.category(ch) in ("Cf", "Zl", "Zp") for ch in text)
+
+
 def test_the_same_request_gives_the_same_bytes():
     made = request(
-        [effect("https://BÜCHER.example./a/%2e%2e/b", decoding="decode_all_once")],
+        [effect("https://BÜCHER.example/a/%2e%2e/b", decoding="decode_all_once")],
         U.compile_policy([{"id": "r", "urls": {"within": "https://bücher.example/b"}}]),
     )
     first = json.dumps(U.compute(json.loads(json.dumps(made))), sort_keys=True)
@@ -261,13 +353,16 @@ def test_integration_policy_file_to_rendered_host_facts_lines():
             "body": "...",
         },
     }
-    # The tool profile (trusted) says which argument is a URL effect and how the server decodes.
+    # The tool profile (trusted) says which argument is a URL effect, how the server decodes,
+    # whether it compares names case-sensitively and whether it keeps ; as data.
     effects = [
         {
             "argument": "/call/arguments/url",
             "raw": call["arguments"]["url"],
             "operation": "send",
             "decoding": "rfc3986",
+            "case_sensitive": True,
+            "semicolon_is_data": False,
         }
     ]
     out = U.compute(
@@ -278,10 +373,9 @@ def test_integration_policy_file_to_rendered_host_facts_lines():
             "url_rules": U.compile_policy(policy),
         }
     )
-    assert out["unusable"] == []
     rendered = "\n".join(["Host facts:"] + [fact_line(f) for f in out["facts"]])
     lines = rendered.split("\n")
-    assert len(lines) == 9 and all("\n" not in f["note"] for f in out["facts"])
+    assert len(lines) == 9 == len(rendered.splitlines())
     start = [line.split(" [unit=null; provenance=host_computed; ")[0] for line in lines]
     assert start == [
         "Host facts:",
@@ -298,22 +392,27 @@ def test_integration_policy_file_to_rendered_host_facts_lines():
         '  - call_url_1_origin: "https://files.example.com:443" [unit=null; '
         'provenance=host_computed; as_of="2026-11-22T12:00:00Z"; note="Host reading of call '
         "argument /call/arguments/url for send as scheme://host:port, without network access: "
-        "scheme and host lowercased, userinfo ignored, one trailing host dot removed, non-ASCII "
-        "host as IDNA A-labels, the scheme's default port when none is written. Applied here: "
-        'uppercase host letters lowercased; explicit port 443 kept; it is the default for https."]'
+        "scheme and host lowercased, userinfo ignored, non-ASCII host as IDNA A-labels, the "
+        "scheme's default port when none is written. Applied here: uppercase host letters "
+        'lowercased; explicit port 443 kept; it is the default for https."]'
     )
     assert lines[7] == (
         '  - call_url_1_inside_prefixes_of: ["no-admin"] [unit=null; provenance=host_computed; '
         'as_of="2026-11-22T12:00:00Z"; note="Policy rules with a declared URL prefix of origin '
         "call_url_1_origin whose path contains call_url_1_decoded_path (equal or beneath, segment "
-        "by segment, case-sensitive, never by string prefix). Rules whose urls field does not "
-        "cover send are in neither list. Comparison only: not a rule match, exception or "
-        'decision."]'
+        "by segment, case-sensitive as the tool profile declares, never by string prefix). Rules "
+        "whose urls field does not cover send are in neither list. Comparison only: not a rule "
+        'match, exception or decision."]'
     )
     # The "reads" rule covers fetch only, so a send is in none of its lists; "task" has no urls.
     assert "reads" not in rendered and '"task"' not in rendered
-    # The same call under the other profile, and its plain twin: only host facts tell them apart.
+    # The plain twin of the same call: only host facts tell the two apart.
     plain = dict(effects[0], raw="https://files.example.com/team/uploads/keys")
     told = values(U.compute(request([plain], U.compile_policy(policy))))
     assert told["call_url_1_inside_prefixes_of"] == ["uploads"]
     assert told["call_url_1_encoded_separator_or_dot_segment"] is False
+    # A URL the host cannot read gives no section at all: the request is refused.
+    odd = dict(effects[0], raw="https://files.example.com/team/uploads/..;/admin/keys")
+    refused = U.compute_or_refusal(request([odd], U.compile_policy(policy)))
+    assert (refused["status"], refused["code"]) == ("refused", "path_parameter")
+    assert "facts" not in refused
