@@ -290,6 +290,35 @@ def test_no_readable_path_can_put_a_line_break_or_hidden_character_into_a_fact()
                     assert not any(unicodedata.category(ch) in ("Cf", "Zl", "Zp") for ch in text)
 
 
+def test_no_answer_depends_on_the_running_python_s_unicode_tables():
+    """Hosts and shown path text are classified with the Unicode 3.2 table that ships in every
+    Python (unicodedata.ucd_3_2_0) and with tables written out in the module, so the Kai and
+    AgentArmor copies agree whatever interpreter runs them."""
+    import re
+
+    source = SOURCE.read_text(encoding="utf-8")
+    assert re.findall(r"unicodedata\.(?!ucd_3_2_0\b)\w+", source) == []
+    assert ".isspace()" not in source and ".isprintable()" not in source
+    for path in ("/x/%F0%9F%98%80", "/x/%CD%B8", "/x/a%C2%ADb", "/x/%E2%80%AE"):
+        with pytest.raises(U.Refusal) as refused:
+            U.read_path(path, "decode_all_once")
+        assert refused.value.code == "invisible_character"
+    assert U.read_path("/x/%C3%A9%E4%B8%AD", "decode_all_once")["decoded_path"] == "/x/\u00e9\u4e2d"
+
+
+def test_every_level_of_encoding_is_read_until_none_is_left():
+    assert U.read_path("/x/a%2541", "decode_all_once")["deeper_segments"] == [["x", "aA"]]
+    deep = U.read_path("/x/a%25252541", "decode_all_once")["deeper_segments"]
+    assert deep == [["x", "a%2541"], ["x", "a%41"], ["x", "aA"]]
+    assert U.read_path("/x/a%41", "decode_all_once")["deeper_segments"] == []
+    rules = U.compile_policy([{"id": "deny", "urls": {"within": "https://example.com/admin"}}])
+    for levels in range(2, 9):  # a letter of the deny prefix hidden 2..8 levels deep
+        raw = "https://example.com/%" + "25" * (levels - 1) + "61dmin/keys"
+        out = U.compute_or_refusal(request([effect(raw, decoding="decode_all_once")], rules))
+        assert (out["status"], out.get("code")) == ("refused", "ambiguous_double_decoding")
+        assert U.compute(request([effect(raw, decoding="decode_all_once")]))["status"] == "ok"
+
+
 def test_the_same_request_gives_the_same_bytes():
     made = request(
         [effect("https://BÜCHER.example/a/%2e%2e/b", decoding="decode_all_once")],

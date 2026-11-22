@@ -32,8 +32,9 @@ never from policy prose or caller claims.
      wss); an explicit port is read as a decimal number 1..65535.
    Refused, among others: a host ending in a dot; a host character that Unicode 3.2 (the IDNA
    2003 table) does not assign, or that IDNA 2003 and 2008 map differently; numeric hosts that are
-   not a plain dotted quad; IPv6 literals that embed an IPv4 address; whitespace, controls and
-   backslashes anywhere.
+   not a plain dotted quad; IPv6 literals that carry an IPv4 address (mapped, compatible,
+   translated, NAT64, 6to4, Teredo); the unspecified addresses 0.0.0.0 and [::]; whitespace,
+   controls and backslashes anywhere.
 2. Path. The path runs from the authority to the first ``?`` or ``#`` (an empty path is ``/``) and
    is read under exactly one decoding profile, the one the effect declares:
    - ``rfc3986``: percent sequences of unreserved characters (letters, digits, ``-._~``) are
@@ -45,15 +46,18 @@ never from policy prose or caller claims.
    Then ``.`` segments are dropped and ``..`` pops one segment, never above the root.
    Refused under both profiles: a ``%`` without two hex digits; decoded bytes that are not UTF-8
    or hold a control character; an empty segment; a ``;`` in a segment unless the tool profile
-   declares it path data; and, for a server declared case-insensitive, non-ASCII path text and
-   segments that end in a dot or a space or consist of three or more dots. Refused under
-   ``decode_all_once`` only, where decoded text is shown: a decoded backslash and decoded
-   invisible, separator, private-use or unassigned characters.
+   declares it path data; and, for a server declared case-insensitive, non-ASCII path text,
+   segments that end in a dot or a space or consist of three or more dots, and segments with a
+   ``:`` or a ``~`` before a digit (streams and short names of the Windows family). Refused
+   under ``decode_all_once`` only, where decoded text is shown: a decoded backslash and decoded
+   invisible, separator or private-use characters and characters Unicode 3.2 does not assign
+   (a fixed table, the same on every Python).
 3. Two profile-independent observations of the path as written: whether any percent sequence
    stands for a separator (``%2F``, ``%5C``) or a segment is ``.`` or ``..`` only once decoded;
    and whether a second full decoding would change the result of the first (double encoding).
-   When it would, the host also reads the twice-decoded path, and refuses if that reading is
-   itself refused or would change any comparison list.
+   When it would, the host also reads the path decoded again, and again until no percent
+   sequence is left, and refuses if any of those readings is itself refused, yields a separator
+   or a dot segment the first decoding did not, or would change any comparison list.
 4. Comparison. A policy rule may declare URL prefixes in its optional ``urls`` field. For each
    URL effect the host lists the rules with a declared prefix of the same origin and those with
    none; and the rules with a declared prefix that contains the URL (same origin, and the decoded
@@ -103,11 +107,13 @@ REFUSAL_CODES = (
     "idna_unassigned_character",  # unassigned in Unicode 3.2: only UTS 46 clients map it
     "idna_deviation_character",  # IDNA 2003 and 2008 map this host differently
     "idna_failed",  # the host has no IDNA 2003 A-label form
+    "idna_mapped_separator",  # IDNA 2003 maps a character to a label dot; UTS 46 clients reject it
     "bad_a_label",  # an xn-- label that does not round-trip
     "trailing_dot_host",  # clients send example.com. as another Host and SNI than example.com
     "bad_host",  # empty label, bad character, label or name too long, bad IP literal
     "ipv6_zone",
-    "ipv6_embedded_ipv4",  # IPv4-mapped or IPv4-compatible: the socket reaches the IPv4 address
+    "ipv6_embedded_ipv4",  # mapped, compatible, translated, 6to4, Teredo: reaches an IPv4 address
+    "unspecified_address",  # 0.0.0.0 and [::]: most stacks connect them to the local host
     "ambiguous_ipv4_form",  # numeric host that is not a plain dotted quad (hex, octal, short)
     "bad_port",  # not a decimal number 1..65535
     "bad_percent_encoding",  # a % in the path that is not followed by two hex digits
@@ -119,7 +125,8 @@ REFUSAL_CODES = (
     "path_parameter",  # a ; in a segment, which some servers strip, not declared as data
     "non_ascii_case_insensitive",  # non-ASCII path text on a case-insensitive server
     "trailing_dot_or_space_segment",  # case-insensitive servers of the Windows family drop these
-    "ambiguous_double_decoding",  # a second decoding is unreadable or changes a comparison list
+    "windows_path_form",  # case-insensitive server: a short name (~1) or a stream (:) in a segment
+    "ambiguous_double_decoding",  # a further decoding is unreadable or reads another path
 )
 
 POLICY_ERRORS = (
@@ -149,7 +156,27 @@ _DEVIATIONS = "ßς‌‍"
 # White_Space outside ASCII, written out so that the result does not depend on the running
 # Python's Unicode tables. U+180E was a space separator until Unicode 6.3.
 _SPACES = frozenset("\u0085  ᠎               　")
+# Categories of the Unicode 3.2 table (the one IDNA 2003 uses), so that every Python gives the
+# same answer. A character assigned after 3.2 is "Cn" there and is refused. U+00AD is the one
+# character that Unicode 15.1 calls a format character and 3.2 does not.
 _HIDDEN = ("Zs", "Zl", "Zp", "Cf", "Co", "Cs", "Cn")
+_HIDDEN_LATER = "\u00ad"
+_DOTS = ".\u3002\uff0e\uff61"  # the label separators of IDNA 2003
+# IPv6 blocks whose addresses carry an IPv4 address that a translator or tunnel delivers to:
+# IPv4-compatible, IPv4-mapped, IPv4-translated (SIIT), NAT64 (RFC 6052, RFC 8215), Teredo, 6to4.
+_IPV4_CARRIERS = tuple(
+    ipaddress.IPv6Network(block)
+    for block in (
+        "::/96",
+        "::ffff:0:0/96",
+        "::ffff:0:0:0/96",
+        "64:ff9b::/96",
+        "64:ff9b:1::/48",
+        "2001::/32",
+        "2002::/16",
+    )
+)
+_MAX_DECODINGS = 8
 
 
 class Refusal(ValueError):
@@ -198,10 +225,16 @@ def _host_name(name, steps):
             "idna_deviation_character",
             "the host holds a character that IDNA 2003 and IDNA 2008 map differently",
         )
+        separators = sum(ch in _DOTS for ch in name)
         try:
             name = name.encode("idna").decode("ascii")
         except UnicodeError:
             raise Refusal("idna_failed", "the host has no IDNA 2003 A-label form") from None
+        _require(
+            name.count(".") == separators,
+            "idna_mapped_separator",
+            "IDNA 2003 maps a host character to a label separator, which other clients reject",
+        )
         converted = True
         steps.append("non-ASCII host mapped by IDNA 2003 ToASCII (A-labels, xn--)")
     if name != name.lower():
@@ -221,6 +254,7 @@ def _host_name(name, steps):
             "ambiguous_ipv4_form",
             "a numeric host that is not four plain decimal numbers 0..255",
         )
+        _require(name != "0.0.0.0", "unspecified_address", "0.0.0.0 names no single host")
     for label in labels:
         if label.startswith("xn--"):
             try:
@@ -250,10 +284,12 @@ def _authority(authority, scheme, steps):
             address = ipaddress.IPv6Address(literal)
         except ValueError:
             raise Refusal("bad_host", "not an IPv6 literal") from None
+        _require(int(address) != 0, "unspecified_address", "[::] names no single host")
         _require(
-            address.ipv4_mapped is None and (int(address) >> 32 != 0 or int(address) <= 1),
+            int(address) == 1 or not any(address in block for block in _IPV4_CARRIERS),
             "ipv6_embedded_ipv4",
-            "an IPv4-mapped or IPv4-compatible IPv6 literal reaches an IPv4 address",
+            "an IPv6 literal that carries an IPv4 address (mapped, compatible, translated, "
+            "NAT64, 6to4 or Teredo) reaches that IPv4 address",
         )
         if address.compressed != literal:
             steps.append("IPv6 literal written in its compressed lowercase form")
@@ -376,7 +412,12 @@ def _decoded_text(data, *, shown, case_sensitive, semicolon_is_data):
         _require("\\" not in text, "encoded_backslash", "a percent sequence decodes to a backslash")
         _require(
             not any(
-                not ch.isascii() and (ch in _SPACES or unicodedata.category(ch) in _HIDDEN)
+                not ch.isascii()
+                and (
+                    ch in _SPACES
+                    or ch in _HIDDEN_LATER
+                    or unicodedata.ucd_3_2_0.category(ch) in _HIDDEN
+                )
                 for ch in text
             ),
             "invisible_character",
@@ -402,6 +443,12 @@ def _decoded_text(data, *, shown, case_sensitive, semicolon_is_data):
             "a path segment ends in a dot or a space, or is three or more dots, on a server "
             "declared case-insensitive",
         )
+        _require(
+            ":" not in text and re.search(r"~[0-9]", text) is None,
+            "windows_path_form",
+            "a path segment holds a : or a ~digit (a stream or a short name) on a server "
+            "declared case-insensitive",
+        )
     return text
 
 
@@ -425,10 +472,13 @@ def _resolve(segments):
 def read_path(raw_path, decoding, *, case_sensitive=True, semicolon_is_data=False):
     """The path as written, read under one decoding profile, or a Refusal.
 
-    Returns {"decoded_path", "segments", "twice_segments", "encoded_separators",
+    Returns {"decoded_path", "segments", "deeper_segments", "encoded_separators",
     "encoded_dot_segments", "double_encoded", "steps"}. ``segments`` excludes the root and any
-    trailing slash. ``twice_segments`` is the same for the path decoded a second time, or None
-    when the path is not double encoded.
+    trailing slash. ``deeper_segments`` lists the same for the path decoded a second time, a
+    third time and so on until no percent sequence is left; it is empty when the path is not
+    double encoded. A further decoding that cannot be read, that yields a separator or a dot
+    segment the first decoding did not, or that is still encoded after ``_MAX_DECODINGS``
+    passes, refuses.
     """
     assert decoding in DECODINGS, decoding
     declared = {"case_sensitive": case_sensitive, "semicolon_is_data": semicolon_is_data}
@@ -453,20 +503,35 @@ def read_path(raw_path, decoding, *, case_sensitive=True, semicolon_is_data=Fals
     if above_root:
         steps.append("a .. segment at the root was dropped")
     double = _TRIPLET_BYTES.search(once) is not None
-    twice = None
-    if double:
-        again = _TRIPLET_BYTES.sub(lambda m: bytes([int(m.group(1), 16)]), once)
+
+    def shape(decoded):
+        return [segment if segment in (".", "..") else "" for segment in decoded.split("/")]
+
+    deeper, data = [], once
+    while _TRIPLET_BYTES.search(data) is not None:
+        _require(
+            len(deeper) < _MAX_DECODINGS,
+            "ambiguous_double_decoding",
+            f"the path is still encoded after {_MAX_DECODINGS + 1} decodings",
+        )
+        data = _TRIPLET_BYTES.sub(lambda m: bytes([int(m.group(1), 16)]), data)
         try:
-            twice = _resolve(_decoded_text(again, shown=True, **declared).split("/")[1:])[0]
+            further = _decoded_text(data, shown=True, **declared)
+            deeper.append(_resolve(further.split("/")[1:])[0])
         except Refusal as exc:
             raise Refusal(
                 "ambiguous_double_decoding",
-                f"the path decoded a second time cannot be read ({exc.code})",
+                f"the path decoded {len(deeper) + 2} times cannot be read ({exc.code})",
             ) from None
+        _require(
+            shape(further) == shape(text),
+            "ambiguous_double_decoding",
+            "a further decoding of the path yields a separator or a dot segment",
+        )
     return {
         "decoded_path": "/" + "/".join(kept) + ("/" if trailing and kept else ""),
         "segments": kept,
-        "twice_segments": twice,
+        "deeper_segments": deeper,
         "encoded_separators": len(re.findall(r"%(?:2[Ff]|5[Cc])", raw_path)),
         "encoded_dot_segments": sum(
             1 for s in written if "%" in s and _decode_bytes(s) in (b".", b"..")
@@ -736,9 +801,9 @@ def compute(request):
 
         inside = containing(path["segments"])
         _require(
-            path["twice_segments"] is None or containing(path["twice_segments"]) == inside,
+            all(containing(segments) == inside for segments in path["deeper_segments"]),
             "ambiguous_double_decoding",
-            "decoding the path a second time would change which declared prefixes contain it",
+            "decoding the path again would change which declared prefixes contain it",
         )
         covers = f"Rules whose urls field does not cover {e['operation']} are in neither list."
         facts.append(

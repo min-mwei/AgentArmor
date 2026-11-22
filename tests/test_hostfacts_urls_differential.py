@@ -215,14 +215,49 @@ def test_idna_differs_from_urllib_by_design():
     assert U.split("https://exаmple.com/")["origin"] != U.split("https://example.com/")["origin"]
 
 
-def test_embedded_ipv4_is_exactly_what_ipaddress_calls_mapped_or_the_compatible_block():
+def test_ipv6_literals_that_carry_an_ipv4_address_are_what_ipaddress_says_they_are():
+    """ipaddress parses all of these as ordinary IPv6 hosts, and so does urllib. The host
+    refuses them: a dual stack, a NAT64 gateway or a tunnel delivers the request to the IPv4
+    address inside, which an exact-origin rule on that IPv4 address would not name."""
     compatible = ipaddress.IPv6Network("::/96")
-    for literal in ("::ffff:1.2.3.4", "::ffff:7f00:1", "::1.2.3.4", "::7f00:1", "::2"):
+    translated = ipaddress.IPv6Network("::ffff:0:0:0/96")
+    nat64 = (ipaddress.IPv6Network("64:ff9b::/96"), ipaddress.IPv6Network("64:ff9b:1::/48"))
+    carriers = (
+        "::ffff:1.2.3.4",
+        "::ffff:7f00:1",
+        "::1.2.3.4",
+        "::7f00:1",
+        "::2",
+        "::ffff:0:cb00:7105",
+        "64:ff9b::cb00:7105",
+        "64:ff9b:1::cb00:7105",
+        "2002:cb00:7105::1",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+    )
+    for literal in carriers:
         address = ipaddress.IPv6Address(literal)
-        assert address.ipv4_mapped is not None or address in compatible
+        assert (
+            address.ipv4_mapped is not None
+            or address.sixtofour is not None
+            or address.teredo is not None
+            or address in compatible
+            or address in translated
+            or any(address in block for block in nat64)
+        )
+        assert urlsplit(f"http://[{literal}]/").hostname == literal  # urllib accepts it
         assert host_code(f"http://[{literal}]/") == "ipv6_embedded_ipv4"
-    for literal in ("::", "::1", "2001:db8::1", "64:ff9b::7f00:1", "fe80::1"):
+    for literal in ("::1", "2001:db8::1", "64:ff9a::1", "2003::1", "fe80::1"):
+        address = ipaddress.IPv6Address(literal)
+        assert address.ipv4_mapped is None and address.sixtofour is None and address.teredo is None
         assert U.split(f"http://[{literal}]/")["origin"] == stdlib_origin(f"http://[{literal}]/")
+
+
+def test_the_unspecified_addresses_parse_in_the_standard_library_and_are_refused():
+    assert ipaddress.IPv4Address("0.0.0.0").is_unspecified
+    assert ipaddress.IPv6Address("::").is_unspecified
+    assert urlsplit("http://0.0.0.0:8080/").hostname == "0.0.0.0"
+    for raw in ("http://0.0.0.0:8080/", "http://[::]:8080/", "http://[0:0:0:0:0:0:0:0]/"):
+        assert host_code(raw) == "unspecified_address"
 
 
 def stdlib_path(path):
@@ -296,11 +331,26 @@ PATH_INTENDED = [
         "ambiguous_double_decoding",
         "unquote decodes once and stops; a second decoding gives a NUL.",
     ),
+    (
+        "/x/%25252e%25252e/y",
+        "/x/%252e%252e/y",
+        "ambiguous_double_decoding",
+        "unquote decodes once; the third decoding gives a .. segment.",
+    ),
+    (
+        "/x/%F0%9F%98%80",
+        "/x/\U0001f600",
+        "invisible_character",
+        "unquote yields U+1F600, which Unicode 3.2 does not assign; the host uses that fixed "
+        "table so that every Python refuses or answers alike.",
+    ),
 ]
 
 
 @pytest.mark.parametrize(
-    "path, stdlib, code, why", PATH_INTENDED, ids=[row[2] for row in PATH_INTENDED]
+    "path, stdlib, code, why",
+    PATH_INTENDED,
+    ids=[f"{row[2]}/{i}" for i, row in enumerate(PATH_INTENDED)],
 )
 def test_every_intended_path_difference_is_a_refusal_with_a_reason(path, stdlib, code, why):
     assert stdlib_path(path) == stdlib and len(why) > 20

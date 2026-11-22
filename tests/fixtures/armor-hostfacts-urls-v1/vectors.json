@@ -3915,7 +3915,7 @@
   },
   {
    "id": "p_double_dots__rfc3986",
-   "why": "%25 decodes to %, and nothing is decoded twice",
+   "why": "decoded again, %252e%252e is a dot segment: refused whatever the rules",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
@@ -3932,30 +3932,13 @@
     "url_rules": []
    },
    "expect": {
-    "status": "ok",
-    "values": [
-     [
-      "call_url_1_origin",
-      "https://example.com:443"
-     ],
-     [
-      "call_url_1_decoded_path",
-      "/x/y/%252e%252e/z"
-     ],
-     [
-      "call_url_1_encoded_separator_or_dot_segment",
-      false
-     ],
-     [
-      "call_url_1_double_encoded",
-      true
-     ]
-    ]
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
    }
   },
   {
    "id": "p_double_dots__decode_all_once",
-   "why": "%25 decodes to %, and nothing is decoded twice",
+   "why": "decoded again, %252e%252e is a dot segment: refused whatever the rules",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
@@ -3972,30 +3955,13 @@
     "url_rules": []
    },
    "expect": {
-    "status": "ok",
-    "values": [
-     [
-      "call_url_1_origin",
-      "https://example.com:443"
-     ],
-     [
-      "call_url_1_decoded_path",
-      "/x/y/%2e%2e/z"
-     ],
-     [
-      "call_url_1_encoded_separator_or_dot_segment",
-      false
-     ],
-     [
-      "call_url_1_double_encoded",
-      true
-     ]
-    ]
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
    }
   },
   {
    "id": "p_double_slash__rfc3986",
-   "why": "a doubly encoded slash",
+   "why": "decoded again, %252F is a separator: refused whatever the rules",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
@@ -4003,6 +3969,52 @@
      {
       "argument": "/call/arguments/url",
       "raw": "https://example.com/x/y%252Fz",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "p_double_slash__decode_all_once",
+   "why": "decoded again, %252F is a separator: refused whatever the rules",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y%252Fz",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "p_double_harmless__rfc3986",
+   "why": "double encoded, and no further decoding yields a separator or a dot segment",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%2541",
       "operation": "fetch",
       "decoding": "rfc3986",
       "case_sensitive": true,
@@ -4020,7 +4032,7 @@
      ],
      [
       "call_url_1_decoded_path",
-      "/x/y%252Fz"
+      "/x/a%2541"
      ],
      [
       "call_url_1_encoded_separator_or_dot_segment",
@@ -4034,15 +4046,15 @@
    }
   },
   {
-   "id": "p_double_slash__decode_all_once",
-   "why": "a doubly encoded slash",
+   "id": "p_double_harmless__decode_all_once",
+   "why": "double encoded, and no further decoding yields a separator or a dot segment",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
     "effects": [
      {
       "argument": "/call/arguments/url",
-      "raw": "https://example.com/x/y%252Fz",
+      "raw": "https://example.com/x/a%2541",
       "operation": "fetch",
       "decoding": "decode_all_once",
       "case_sensitive": true,
@@ -4060,7 +4072,7 @@
      ],
      [
       "call_url_1_decoded_path",
-      "/x/y%2Fz"
+      "/x/a%41"
      ],
      [
       "call_url_1_encoded_separator_or_dot_segment",
@@ -4069,6 +4081,791 @@
      [
       "call_url_1_double_encoded",
       true
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_fourfold_harmless__rfc3986",
+   "why": "four levels of encoding of one letter, read to the end",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%25252541",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%25252541"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_fourfold_harmless__decode_all_once",
+   "why": "four levels of encoding of one letter, read to the end",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%25252541",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%252541"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_triple_dots__rfc3986",
+   "why": "a dot segment three levels down",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%25252e%25252e/z",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "p_triple_dots__decode_all_once",
+   "why": "a dot segment three levels down",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/y/%25252e%25252e/z",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "p_too_deep__rfc3986",
+   "why": "still encoded after nine decodings: the host stops and refuses",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%25252525252525252541",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "p_too_deep__decode_all_once",
+   "why": "still encoded after nine decodings: the host stops and refuses",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%25252525252525252541",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "p_nine_levels__rfc3986",
+   "why": "the deepest path the host reads to the end",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%252525252525252541",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%252525252525252541"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_nine_levels__decode_all_once",
+   "why": "the deepest path the host reads to the end",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/a%252525252525252541",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/a%2525252525252541"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      true
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_emoji__rfc3986",
+   "why": "U+1F600 is not assigned in Unicode 3.2: shown decoded text is checked against that table",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%F0%9F%98%80",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/%F0%9F%98%80"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_emoji__decode_all_once",
+   "why": "U+1F600 is not assigned in Unicode 3.2: shown decoded text is checked against that table",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%F0%9F%98%80",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "invisible_character"
+   }
+  },
+  {
+   "id": "p_unassigned_today__rfc3986",
+   "why": "U+0378 is assigned in no Unicode version",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%CD%B8",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/%CD%B8"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_unassigned_today__decode_all_once",
+   "why": "U+0378 is assigned in no Unicode version",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/%CD%B8",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "invisible_character"
+   }
+  },
+  {
+   "id": "p_soft_hyphen__rfc3986",
+   "why": "U+00AD is invisible; Unicode 3.2 files it under punctuation, so it is listed by hand",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/ad%C2%ADmin",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/x/ad%C2%ADmin"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_soft_hyphen__decode_all_once",
+   "why": "U+00AD is invisible; Unicode 3.2 files it under punctuation, so it is listed by hand",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/ad%C2%ADmin",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "invisible_character"
+   }
+  },
+  {
+   "id": "p_windows_short_name__rfc3986",
+   "why": "ADMINI~1 is the short name of a longer directory on a Windows-family server",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/ADMINI~1/keys",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_short_name__decode_all_once",
+   "why": "ADMINI~1 is the short name of a longer directory on a Windows-family server",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/ADMINI~1/keys",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_short_name_encoded__rfc3986",
+   "why": "the ~ may be encoded",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/ADMINI%7E1/keys",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_short_name_encoded__decode_all_once",
+   "why": "the ~ may be encoded",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/ADMINI%7E1/keys",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_stream__rfc3986",
+   "why": "::$DATA names the default stream of the same file",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/secret.txt::$DATA",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_stream__decode_all_once",
+   "why": "::$DATA names the default stream of the same file",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/secret.txt::$DATA",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_stream_encoded__rfc3986",
+   "why": "the colon may be encoded",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/secret.txt%3Astream",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_stream_encoded__decode_all_once",
+   "why": "the colon may be encoded",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/x/secret.txt%3Astream",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "p_windows_forms_case_sensitive__rfc3986",
+   "why": "on a server declared case-sensitive these are ordinary names",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/ADMINI~1/secret.txt::$DATA",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/ADMINI~1/secret.txt::$DATA"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_windows_forms_case_sensitive__decode_all_once",
+   "why": "on a server declared case-sensitive these are ordinary names",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/ADMINI~1/secret.txt::$DATA",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/ADMINI~1/secret.txt::$DATA"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_tilde_name_case_insensitive__rfc3986",
+   "why": "a ~ that no digit follows is an ordinary name",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/~user/a~b",
+      "operation": "fetch",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/~user/a~b"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ]
+    ]
+   }
+  },
+  {
+   "id": "p_tilde_name_case_insensitive__decode_all_once",
+   "why": "a ~ that no digit follows is an ordinary name",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://example.com/~user/a~b",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://example.com:443"
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/~user/a~b"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
      ]
     ]
    }
@@ -12389,7 +13186,7 @@
   },
   {
    "id": "rv_ipv6_unspecified",
-   "why": "nor is ::",
+   "why": "[::] likewise names no single host",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
@@ -12459,51 +13256,8 @@
     ]
    },
    "expect": {
-    "status": "ok",
-    "values": [
-     [
-      "call_url_1_origin",
-      "http://[::]:8080"
-     ],
-     [
-      "call_url_1_same_origin_as",
-      []
-     ],
-     [
-      "call_url_1_different_origin_from",
-      [
-       "uploads",
-       "no-admin",
-       "partner",
-       "no-local"
-      ]
-     ],
-     [
-      "call_url_1_decoded_path",
-      "/"
-     ],
-     [
-      "call_url_1_encoded_separator_or_dot_segment",
-      false
-     ],
-     [
-      "call_url_1_double_encoded",
-      false
-     ],
-     [
-      "call_url_1_inside_prefixes_of",
-      []
-     ],
-     [
-      "call_url_1_outside_prefixes_of",
-      [
-       "uploads",
-       "no-admin",
-       "partner",
-       "no-local"
-      ]
-     ]
-    ]
+    "status": "refused",
+    "code": "unspecified_address"
    }
   },
   {
@@ -14789,7 +15543,7 @@
   },
   {
    "id": "rv_zero_address",
-   "why": "0.0.0.0 is a plain dotted quad and its own origin",
+   "why": "0.0.0.0: most stacks connect it to the local host, which a rule on 127.0.0.1 does not name",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
@@ -14859,56 +15613,13 @@
     ]
    },
    "expect": {
-    "status": "ok",
-    "values": [
-     [
-      "call_url_1_origin",
-      "http://0.0.0.0:8080"
-     ],
-     [
-      "call_url_1_same_origin_as",
-      []
-     ],
-     [
-      "call_url_1_different_origin_from",
-      [
-       "uploads",
-       "no-admin",
-       "partner",
-       "no-local"
-      ]
-     ],
-     [
-      "call_url_1_decoded_path",
-      "/"
-     ],
-     [
-      "call_url_1_encoded_separator_or_dot_segment",
-      false
-     ],
-     [
-      "call_url_1_double_encoded",
-      false
-     ],
-     [
-      "call_url_1_inside_prefixes_of",
-      []
-     ],
-     [
-      "call_url_1_outside_prefixes_of",
-      [
-       "uploads",
-       "no-admin",
-       "partner",
-       "no-local"
-      ]
-     ]
-    ]
+    "status": "refused",
+    "code": "unspecified_address"
    }
   },
   {
    "id": "rv_one_dot_leader",
-   "why": "U+2024 maps to a dot in IDNA 2003; WHATWG and httpx reject the URL (optional 8)",
+   "why": "U+2024 maps to a label dot in IDNA 2003; WHATWG clients and httpx reject the URL",
    "request": {
     "profile": "armor-hostfacts-urls-v1",
     "observed_at": "2026-11-22T12:00:00Z",
@@ -14978,53 +15689,160 @@
     ]
    },
    "expect": {
-    "status": "ok",
-    "values": [
-     [
-      "call_url_1_origin",
-      "https://partner.example.net:443"
-     ],
-     [
-      "call_url_1_same_origin_as",
-      [
-       "partner"
+    "status": "refused",
+    "code": "idna_mapped_separator"
+   }
+  },
+  {
+   "id": "rv_one_dot_leader_ipv4",
+   "why": "the same character inside a dotted quad",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://203\u20240.113.5:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
       ]
-     ],
-     [
-      "call_url_1_different_origin_from",
-      [
-       "uploads",
-       "no-admin",
-       "no-local"
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
       ]
-     ],
-     [
-      "call_url_1_decoded_path",
-      "/"
-     ],
-     [
-      "call_url_1_encoded_separator_or_dot_segment",
-      false
-     ],
-     [
-      "call_url_1_double_encoded",
-      false
-     ],
-     [
-      "call_url_1_inside_prefixes_of",
-      [
-       "partner"
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
       ]
-     ],
-     [
-      "call_url_1_outside_prefixes_of",
-      [
-       "uploads",
-       "no-admin",
-       "no-local"
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
       ]
-     ]
+     }
     ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "idna_mapped_separator"
+   }
+  },
+  {
+   "id": "rv_digit_full_stop",
+   "why": "U+2488 maps to a digit and a dot",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://a\u2488example.net/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "idna_mapped_separator"
    }
   },
   {
@@ -15182,6 +16000,1641 @@
    "expect": {
     "status": "refused",
     "code": "empty_path_segment"
+   }
+  },
+  {
+   "id": "rv_2_triple_dots_allow_side",
+   "why": "inside uploads decoded once and twice, /admin/keys decoded three times",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/team/uploads/%25252e%25252e/%25252e%25252e/admin/keys",
+      "operation": "send",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "rv_2_triple_deny_prefix",
+   "why": "outside no-admin until the third decoding",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/%252561dmin/keys",
+      "operation": "send",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "rv_2_triple_slash_rfc",
+   "why": "a separator three levels down, under rfc3986",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/team/uploads/..%25252F..%25252Fadmin",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "rv_2_double_slash_rfc",
+   "why": "and two levels down",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/team/uploads/..%252F..%252Fadmin",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "rv_2_double_upper_case_insensitive",
+   "why": "a double-encoded letter that would enter the deny prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/%2541dmin/keys",
+      "operation": "send",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "rv_2_encoded_upper_case_insensitive",
+   "why": "an encoded uppercase letter on a case-insensitive server is inside the deny prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/%41DMIN/keys",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://files.example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "uploads",
+       "no-admin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "partner",
+       "no-local"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/ADMIN/keys"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      [
+       "no-admin"
+      ]
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "uploads",
+       "partner",
+       "no-local"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "rv_2_nat64",
+   "why": "NAT64 well-known prefix: reaches 203.0.113.5",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://[64:ff9b::cb00:7105]:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ipv6_embedded_ipv4"
+   }
+  },
+  {
+   "id": "rv_2_nat64_local",
+   "why": "NAT64 local-use prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://[64:ff9b:1::cb00:7105]:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ipv6_embedded_ipv4"
+   }
+  },
+  {
+   "id": "rv_2_6to4",
+   "why": "6to4 of 203.0.113.5",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://[2002:cb00:7105::1]:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ipv6_embedded_ipv4"
+   }
+  },
+  {
+   "id": "rv_2_teredo",
+   "why": "a Teredo address",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ipv6_embedded_ipv4"
+   }
+  },
+  {
+   "id": "rv_2_siit",
+   "why": "IPv4-translated ::ffff:0:a.b.c.d",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://[::ffff:0:cb00:7105]:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ipv6_embedded_ipv4"
+   }
+  },
+  {
+   "id": "rv_2_documentation_ipv6",
+   "why": "2001:db8::/32 is not Teredo's 2001::/32",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "http://[2001:db8::1]:8080/",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "http://[2001:db8::1]:8080"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      []
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "uploads",
+       "no-admin",
+       "partner",
+       "no-local"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      []
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "uploads",
+       "no-admin",
+       "partner",
+       "no-local"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "rv_2_emoji",
+   "why": "a character newer than Unicode 3.2 in shown text",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/team/uploads/%F0%9F%98%80",
+      "operation": "send",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "invisible_character"
+   }
+  },
+  {
+   "id": "rv_2_unassigned",
+   "why": "U+0378",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/team/uploads/%CD%B8",
+      "operation": "send",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "invisible_character"
+   }
+  },
+  {
+   "id": "rv_2_short_name",
+   "why": "the 8.3 short name of /administration",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/ADMINI~1/keys",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "rv_2_stream",
+   "why": "an NTFS stream on a file",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/secret.txt::$DATA",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "rv_2_stream_once",
+   "why": "the same under decode_all_once",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/secret.txt::$DATA",
+      "operation": "send",
+      "decoding": "decode_all_once",
+      "case_sensitive": false,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "windows_path_form"
+   }
+  },
+  {
+   "id": "rv_2_stream_case_sensitive",
+   "why": "declared case-sensitive: an ordinary name",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/secret.txt::$DATA",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "ok",
+    "values": [
+     [
+      "call_url_1_origin",
+      "https://files.example.com:443"
+     ],
+     [
+      "call_url_1_same_origin_as",
+      [
+       "uploads",
+       "no-admin"
+      ]
+     ],
+     [
+      "call_url_1_different_origin_from",
+      [
+       "partner",
+       "no-local"
+      ]
+     ],
+     [
+      "call_url_1_decoded_path",
+      "/secret.txt::$DATA"
+     ],
+     [
+      "call_url_1_encoded_separator_or_dot_segment",
+      false
+     ],
+     [
+      "call_url_1_double_encoded",
+      false
+     ],
+     [
+      "call_url_1_inside_prefixes_of",
+      []
+     ],
+     [
+      "call_url_1_outside_prefixes_of",
+      [
+       "uploads",
+       "no-admin",
+       "partner",
+       "no-local"
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "id": "rv_2_u2024_in_name",
+   "why": "U+2024 in a name under a deny prefix",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files\u2024example.com/admin",
+      "operation": "send",
+      "decoding": "rfc3986",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-admin",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/admin"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     },
+     {
+      "rule_id": "partner",
+      "prefixes": [
+       {
+        "origin": "https://partner.example.net:443",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     },
+     {
+      "rule_id": "no-local",
+      "prefixes": [
+       {
+        "origin": "http://127.0.0.1:8080",
+        "path": "/"
+       }
+      ],
+      "operations": [
+       "fetch",
+       "send",
+       "open"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "idna_mapped_separator"
+   }
+  },
+  {
+   "id": "rv2_double_no_rules",
+   "why": "double-encoded dot segments refuse although the policy has no URL rule",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/%252e%252e/admin",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": []
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
+   }
+  },
+  {
+   "id": "rv2_double_uncovered_operation",
+   "why": "and although no rule covers the operation",
+   "request": {
+    "profile": "armor-hostfacts-urls-v1",
+    "observed_at": "2026-11-22T12:00:00Z",
+    "effects": [
+     {
+      "argument": "/call/arguments/url",
+      "raw": "https://files.example.com/team/uploads/%252e%252e/%252e%252e/admin",
+      "operation": "fetch",
+      "decoding": "decode_all_once",
+      "case_sensitive": true,
+      "semicolon_is_data": false
+     }
+    ],
+    "url_rules": [
+     {
+      "rule_id": "uploads",
+      "prefixes": [
+       {
+        "origin": "https://files.example.com:443",
+        "path": "/team/uploads"
+       }
+      ],
+      "operations": [
+       "send"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "status": "refused",
+    "code": "ambiguous_double_decoding"
    }
   },
   {
@@ -16742,6 +19195,60 @@
       ]
      }
     ]
+   }
+  },
+  {
+   "id": "e_nat64",
+   "why": "a NAT64 origin",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "http://[64:ff9b::cb00:7105]:8080"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_unspecified",
+   "why": "the unspecified address",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "http://0.0.0.0:8080"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
+   }
+  },
+  {
+   "id": "e_one_dot_leader",
+   "why": "U+2024 in a policy host",
+   "rules": [
+    {
+     "id": "a",
+     "tier": "allow",
+     "description": "Rule a.",
+     "urls": {
+      "within": "https://partner\u2024example.net"
+     }
+    }
+   ],
+   "expect": {
+    "status": "error",
+    "code": "bad_prefix"
    }
   },
   {

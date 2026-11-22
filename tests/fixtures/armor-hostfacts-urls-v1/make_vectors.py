@@ -4,7 +4,8 @@ The expected values below were written by hand from RFC 3986 (syntax, percent-en
 segments), RFC 6454 (origin) and the profile's stated rules. This builder never imports or calls
 the reference implementation, so the vectors are an independent check of the Python reference and
 of any port. The two A-label strings are the Punycode of their hosts (RFC 3492). The cases of
-the 2026-11-22 independent review (ids rv_*) carry that review's probe policy and inputs.
+the 2026-11-22 independent review (ids rv_*) and re-review (ids rv2_*) carry the reviews' probe
+policy and inputs.
 Usage: python3 -I make_vectors.py [PATH_TO_urls.py]
 """
 
@@ -453,14 +454,123 @@ path(
 )
 path(
     "p_double_dots",
-    "%25 decodes to %, and nothing is decoded twice",
+    "decoded again, %252e%252e is a dot segment: refused whatever the rules",
     "/x/y/%252e%252e/z",
-    "/x/y/%252e%252e/z",
-    "/x/y/%2e%2e/z",
+    ("refused", "ambiguous_double_decoding"),
+    ("refused", "ambiguous_double_decoding"),
+)
+path(
+    "p_double_slash",
+    "decoded again, %252F is a separator: refused whatever the rules",
+    "/x/y%252Fz",
+    ("refused", "ambiguous_double_decoding"),
+    ("refused", "ambiguous_double_decoding"),
+)
+path(
+    "p_double_harmless",
+    "double encoded, and no further decoding yields a separator or a dot segment",
+    "/x/a%2541",
+    "/x/a%2541",
+    "/x/a%41",
     double=True,
 )
 path(
-    "p_double_slash", "a doubly encoded slash", "/x/y%252Fz", "/x/y%252Fz", "/x/y%2Fz", double=True
+    "p_fourfold_harmless",
+    "four levels of encoding of one letter, read to the end",
+    "/x/a%25252541",
+    "/x/a%25252541",
+    "/x/a%252541",
+    double=True,
+)
+path(
+    "p_triple_dots",
+    "a dot segment three levels down",
+    "/x/y/%25252e%25252e/z",
+    ("refused", "ambiguous_double_decoding"),
+    ("refused", "ambiguous_double_decoding"),
+)
+path(
+    "p_too_deep",
+    "still encoded after nine decodings: the host stops and refuses",
+    "/x/a%" + "25" * 9 + "41",
+    ("refused", "ambiguous_double_decoding"),
+    ("refused", "ambiguous_double_decoding"),
+)
+path(
+    "p_nine_levels",
+    "the deepest path the host reads to the end",
+    "/x/a%" + "25" * 8 + "41",
+    "/x/a%" + "25" * 8 + "41",
+    "/x/a%" + "25" * 7 + "41",
+    double=True,
+)
+path(
+    "p_emoji",
+    "U+1F600 is not assigned in Unicode 3.2: shown decoded text is checked against that table",
+    "/x/%F0%9F%98%80",
+    "/x/%F0%9F%98%80",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_unassigned_today",
+    "U+0378 is assigned in no Unicode version",
+    "/x/%CD%B8",
+    "/x/%CD%B8",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_soft_hyphen",
+    "U+00AD is invisible; Unicode 3.2 files it under punctuation, so it is listed by hand",
+    "/x/ad%C2%ADmin",
+    "/x/ad%C2%ADmin",
+    ("refused", "invisible_character"),
+)
+path(
+    "p_windows_short_name",
+    "ADMINI~1 is the short name of a longer directory on a Windows-family server",
+    "/ADMINI~1/keys",
+    ("refused", "windows_path_form"),
+    ("refused", "windows_path_form"),
+    cs=False,
+)
+path(
+    "p_windows_short_name_encoded",
+    "the ~ may be encoded",
+    "/x/ADMINI%7E1/keys",
+    ("refused", "windows_path_form"),
+    ("refused", "windows_path_form"),
+    cs=False,
+)
+path(
+    "p_windows_stream",
+    "::$DATA names the default stream of the same file",
+    "/secret.txt::$DATA",
+    ("refused", "windows_path_form"),
+    ("refused", "windows_path_form"),
+    cs=False,
+)
+path(
+    "p_windows_stream_encoded",
+    "the colon may be encoded",
+    "/x/secret.txt%3Astream",
+    ("refused", "windows_path_form"),
+    ("refused", "windows_path_form"),
+    cs=False,
+)
+path(
+    "p_windows_forms_case_sensitive",
+    "on a server declared case-sensitive these are ordinary names",
+    "/ADMINI~1/secret.txt::$DATA",
+    "/ADMINI~1/secret.txt::$DATA",
+    "/ADMINI~1/secret.txt::$DATA",
+)
+path(
+    "p_tilde_name_case_insensitive",
+    "a ~ that no digit follows is an ordinary name",
+    "/~user/a~b",
+    "/~user/a~b",
+    "/~user/a~b",
+    cs=False,
 )
 path(
     "p_percent_literal",
@@ -1288,7 +1398,12 @@ rv(
     [],
     [],
 )
-rv("ipv6_unspecified", "nor is ::", "http://[::]:8080/", "http://[::]:8080", "/", [], [])
+rv_refused(
+    "ipv6_unspecified",
+    "[::] likewise names no single host",
+    "http://[::]:8080/",
+    "unspecified_address",
+)
 # fix 8: path case and Windows-family segments follow the declaration; a trailing host dot refuses
 rv(
     "upper_deny_prefix_sensitive",
@@ -1450,23 +1565,29 @@ rv(
     ["no-local"],
     ["no-local"],
 )
-rv(
+rv_refused(
     "zero_address",
-    "0.0.0.0 is a plain dotted quad and its own origin",
+    "0.0.0.0: most stacks connect it to the local host, which a rule on 127.0.0.1 does not name",
     "http://0.0.0.0:8080/",
-    "http://0.0.0.0:8080",
-    "/",
-    [],
-    [],
+    "unspecified_address",
 )
-rv(
+rv_refused(
     "one_dot_leader",
-    "U+2024 maps to a dot in IDNA 2003; WHATWG and httpx reject the URL (optional 8)",
+    "U+2024 maps to a label dot in IDNA 2003; WHATWG clients and httpx reject the URL",
     "https://partner\u2024example.net/",
-    PARTNER,
-    "/",
-    ["partner"],
-    ["partner"],
+    "idna_mapped_separator",
+)
+rv_refused(
+    "one_dot_leader_ipv4",
+    "the same character inside a dotted quad",
+    "http://203\u20240.113.5:8080/",
+    "idna_mapped_separator",
+)
+rv_refused(
+    "digit_full_stop",
+    "U+2488 maps to a digit and a dot",
+    "https://a\u2488example.net/",
+    "idna_mapped_separator",
 )
 case(
     "rv_decoded_question_and_hash",
@@ -1488,6 +1609,145 @@ case(
     [eff("https://files.example.com/team//x", op="open")],
     [PROBE[0]],
     refused="empty_path_segment",
+)
+
+# --- the re-review of 2026-11-22 (ids rv2_*): its inputs, each written by hand ------------------
+rv_refused(
+    "2_triple_dots_allow_side",
+    "inside uploads decoded once and twice, /admin/keys decoded three times",
+    F + "/team/uploads/%25252e%25252e/%25252e%25252e/admin/keys",
+    "ambiguous_double_decoding",
+    "decode_all_once",
+)
+rv_refused(
+    "2_triple_deny_prefix",
+    "outside no-admin until the third decoding",
+    F + "/%252561dmin/keys",
+    "ambiguous_double_decoding",
+    "decode_all_once",
+)
+rv_refused(
+    "2_triple_slash_rfc",
+    "a separator three levels down, under rfc3986",
+    F + "/team/uploads/..%25252F..%25252Fadmin",
+    "ambiguous_double_decoding",
+)
+rv_refused(
+    "2_double_slash_rfc",
+    "and two levels down",
+    F + "/team/uploads/..%252F..%252Fadmin",
+    "ambiguous_double_decoding",
+)
+rv_refused(
+    "2_double_upper_case_insensitive",
+    "a double-encoded letter that would enter the deny prefix",
+    F + "/%2541dmin/keys",
+    "ambiguous_double_decoding",
+    "decode_all_once",
+    cs=False,
+)
+rv(
+    "2_encoded_upper_case_insensitive",
+    "an encoded uppercase letter on a case-insensitive server is inside the deny prefix",
+    F + "/%41DMIN/keys",
+    FILES,
+    "/ADMIN/keys",
+    BOTH,
+    ["no-admin"],
+    cs=False,
+)
+rv_refused(
+    "2_nat64",
+    "NAT64 well-known prefix: reaches 203.0.113.5",
+    "http://[64:ff9b::cb00:7105]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv_refused(
+    "2_nat64_local",
+    "NAT64 local-use prefix",
+    "http://[64:ff9b:1::cb00:7105]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv_refused(
+    "2_6to4", "6to4 of 203.0.113.5", "http://[2002:cb00:7105::1]:8080/", "ipv6_embedded_ipv4"
+)
+rv_refused(
+    "2_teredo",
+    "a Teredo address",
+    "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv_refused(
+    "2_siit",
+    "IPv4-translated ::ffff:0:a.b.c.d",
+    "http://[::ffff:0:cb00:7105]:8080/",
+    "ipv6_embedded_ipv4",
+)
+rv(
+    "2_documentation_ipv6",
+    "2001:db8::/32 is not Teredo's 2001::/32",
+    "http://[2001:db8::1]:8080/",
+    "http://[2001:db8::1]:8080",
+    "/",
+    [],
+    [],
+)
+rv_refused(
+    "2_emoji",
+    "a character newer than Unicode 3.2 in shown text",
+    F + "/team/uploads/%F0%9F%98%80",
+    "invisible_character",
+    "decode_all_once",
+)
+rv_refused(
+    "2_unassigned", "U+0378", F + "/team/uploads/%CD%B8", "invisible_character", "decode_all_once"
+)
+rv_refused(
+    "2_short_name",
+    "the 8.3 short name of /administration",
+    F + "/ADMINI~1/keys",
+    "windows_path_form",
+    cs=False,
+)
+rv_refused(
+    "2_stream", "an NTFS stream on a file", F + "/secret.txt::$DATA", "windows_path_form", cs=False
+)
+rv_refused(
+    "2_stream_once",
+    "the same under decode_all_once",
+    F + "/secret.txt::$DATA",
+    "windows_path_form",
+    "decode_all_once",
+    cs=False,
+)
+rv(
+    "2_stream_case_sensitive",
+    "declared case-sensitive: an ordinary name",
+    F + "/secret.txt::$DATA",
+    FILES,
+    "/secret.txt::$DATA",
+    BOTH,
+    [],
+)
+rv_refused(
+    "2_u2024_in_name",
+    "U+2024 in a name under a deny prefix",
+    "https://files\u2024example.com/admin",
+    "idna_mapped_separator",
+)
+case(
+    "rv2_double_no_rules",
+    "double-encoded dot segments refuse although the policy has no URL rule",
+    [eff(F + "/%252e%252e/admin", decoding="decode_all_once")],
+    [],
+    refused="ambiguous_double_decoding",
+)
+case(
+    "rv2_double_uncovered_operation",
+    "and although no rule covers the operation",
+    [eff(F + "/team/uploads/%252e%252e/%252e%252e/admin", decoding="decode_all_once")],
+    [PROBE[0]],
+    refused="ambiguous_double_decoding",
 )
 
 # --- refusals: the request itself is malformed ---------------------------------------------------
@@ -1825,6 +2085,24 @@ policy(
     "the characters a prefix path may hold; its case is kept",
     [line("a", {"within": "https://example.com/Team_A/v1.2/~x-y/"})],
     [rule("a", (EX, "/Team_A/v1.2/~x-y"))],
+)
+policy(
+    "e_nat64",
+    "a NAT64 origin",
+    [line("a", {"within": "http://[64:ff9b::cb00:7105]:8080"})],
+    error="bad_prefix",
+)
+policy(
+    "e_unspecified",
+    "the unspecified address",
+    [line("a", {"within": "http://0.0.0.0:8080"})],
+    error="bad_prefix",
+)
+policy(
+    "e_one_dot_leader",
+    "U+2024 in a policy host",
+    [line("a", {"within": "https://partner\u2024example.net"})],
+    error="bad_prefix",
 )
 policy(
     "e_too_many",

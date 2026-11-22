@@ -1,7 +1,7 @@
 # URL host facts: armor-hostfacts-urls-v1 (design note, candidate)
 
 Status: a CPU reference and its hand-written vectors on branch `url-hostfacts`, revised after
-the independent review of 2026-11-22 (fixes 1 to 8). Nothing here is registered, served or
+the independent review of 2026-11-22 (fixes 1 to 8) and its re-review (four more fixes). Nothing here is registered, served or
 wired into the monitor. No model was run.
 
 The principle (user, 2026-11-22): Kai is a decision model with strong reasoning; every rule and
@@ -100,10 +100,10 @@ The URL must be absolute, `scheme://authority`, with scheme http, https, ws or w
 | Userinfo | text before one `@` is ignored and noted | two or more `@` (`ambiguous_userinfo`) |
 | Host case | lowercased | |
 | Trailing dot | | any host ending in a dot (`trailing_dot_host`): clients send another Host header and SNI for it |
-| IDN | a non-ASCII host is mapped by IDNA 2003 ToASCII to A-labels, so a look-alike differs from the ASCII name; a written `xn--` label is kept and must round-trip | a character that Unicode 3.2 does not assign, which UTS 46 clients map and IDNA 2003 does not (`idna_unassigned_character`, capital sharp s included); sharp s, final sigma, ZWJ, ZWNJ (`idna_deviation_character`); hosts ToASCII rejects (`idna_failed`); an `xn--` label that does not round-trip (`bad_a_label`) |
+| IDN | a non-ASCII host is mapped by IDNA 2003 ToASCII to A-labels, so a look-alike differs from the ASCII name; a written `xn--` label is kept and must round-trip | a character that Unicode 3.2 does not assign, which UTS 46 clients map and IDNA 2003 does not (`idna_unassigned_character`, capital sharp s included); sharp s, final sigma, ZWJ, ZWNJ (`idna_deviation_character`); hosts ToASCII rejects (`idna_failed`); a character IDNA 2003 maps to a label dot, such as U+2024, which UTS 46 clients reject (`idna_mapped_separator`); an `xn--` label that does not round-trip (`bad_a_label`) |
 | Labels | `a-z 0-9 - _`, 1 to 63 characters, name at most 253 | anything else (`bad_host`); a percent sequence (`percent_encoded_host`) |
-| IPv4 | four plain decimal numbers 0..255 | hex, octal, short or integer forms (`ambiguous_ipv4_form`) |
-| IPv6 | compressed lowercase form in brackets | a zone id (`ipv6_zone`); IPv4-mapped and IPv4-compatible literals, which reach an IPv4 address (`ipv6_embedded_ipv4`); a malformed literal (`bad_host`) |
+| IPv4 | four plain decimal numbers 0..255 | hex, octal, short or integer forms (`ambiguous_ipv4_form`); `0.0.0.0` (`unspecified_address`) |
+| IPv6 | compressed lowercase form in brackets | a zone id (`ipv6_zone`); literals that carry an IPv4 address a dual stack, translator or tunnel delivers to: IPv4-mapped, IPv4-compatible, IPv4-translated `::ffff:0:0:0/96`, NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`, 6to4 `2002::/16`, Teredo `2001::/32` (`ipv6_embedded_ipv4`); `[::]` (`unspecified_address`); a malformed literal (`bad_host`) |
 | Port | missing or empty: the scheme default (80, 443); explicit: a decimal number 1..65535, leading zeros dropped | non-digits, 0, above 65535, two colons (`bad_port`) |
 | Whole URL | | whitespace and controls from a fixed table (`whitespace_or_control`), a backslash anywhere (`backslash`), more than 4096 characters (`url_too_long`), empty (`empty_url`) |
 
@@ -137,17 +137,19 @@ Refused under both profiles:
 | `path_parameter` | a `;` in the path, literal or encoded, unless the effect declares `semicolon_is_data` |
 | `non_ascii_case_insensitive` | non-ASCII path text when the effect declares a case-insensitive server |
 | `trailing_dot_or_space_segment` | a segment ending in a dot or space, or of three or more dots, when the effect declares a case-insensitive server (the Windows family drops them) |
-| `ambiguous_double_decoding` | the path is double encoded and its twice-decoded reading is itself refused, or would change `inside_prefixes_of` for the rules that cover the operation |
+| `windows_path_form` | a segment with a `:` or a `~` before a digit (an NTFS stream, an 8.3 short name) when the effect declares a case-insensitive server |
+| `ambiguous_double_decoding` | the path is double encoded and, decoded again and again until no percent sequence is left, some reading is itself refused, yields a separator or a dot segment that the first decoding did not (whatever the rules), or would change `inside_prefixes_of` for the rules that cover the operation; also when it is still encoded after nine decodings |
 
 Refused under `decode_all_once` only, where decoded text is shown in the value:
 
 | Code | When |
 |---|---|
 | `encoded_backslash` | a decoded `\` |
-| `invisible_character` | a decoded non-ASCII space, line or paragraph separator, format character (bidi controls, zero-width characters), private-use or unassigned character |
+| `invisible_character` | a decoded non-ASCII space, line or paragraph separator, format character (bidi controls, zero-width characters, the soft hyphen), private-use character, or a character that Unicode 3.2 does not assign (emoji and newer scripts included) |
 
 The two boolean facts do not depend on the profile. `double_encoded: true` now means "double
-encoded, and a second decoding changes no comparison list"; the other case is refused.
+encoded, and no further decoding yields a separator, a dot segment or another comparison
+list"; the other cases are refused.
 
 Containment is the origin being equal and the decoded path being equal to or beneath the
 prefix path, segment by segment: `/x/y-evil` is not inside `/x/y`. Case follows the effect's
@@ -203,23 +205,25 @@ One optional field, shaped like `paths`:
   the flag fact true. A wrong declaration gives a wrong fact.
 - IDNA is Python's `idna` codec: IDNA 2003 with Unicode 3.2 Nameprep. Characters outside
   Unicode 3.2 and the four deviation characters are refused. Inside Unicode 3.2 the codec and
-  UTS 46 were compared only on the review's inputs, not exhaustively. One known difference:
-  U+2024 (one dot leader) maps to a dot, so `partner․example.net` reads as
-  `partner.example.net`, while WHATWG clients and httpx reject that URL. The claimed origin is
-  where an IDNA 2003 client goes; a vector pins it.
+  UTS 46 were compared only on the review's inputs, not exhaustively.
 - Mixed-script look-alikes are not flagged as such; they are only guaranteed to be a
   different origin.
-- Only IPv4-mapped and IPv4-compatible IPv6 literals are refused. Other IPv6 forms that carry
-  an IPv4 address through a translator (NAT64 `64:ff9b::/96`, 6to4) are ordinary origins.
-- `invisible_character` uses the running Python's `unicodedata` categories. A character
-  assigned after that Python's Unicode version is refused there and may be accepted by a newer
-  Python. The two copies can therefore differ between refusing and answering, never between
-  two different values. The host and whitespace checks use fixed tables and do not vary.
-- When a path is double encoded, the second reading decodes every percent sequence, under
+- Shown path text and hosts are classified with the Unicode 3.2 table that every Python
+  carries (`unicodedata.ucd_3_2_0`) and with tables written out in the module. No answer
+  depends on the running Python's Unicode version, so the Kai and AgentArmor copies agree
+  byte for byte. The price: under `decode_all_once`, a path with a character newer than
+  Unicode 3.2 (emoji, scripts added since 2002) is refused. Under `rfc3986` such characters
+  stay percent-encoded and are read.
+- When a path is double encoded, the further readings decode every percent sequence, under
   either profile. Under `rfc3986` this refuses some URLs that a server which keeps `%2F`
   would read without ambiguity.
-- A case-insensitive declaration also applies the Windows-family segment rules. A
-  case-insensitive server that keeps trailing dots loses URLs it could have read.
+- A double-encoded path under a policy with no URL rule for the operation is refused only when
+  a further decoding yields a separator or a dot segment. A double-encoded *name*
+  (`/%2561dmin`) is then still read, with `double_encoded: true` and no lists. A rule written
+  only in prose is not host-checked; the training brief must say so.
+- A case-insensitive declaration also applies the Windows-family segment rules (trailing dots
+  and spaces, `:` and `~digit`). A case-insensitive server of another family loses URLs it
+  could have read.
 - Only two decoding profiles. Servers that merge slashes, decode `+`, or treat `%5C` as a
   separator are not modelled; empty segments and decoded backslashes are refused.
 - The query and fragment are not examined. A URL carried inside a query parameter is not an
@@ -318,6 +322,9 @@ Resolved by the user's and trainer's decisions of 2026-11-22:
 4. Double encoding: refused when a second decoding is unreadable or changes a list.
 5. Origin matching is exact. No subdomain relation.
 6. Port 0 and empty path segments are refused.
+7. IPv6 literals that a translator or tunnel delivers to an IPv4 address are refused.
+8. The unspecified addresses `0.0.0.0` and `[::]` are refused (the re-review's optional 1,
+   applied by the implementer under "never guess"; say so if exact-origin should read them).
 
 Still open:
 
