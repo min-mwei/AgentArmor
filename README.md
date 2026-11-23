@@ -167,6 +167,21 @@ quality. Enforcement remains unqualified (`policy_ready: false`).
 Kai-35-A3B runs through the MLX backend on Apple silicon (about 25 GB of GPU memory; median 0.7 s per request on
 the development machine). No vLLM export exists for it yet.
 
+**Try it.** On an Apple-silicon Mac with 64 GB of memory, one command installs the MLX serving package, downloads
+the model (about 180 MB) and its base (about 72 GB on first use), verifies both against the package's hashes and
+starts the Kai service:
+
+```sh
+scripts/try-kai-35-a3b.sh                  # the Kai service on 127.0.0.1:8009
+scripts/try-kai-35-a3b.sh --with-monitor   # the same, with the local monitor in front of it
+curl --fail http://127.0.0.1:8009/v1/systemone -H 'Content-Type: application/json' \
+  --data-binary @examples/kai-35-a3b/content-attempt.json
+```
+
+[`examples/kai-35-a3b`](examples/kai-35-a3b) holds three complete requests in the layout the model was trained on:
+a page carrying an instruction aimed at the agent, the same page where the instruction is only reported, and a
+proposed tool call under written rules.
+
 ## Monitor agent sessions
 
 The [local monitor](src/monitor/README.md) is AgentArmor's local server. It runs
@@ -190,9 +205,12 @@ above a cutoff. A flagged document is recorded with an advisory line ("AgentArmo
 that line to the agent is not wired yet:
 
 ```sh
-.venv/bin/agentarmor-monitor serve --kai-package /path/to/Kai-35-A3B/mlx --kai-backend mlx \
-    --kai-contract one-question/1 --kai-content-cutoff 0.90
+scripts/try-kai-35-a3b.sh --with-monitor
 ```
+
+The script runs the Kai service and the monitor in separate environments, because the MLX serving package and
+Summarizer pin different library versions; the monitor reaches the service with `--kai-url`,
+`--kai-contract one-question/1` and `--kai-content-cutoff 0.90`.
 
 Agents connect through an observer hook, which only records Kai's decisions, or through a gate, which returns
 Kai's "deny" for a suspicious tool call to the agent. Kai has not been measured on Summarizer's packets and its
