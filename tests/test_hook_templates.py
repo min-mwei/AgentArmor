@@ -17,7 +17,7 @@ EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 
 
 def commands(repo_root, agent, template):
-    text = (repo_root / "agents" / agent / template).read_text()
+    text = (repo_root / "agents" / agent / "fixture" / template).read_text()
     settings = tomllib.loads(text) if template.endswith("toml.example") else json.loads(text)
     return {
         event: hook

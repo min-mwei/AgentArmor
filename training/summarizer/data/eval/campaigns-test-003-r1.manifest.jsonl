@@ -1,0 +1,21 @@
+{"id": "h003-01-a", "pair_id": "h003-01", "group": "h003-g01", "family": "approval_withdrawn", "sessions": 4, "steps": 7, "sha256": "b802f735ff94c99676327e46d82348c021989c47af43eb9826aba8720cd049c6"}
+{"id": "h003-01-b", "pair_id": "h003-01", "group": "h003-g01", "family": "approval_withdrawn", "sessions": 4, "steps": 7, "sha256": "63d9f531b7f94cfb458b15fa510f0015d62532e86cd5106342442623a0d31df7"}
+{"id": "h003-02-a", "pair_id": "h003-02", "group": "h003-g02", "family": "scope_stretched", "sessions": 2, "steps": 5, "sha256": "c7bb47bb4dfc429ec5d56cbf2f7338b1ddf13cac6a3a12bb5863466802f240f0"}
+{"id": "h003-02-b", "pair_id": "h003-02", "group": "h003-g02", "family": "scope_stretched", "sessions": 2, "steps": 5, "sha256": "582c3cd96b0e50962a3d79a33cd5ee5dd7c88b92e02d3670450920056de01c69"}
+{"id": "h003-03-a", "pair_id": "h003-03", "group": "h003-g03", "family": "later_look_disagrees", "sessions": 3, "steps": 6, "sha256": "b6548341456d5a7702bc603d4dae5c7258f10c0a84c4867ed8d341aeda48da2a"}
+{"id": "h003-03-b", "pair_id": "h003-03", "group": "h003-g03", "family": "later_look_disagrees", "sessions": 3, "steps": 6, "sha256": "dd697f58c9fdeadacbbac9c56e6b6a5d2deaac2742934a1092521bda8b0a6b62"}
+{"id": "h003-04-a", "pair_id": "h003-04", "group": "h003-g04", "family": "lookalike_name", "sessions": 2, "steps": 4, "sha256": "719e83f27fcd08996012b6911b4be62f35e307a039d3d7393acf24e4c3aafe27"}
+{"id": "h003-04-b", "pair_id": "h003-04", "group": "h003-g04", "family": "lookalike_name", "sessions": 2, "steps": 4, "sha256": "dbe08146f2cd0936d6a74ed730290bfcca54befa0696501c8c3bba5e451f4fb4"}
+{"id": "h003-05-a", "pair_id": "h003-05", "group": "h003-g05", "family": "destruction_prepared", "sessions": 2, "steps": 6, "sha256": "9b20b816f083ad665ced45b7ad4a38309f842b78cea5e74bea79575f7dd9c484"}
+{"id": "h003-05-b", "pair_id": "h003-05", "group": "h003-g05", "family": "destruction_prepared", "sessions": 2, "steps": 6, "sha256": "d3c6c48c87bdf333eb43a5fce19b94c2b97d3e96a737c6a12603b35368a4d3e2"}
+{"id": "h003-06-a", "pair_id": "h003-06", "group": "h003-g06", "family": "planted_file", "sessions": 2, "steps": 6, "sha256": "a7837939c595b1d6d916df600549080214bd3e41b39cf59b440a083e67153738"}
+{"id": "h003-06-b", "pair_id": "h003-06", "group": "h003-g06", "family": "planted_file", "sessions": 2, "steps": 6, "sha256": "896995abd79370d86245c396154fecdaa7cb6068c51237b7fb2853013205c504"}
+{"id": "h003-07-a", "pair_id": "h003-07", "group": "h003-g07", "family": "claimed_approval", "sessions": 3, "steps": 6, "sha256": "8b82b3c309289cd1c378bc109bbad1f92571388d191a21f185bd5f5b018277d0"}
+{"id": "h003-07-b", "pair_id": "h003-07", "group": "h003-g07", "family": "claimed_approval", "sessions": 3, "steps": 6, "sha256": "ea88058f3163db7c818560c8a94017e6f0bec5278f4b69982a20cbfb36f60912"}
+{"id": "h003-08-a", "pair_id": "h003-08", "group": "h003-g08", "family": "limit_crossed", "sessions": 2, "steps": 7, "sha256": "b82765b91dc2b0bed7b4a94ab01e318b3937eebdff4e91de8075d49e417e32a5"}
+{"id": "h003-08-b", "pair_id": "h003-08", "group": "h003-g08", "family": "limit_crossed", "sessions": 2, "steps": 7, "sha256": "6a180e6cbca9393e9c21ac22fe222640de9f30e580d42a78088c06cc210e9e65"}
+{"id": "h003-09-a", "pair_id": "h003-09", "group": "h003-g09", "family": "credential_moved", "sessions": 3, "steps": 6, "sha256": "30cf79b5fb35003ed30d92a6cdc673b51b2f3058dbbcd63289b5be85b0a9d11a"}
+{"id": "h003-09-b", "pair_id": "h003-09", "group": "h003-g09", "family": "credential_moved", "sessions": 3, "steps": 6, "sha256": "cf6925500d55be9e7d62b776021ed4cfb22181c0850d3cd451e23b0bf3e5b1c4"}
+{"id": "h003-10-a", "pair_id": "h003-10", "group": "h003-g10", "family": "poisoned_control", "sessions": 2, "steps": 6, "sha256": "0fb3be877ce44dff84e457b4264718f7378d7e7db2e70267beeee2d51e59630e"}
+{"id": "h003-10-b", "pair_id": "h003-10", "group": "h003-g10", "family": "poisoned_control", "sessions": 2, "steps": 6, "sha256": "66d9454f9ff30d2356d78db397fdbeb22fc13f3722cdb297c9908be1b570617a"}
+{"file_sha256": "82c93244db56b20023069be1340f697ad7697050c2bba78928526f20b4061a3a", "campaigns": 20, "pairs": 10}

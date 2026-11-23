@@ -1,0 +1,1655 @@
+"""The whole stack in shadow, on campaigns: the hooks AgentArmor generates, the local server with
+earlier sessions on, and a recording proxy in front of Kai (run sheet, section 9, item 3).
+
+    python training/summarizer/shadow_campaigns.py run CAMPAIGNS --ids ID [ID ...] \\
+        --layouts claude_code codex_code --kai-standin --out DIR [--budget 11000] [--embedder hash]
+    python training/summarizer/shadow_campaigns.py run CAMPAIGNS --pairs PAIR [PAIR ...] \\
+        --kai-url http://127.0.0.1:8009 --kai-package-sha256 HASH --out DIR \\
+        --embedder embeddinggemma
+
+One run is one campaign in one layout (campaign_contract.layout), on a stack of its own:
+
+- `agentarmor-monitor serve --shadow --earlier-sessions on --max-chars BUDGET`, as a process with
+  a spool, a home and a Codex home of its own under --out (the spool in a short temporary folder
+  while it runs, for the daemon's socket, then moved under --out). Nothing of this account's home
+  is written, and nothing of it is read but, with --embedder embeddinggemma, the model's files in
+  its Hugging Face cache. No client's settings are touched. A run's sessions are the only ones
+  its server sees: two campaigns never share a spool, so one is never an earlier session of the
+  other.
+- In front of Kai, a recording proxy started here. The monitor's --kai-url is the proxy, and the
+  proxy relays each request and answer unchanged to --kai-url, or to a stand-in Kai served
+  behind the Kai service's own HTTP handler (--kai-standin). Each exchange is kept whole in the
+  run's kai-exchanges.jsonl, under --out only.
+- Every event of every session, in the schedule's order (campaign_contract.replay), goes through
+  the gate command `agentarmor-monitor hooks-config --gate EXE --shadow` generates for the
+  session's client, with the event on stdin, under that hook's own deadline. The one option
+  added is --server, for the run's port: a generated hook names none and asks 127.0.0.1:8010,
+  where a real local server may answer. Each event gets a millisecond of its own
+  (campaign_contract._past_this_millisecond). Session ids and working directories are as laid out.
+- Between two turns of the schedule the runner waits until the server has caught up (every
+  session's summary covers its log), as tests/test_shadow_path.py waits between its sessions:
+  sessions that take turns are minutes or days apart, and a lag of the summarizer at hook speed
+  is not a gap in what an earlier session holds. Within a turn, events follow at hook speed.
+- After the call under decision is answered, its outcome is reported through the same gate,
+  so that the gate's observed record ties it to the answer: the step's own outcome as the
+  session-case contract lays it out, or, when the campaign leaves the call without one (DEV
+  003 does), a returned call with an empty result ("assumed"): a shadow gate stops nothing, so
+  the call runs. --no-outcome leaves it out. Then the runner waits for the server to catch up,
+  and up to --settle seconds for the watcher's own requests to Kai.
+
+The server's home is a scratch folder. So that the summarizer's home (taken from a session's
+transcript path) and the history lookup's home (the server's Path.home()) are one home, as on a
+user's machine, the campaign's home is moved there: its {home} paths and its transcript paths.
+Such paths read differently from the DEV renders, and each run counts the events that hold one
+outside the transcript path (home_events).
+
+What is written to --out:
+- runs.jsonl, one record per run: every gate's exit status and stdout bytes, the server's issued
+  record(s), the gate's answered record and any observed record for the call under decision, the
+  proxy's account of the request the issued record names (its SHA-256 as the monitor computes
+  it, length, EARLIER SESSIONS section, [s:ALIAS] lines, HTTP status, p(deny) or error), the
+  monitor's own count of halvings, timings, and the server's /health at the end. No session
+  text is copied into it by this runner.
+- summary.json: counts only, no session text: runs, gate exit or silence violations, calls under
+  decision with and without an answered record, Kai requests by HTTP status, timeouts,
+  kai_unavailable, oversize halvings, latency p50/p95/p99, and each run's route, verdict and why.
+- runs/RUN/: the run's kai-exchanges.jsonl, spool and server log. These hold session text.
+
+What a run cannot observe:
+- No client runs. The events are the campaign's, laid out as each client's hook would deliver
+  them; whether a client delivers exactly these (which events it hooks, their order, their
+  payload) is not exercised. An event the generated hooks do not register for its client is
+  still fed, and counted (unhooked_events).
+- Client-side enforcement is not exercised. A shadow gate stops nothing, so what a client does
+  with a gate's denial, with a gate that fails to start, or with one that overruns its deadline
+  (Claude's onFailure, which is never set in shadow; Codex, which has no failure handler and
+  puts no write_stdin to a hook) is not observed. An overrun of the hook's deadline is recorded
+  here as a violation, not acted on.
+- No tool runs. A reported result is the campaign's, or assumed; "returned" is not an effect.
+- With --kai-standin no model, tokenizer or admission runs: the HTTP handler is the service's
+  own, the answers are fixed, and --standin-limit refuses by body bytes with 413, where the
+  real service refuses an over-long token count with 400 (the monitor halves on either).
+- The proxy sees what crosses HTTP. It cannot tell which requests a decision made: only the
+  issued record's request hash says that. The watcher's own requests (every trigger at --level
+  low) share the Kai service with the decisions, and are counted with them.
+- Timing between turns is the runner's, not a user's; a server that lags behind a fast
+  interleaving of sessions is not measured.
+
+CPU only with --embedder hash and --kai-standin. --embedder embeddinggemma loads the encoder in
+the server: a model job, refused while KAI_MODEL_JOBS is set. Nothing here is a qualified
+policy (policy_ready false), and a shadow "would deny" is never a prevented effect.
+"""
+
+import argparse
+import contextlib
+import hashlib
+import itertools
+import json
+import math
+import os
+import re
+import select
+import shlex
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from collections import Counter
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from pathlib import Path
+
+import campaign_contract as cc
+import case_contract as contract
+from common import read_jsonl
+
+REPO = Path(__file__).resolve().parents[2]
+# The monitor and the Kai service are run from this checkout's src/, as pytest.ini puts them: an
+# installed copy of either can be another version of it.
+SOURCES = [str(REPO / "src" / name) for name in ("vllm", "monitor", "summarizer")]
+for _source in reversed(SOURCES[:2]):
+    if _source not in sys.path:
+        sys.path.insert(0, _source)
+
+from agentarmor_monitor import earlier  # noqa: E402
+from agentarmor_monitor.escalate import (  # noqa: E402
+    MIN_CHARS,
+    _observations,  # noqa: E402
+    logged_call,
+    proposed,
+    request_sha256,
+)
+from agentarmor_monitor.escalate import read as read_detections  # noqa: E402
+from agentarmor_monitor.kai import DECISION, XPIA, loopback  # noqa: E402
+from agentarmor_monitor.policy import load_rules, packet_room, state  # noqa: E402
+from agentarmor_vllm.requests import validate_request  # noqa: E402
+from agentarmor_vllm.server import DENIAL  # noqa: E402
+from agentarmor_vllm.server import handler as service_handler  # noqa: E402
+
+from summarizer import history as lookup  # noqa: E402
+from summarizer.store import load_summary, safe_id  # noqa: E402
+
+SCHEMA = "agentarmor-shadow-campaigns/v1"
+STAND_IN_PACKAGE = "0" * 64  # what the stand-in says its package is
+HISTORY_LINE = re.compile(r"\[s:([0-9a-z]+)\] ")
+SOCKET_ROOM = 100  # bytes a spool's path leaves for run/daemon.sock within a Unix socket's limit
+DEADLINE = 60  # seconds, for a generated hook that names none
+MODEL_JOBS = "KAI_MODEL_JOBS"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_):
+        return None
+
+
+# Loopback only, and no proxy from the environment: a request for this machine stays on it.
+_OPEN = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect).open
+
+
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def get_json(url, timeout=5.0):
+    with _OPEN(urllib.request.Request(url), timeout=timeout) as reply:  # noqa: S310
+        return json.loads(reply.read().decode("utf-8"))
+
+
+# --- Kai: a stand-in, and the proxy in front of whatever Kai is
+
+
+class StandIn:
+    """A Kai that keeps every request it is given whole and answers it, behind the Kai service's
+    own HTTP handler (agentarmor_vllm.server.handler), reporting itself as STAND_IN_PACKAGE.
+
+    limit: a body of more bytes is refused with refuse_status: 413 as the service refuses a body
+    over its own limit, or 400 as it refuses a request for another reason (a non-finite hidden
+    state, a malformed request), so that a refusal is never read as proof of size (MR254).
+    delay: seconds each answer takes. p_deny: the decision's probability of deny (the
+    choice is deny from 0.5). Its answers are not under test. One request at a time, as the
+    service serves them."""
+
+    def __init__(self, p_deny=0.1, limit=None, delay=0.0, refuse_status=413):
+        self.p_deny, self.limit, self.delay = float(p_deny), limit, float(delay)
+        self.refuse_status = int(refuse_status)
+        self.received = []  # {"status", "body"}: every request that reached it, whole
+        self.lock = threading.Lock()
+        self.server = self.url = None
+
+    def metadata(self):
+        about = {"backend": "stub", "model": "kai-4b", "readout": "pointer", "policy_ready": False}
+        return about | {"evidence_available": False, "package_sha256": STAND_IN_PACKAGE}
+
+    def evaluate(self, value):
+        request = validate_request(value)
+        with self.lock:
+            self.received.append({"status": 200, "body": value})
+        if self.delay:
+            time.sleep(self.delay)
+        answers = {}
+        if "decision" in request.questions:
+            odds = {"allow": 1.0 - self.p_deny, "deny": self.p_deny}
+            choice = "deny" if self.p_deny >= 0.5 else "allow"
+            answers["decision"] = {"type": "choice", "choice": choice, "probabilities": odds}
+        if "is_xpia_attempt" in request.questions:
+            answers["is_xpia_attempt"] = {"type": "noul", "noul": 0.04}
+        return {**self.metadata(), "answers": answers, "coverage": "complete"}
+
+    def start(self):
+        stand_in, base = self, service_handler(self)
+
+        class Handler(base):
+            def do_POST(self):
+                sizes = self.headers.get_all("Content-Length", [])
+                size = int(sizes[0]) if len(sizes) == 1 and sizes[0].isdigit() else None
+                if stand_in.limit is not None and size is not None and size > stand_in.limit:
+                    body = self.rfile.read(size)  # read whole, so the sender is not reset
+                    try:
+                        value = json.loads(body)
+                    except ValueError:
+                        value = None
+                    with stand_in.lock:
+                        stand_in.received.append({"status": stand_in.refuse_status, "body": value})
+                    self.reply(stand_in.refuse_status, DENIAL)
+                    return
+                super().do_POST()
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        return self
+
+    def close(self):
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+
+
+def request_account(body):
+    """What a request is, without its text: the monitor's identifier for it (escalate.request_sha256:
+    SHA-256 of its canonical JSON), its bytes, its questions, its state's length, and whether that
+    state has an EARLIER SESSIONS section and how many [s:ALIAS] lines, by alias."""
+    told = {"bytes": len(body), "sha256": None, "questions": None, "state_chars": None}
+    told |= {"earlier_section": None, "s_lines": None, "s_aliases": None}
+    try:
+        value = json.loads(body.decode("utf-8"))
+        canonical = json.dumps(value, sort_keys=True).encode("ascii")
+        told["sha256"] = hashlib.sha256(canonical).hexdigest()
+        told["questions"] = sorted(value.get("questions") or {})
+        state = value.get("state")
+    except (ValueError, UnicodeError, AttributeError, TypeError):
+        return told
+    if isinstance(state, str):
+        lines = state.split("\n")
+        found = Counter(m.group(1) for line in lines if (m := HISTORY_LINE.match(line)))
+        told |= {"state_chars": len(state), "earlier_section": cc.TITLE in lines}
+        told |= {"s_lines": sum(found.values()), "s_aliases": dict(sorted(found.items()))}
+    return told
+
+
+def answer_account(status, data):
+    """What came back, without text: the status, the decision and its p(deny), p(xpia), and the
+    service's error, which is its own fixed wording."""
+    told = {"status": status, "choice": None, "p_deny": None, "p_xpia": None, "error": None}
+    try:
+        reply = json.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return told
+    if not isinstance(reply, dict):
+        return told
+    answers = reply.get("answers") if isinstance(reply.get("answers"), dict) else {}
+    decision, xpia = answers.get("decision"), answers.get("is_xpia_attempt")
+    if isinstance(decision, dict):
+        told["choice"] = decision.get("choice")
+        odds = decision.get("probabilities")
+        if isinstance(odds, dict) and isinstance(odds.get("deny"), int | float):
+            told["p_deny"] = float(odds["deny"])
+    if isinstance(xpia, dict) and isinstance(xpia.get("noul"), int | float):
+        told["p_xpia"] = float(xpia["noul"])
+    if status is not None and not 200 <= status < 300 and isinstance(reply.get("error"), str):
+        told["error"] = reply["error"]
+    return told
+
+
+def gone(connection):
+    """Whether the other end has closed: what the monitor does when it stops waiting."""
+    try:
+        if not select.select([connection], [], [], 0)[0]:
+            return False
+        return connection.recv(1, socket.MSG_PEEK) == b""
+    except OSError:
+        return True
+
+
+class Proxy:
+    """A recording proxy in front of one Kai service, for one run.
+
+    Each request and its answer are relayed unchanged and kept whole in `log` (session text, in
+    the run's folder): the request when it arrives, the answer when it comes, each a line with the
+    exchange's number. In memory it keeps an account of each without text (request_account,
+    answer_account), with when it came, how long the service took, and what became of the answer:
+    "delivered"; "monitor_gave_up" (the monitor had closed its end before the answer, as it does
+    when its --kai-timeout ends); "upstream_timeout" or "upstream_error" (nothing came back);
+    "write_failed"; or, for one still awaited when the run ended with the monitor waiting for it,
+    "unfinished". When nothing comes back the connection is closed with no answer, so that the
+    monitor meets what it would meet with no proxy: nothing came back."""
+
+    def __init__(self, upstream, log, timeout):
+        self.upstream, self.log, self.timeout = upstream.rstrip("/"), Path(log), timeout
+        os.close(os.open(self.log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))  # session text
+        self.exchanges, self.lock, self.busy = [], threading.Lock(), 0
+        self.count = itertools.count(1)
+        proxy = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def setup(self):
+                super().setup()
+                self.connection.settimeout(30)  # for reading a request, not for its answer
+
+            def log_message(self, *_):
+                pass  # never a path, a header or a body
+
+            def do_GET(self):
+                proxy.relay(self, None)
+
+            def do_POST(self):
+                sizes = self.headers.get_all("Content-Length", [])
+                framed = not self.headers.get("Transfer-Encoding") and len(sizes) == 1
+                if not framed or not sizes[0].isdigit():  # the monitor never sends this
+                    self.close_connection = True
+                    return
+                proxy.relay(self, self.rfile.read(int(sizes[0])))
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def relay(self, handler, body):
+        with self.lock:
+            self.busy += 1
+        try:
+            self._relay(handler, body)
+        finally:
+            with self.lock:
+                self.busy -= 1
+
+    def _keep(self, line):
+        """One line of the whole record. Called with the lock held."""
+        with open(self.log, "a", encoding="utf-8") as out:
+            out.write(json.dumps(line) + "\n")
+
+    def _relay(self, handler, body):
+        seq, began, at = next(self.count), time.monotonic(), time.time()
+        account = {"seq": seq, "path": handler.path, "t0": began, "ms": None}
+        account |= {"outcome": "in_flight", "proxy_error": None}
+        account |= (request_account(body) if body is not None else {}) | answer_account(None, b"")
+        text = None if body is None else body.decode("utf-8", "replace")
+        with self.lock:
+            account["_connection"] = handler.connection
+            self.exchanges.append(account)
+            self._keep({"seq": seq, "ts": round(at, 3), "path": handler.path, "request": text})
+        headers = {} if body is None else {"Content-Type": "application/json"}
+        if handler.headers.get("Authorization"):  # passed on, never kept
+            headers["Authorization"] = handler.headers["Authorization"]
+        asked = urllib.request.Request(self.upstream + handler.path, data=body, headers=headers)
+        status, data, kind, error = None, b"", None, None
+        try:
+            with _OPEN(asked, timeout=self.timeout) as reply:
+                status, kind, data = reply.status, reply.headers.get("Content-Type"), reply.read()
+        except urllib.error.HTTPError as refusal:
+            status, kind, data = refusal.code, refusal.headers.get("Content-Type"), refusal.read()
+        except Exception as failure:  # noqa: BLE001 - whatever it was, nothing came back
+            timed_out = isinstance(failure, TimeoutError)
+            timed_out |= isinstance(getattr(failure, "reason", None), TimeoutError)
+            error = "upstream_timeout" if timed_out else f"upstream_error:{type(failure).__name__}"
+        took = round((time.monotonic() - began) * 1000)
+        outcome = error.split(":")[0] if error else "delivered"
+        if status is not None and gone(handler.connection):
+            outcome = "monitor_gave_up"
+        if outcome == "delivered":
+            try:
+                handler.send_response(status)
+                handler.send_header("Content-Type", kind or "application/json")
+                handler.send_header("Content-Length", str(len(data)))
+                handler.send_header("Connection", "close")
+                handler.end_headers()
+                handler.wfile.write(data)
+            except OSError:
+                outcome = "write_failed"
+        handler.close_connection = True
+        reply = {"seq": seq, "ts": round(time.time(), 3), "ms": took, "status": status}
+        reply |= {"response": data.decode("utf-8", "replace"), "outcome": outcome}
+        with self.lock:
+            account.pop("_connection", None)
+            account |= {"ms": took, "outcome": outcome, "proxy_error": error}
+            account |= answer_account(status, data)
+            self._keep(reply | {"proxy_error": error})
+
+    def snapshot(self, wait):
+        """The accounts, once those in flight have had up to `wait` seconds to end. Taken while
+        the server still runs: an answer still awaited is "monitor_gave_up" if the monitor has
+        closed its end, else "unfinished". Nothing after this changes what it returned."""
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            with self.lock:
+                if not self.busy:
+                    break
+            time.sleep(0.02)
+        with self.lock:
+            for account in self.exchanges:
+                connection = account.pop("_connection", None)
+                if account["outcome"] == "in_flight":
+                    late = connection is not None and gone(connection)
+                    account["outcome"] = "monitor_gave_up" if late else "unfinished"
+            return json.loads(json.dumps(self.exchanges))
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+# --- the stack: a launcher, the generated hooks, the server
+
+
+LAUNCHER = """#!{python}
+import sys
+sys.path[:0] = {paths!r}
+from agentarmor_monitor.cli import main
+raise SystemExit(main())
+"""
+
+
+def launcher(folder):
+    """`agentarmor-monitor`, as a console script of this checkout's sources would be."""
+    path = Path(folder) / "bin" / "agentarmor-monitor"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(LAUNCHER.format(python=sys.executable, paths=SOURCES), encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+def environment(spool, home, args):
+    """The server's and the gates' environment: scratch spool, home and Codex home, this
+    checkout's sources, and nothing of the account's Kai token, client settings or switches."""
+    env = dict(os.environ)
+    for name in ("AGENTARMOR_KAI_TOKEN", "CLAUDE_CONFIG_DIR", "SUMMARIZER_DISABLE", "PYTHONHOME"):
+        env.pop(name, None)
+    env |= {"SUMMARIZER_HOME": str(spool), "HOME": str(home), "CODEX_HOME": str(home / ".codex")}
+    env |= {"PYTHONPATH": os.pathsep.join(SOURCES), "PYTHONDONTWRITEBYTECODE": "1"}
+    if args.embedder == "embeddinggemma" and not (env.get("HF_HUB_CACHE") or env.get("HF_HOME")):
+        # The model is read from this account's cache, as it stands: the scratch home has none.
+        env["HF_HUB_CACHE"] = os.path.expanduser("~/.cache/huggingface/hub")
+    return env
+
+
+def generated_hooks(exe, env):
+    """{agent: the hooks block `agentarmor-monitor hooks-config --gate EXE --shadow` prints}."""
+    told = {}
+    for agent in cc.AGENTS:
+        command = [exe, "hooks-config", "--agent", agent, "--gate", exe, "--shadow"]
+        made = subprocess.run(command, capture_output=True, env=env, timeout=120, check=True)
+        told[agent] = json.loads(made.stdout)
+    return told
+
+
+def gate_command(hooks, agent, event, url):
+    """(argv, deadline, whether the client hooks this event) for one event: the generated
+    handler for it, with --server for the run's port. Claude Code runs a handler in exec form,
+    Codex through a shell."""
+    groups = hooks[agent]["hooks"]
+    hooked = event in groups
+    handler = groups[event if hooked else "PreToolUse"][0]["hooks"][0]
+    deadline = handler.get("timeout") or DEADLINE
+    if "args" in handler:
+        return [handler["command"], *handler["args"], "--server", url], deadline, hooked
+    line = f"{handler['command']} --server {shlex.quote(url)}"
+    return ["/bin/sh", "-c", line], deadline, hooked
+
+
+SESSION_PATH = "/session"  # where a second checkpoint answers (agentarmor_vllm.server.SESSION)
+MODEL_PATHS = ("/v1/systemone", SESSION_PATH + "/v1/systemone")
+
+
+def handoff_of(last, exchanges, session_package):
+    """For a call two checkpoints answered (route.Routed): each answer's package, the request it
+    names, the path that package answers on, and what the proxy saw of exactly that request on
+    exactly that path. exact is True only when every answer's own request was seen there and
+    answered 200. None when the issued record has no routed account."""
+    routed = ((last or {}).get("kai") or {}).get("routed")
+    if not isinstance(routed, dict):
+        return None
+    told = {"policy": routed.get("policy"), "session_route": routed.get("session_route")}
+    told["answers"] = {}
+    for question, answer in (routed.get("answers") or {}).items():
+        package, key = answer.get("package_sha256"), answer.get("request_sha256")
+        path = MODEL_PATHS[1] if package == session_package else MODEL_PATHS[0]
+        seen = [e["status"] for e in exchanges if key and e["sha256"] == key and e["path"] == path]
+        told["answers"][question] = {"package_sha256": package, "request_sha256": key}
+        told["answers"][question] |= {"path": path, "seen": seen}
+    split = [a for a in told["answers"].values() if a["request_sha256"]]
+    told["exact"] = bool(split) and all(a["seen"] and a["seen"][-1] == 200 for a in split)
+    if not split:  # one request with every question: the issued request itself, matched as ever
+        told["exact"] = None
+    return told
+
+
+class Server:
+    """`agentarmor-monitor serve` in shadow with earlier sessions on, as a process."""
+
+    def __init__(self, exe, env, args, kai_url, package, log):
+        self.port = free_port()
+        self.url = f"http://127.0.0.1:{self.port}"
+        lookup = getattr(args, "earlier_sessions", "on")
+        command = [exe, "serve", "--shadow", "--earlier-sessions", lookup]
+        command += ["--max-chars", str(args.budget), "--embedder", args.embedder]
+        command += ["--kai-url", kai_url, "--kai-package-sha256", package]
+        if getattr(args, "kai_session_package_sha256", None):
+            # A second checkpoint under the Kai service's /session path (agentarmor_vllm.server),
+            # through the same recording proxy: research, shadow (agentarmor_monitor.route).
+            command += ["--kai-session-url", kai_url + SESSION_PATH]
+            command += ["--kai-session-package-sha256", args.kai_session_package_sha256]
+            if getattr(args, "kai_session_prior_events", False):  # the candidate route, as asked
+                command += ["--kai-session-prior-events"]
+        command += ["--kai-timeout", str(args.kai_timeout), "--wait", str(args.wait)]
+        if getattr(args, "session_observations", "off") != "off":  # the server's option, as asked
+            command += ["--session-observations", args.session_observations]
+        if getattr(args, "observation_quantities", "off") != "off":  # part B, as asked
+            command += ["--observation-quantities", args.observation_quantities]
+        command += ["--port", str(self.port)]
+        if args.policy:
+            command += ["--policy", args.policy]
+        if args.embedder == "embeddinggemma":
+            command += ["--local-files-only"]
+            for name in ("model", "probes", "device"):
+                if getattr(args, name):
+                    command += [f"--{name}", getattr(args, name)]
+        self.log = open(log, "wb")  # noqa: SIM115 - held while the process runs
+        self.process = subprocess.Popen(command, stdout=self.log, stderr=subprocess.STDOUT, env=env)
+        deadline = time.monotonic() + args.start_timeout
+        while True:
+            try:
+                self.health = get_json(self.url + "/health", timeout=2)
+                break
+            except (OSError, ValueError):
+                if self.process.poll() is not None:
+                    self.close()
+                    tail = Path(log).read_bytes()[-800:].decode("utf-8", "replace")
+                    raise RuntimeError(f"the local server did not start: {tail}") from None
+                if time.monotonic() > deadline:
+                    self.close()
+                    raise RuntimeError("the local server did not come up in time") from None
+                time.sleep(0.1)
+        decisions = self.health.get("decisions") or {}
+        wanted = {"mode": "shadow", "earlier_sessions": lookup, "max_chars": args.budget}
+        got = {name: decisions.get(name) for name in wanted}
+        if got != wanted:
+            self.close()
+            raise RuntimeError(f"the local server is not the one asked for: {got}")
+
+    def alive(self):
+        return self.process.poll() is None
+
+    def close(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(15)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(15)
+        self.log.close()
+        return self.process.returncode
+
+
+@contextlib.contextmanager
+def spool_env(spool):
+    """SUMMARIZER_HOME for this process, while the runner reads a run's summaries."""
+    kept = os.environ.get("SUMMARIZER_HOME")
+    os.environ["SUMMARIZER_HOME"] = str(spool)
+    try:
+        yield
+    finally:
+        if kept is None:
+            os.environ.pop("SUMMARIZER_HOME", None)
+        else:
+            os.environ["SUMMARIZER_HOME"] = kept
+
+
+@contextlib.contextmanager
+def live_spool(final):
+    """A spool for a run's server: at `final` when its socket path fits, else in a short
+    temporary folder for as long as the server runs, then moved to `final`."""
+    final = Path(final)
+    if len(str(final / "run" / "daemon.sock")) <= SOCKET_ROOM:
+        final.mkdir(parents=True, mode=0o700)
+        yield final
+        return
+    base = "/tmp" if os.path.isdir("/tmp") else None  # noqa: S108 - a short path, made private
+    spool = Path(tempfile.mkdtemp(prefix="smz-shadow-", dir=base))
+    try:
+        yield spool
+    finally:
+        try:
+            os.rename(spool, final)
+        except OSError:  # another file system: copy what is a file, and drop the rest
+
+            def sockets(folder, names):
+                return [
+                    n for n in names if stat.S_ISSOCK(os.lstat(os.path.join(folder, n)).st_mode)
+                ]
+
+            shutil.copytree(spool, final, ignore=sockets)
+            shutil.rmtree(spool, ignore_errors=True)
+
+
+def caught_up(server, spool, sessions, timeout, settle=None):
+    """{"fresh", "idle", "ms"}: wait until every session given has a summary covering its log, by
+    the server's /health (no session behind) and by the summaries themselves; then, with settle,
+    up to that many seconds more until the watcher has nothing waiting for Kai."""
+    began, fresh, idle = time.monotonic(), False, None
+    while time.monotonic() - began <= timeout:
+        try:
+            behind = (get_json(server.url + "/health").get("sessions") or {}).get("behind")
+        except (OSError, ValueError):
+            behind = None
+        with spool_env(spool):
+            whole = all((load_summary(a, s) or {}).get("fresh") for a, s in sessions)
+        if behind == 0 and whole:
+            fresh = True
+            break
+        time.sleep(0.05)
+    if settle is not None:
+        idle, until = False, time.monotonic() + settle
+        while time.monotonic() <= until:
+            try:
+                waiting = (get_json(server.url + "/health").get("sessions") or {}).get("waiting")
+            except (OSError, ValueError):
+                waiting = None
+            if waiting == 0:
+                idle = True
+                break
+            time.sleep(0.05)
+    return {"fresh": fresh, "idle": idle, "ms": round((time.monotonic() - began) * 1000)}
+
+
+# --- one run
+
+
+def laid_out(campaign, agent, home):
+    """campaign_contract.layout, with the campaign's home at `home`, the home the server runs in:
+    its {home} paths, and the transcript paths a summary takes its home from."""
+    moved = json.loads(json.dumps(campaign).replace("{home}", json.dumps(home)[1:-1]))
+    laid = cc.layout(moved, agent)
+    for part in laid["parts"]:
+        for event in (*part["laid"]["events"], *part["laid"]["later"]):
+            path = event.get("transcript_path")
+            if isinstance(path, str) and path.startswith(cc.HOME + "/"):
+                event["transcript_path"] = home + path[len(cc.HOME) :]
+    return laid
+
+
+def in_order(laid):
+    """[(part, event number, event)] in the schedule's order (campaign_contract.replay)."""
+    parts = {part["id"]: part for part in laid["parts"]}
+    return [
+        (parts[name], number, parts[name]["laid"]["events"][number - 1])
+        for name, start, stop in laid["schedule"]
+        for number in range(start + 1, stop + 1)
+    ]
+
+
+def outcome_of(part, event):
+    """(the report of the call under decision once it ran, where it comes from), or (None, None)
+    when there is none to report: the step's own outcome as the session-case contract lays it out
+    ("step"), or, for a call the campaign leaves with none, a returned call with an empty result
+    ("assumed")."""
+    case = part["laid"]["case"]
+    step = next(s for s in case["steps"] if s["id"] == case["decide"])
+    source = "step"
+    if not any(key in step for key in ("output", "denied", "error", "pending")):
+        step, source = {**step, "output": ""}, "assumed"
+    for _, hook, fields in contract._step_events(step, part["agent"])[1:]:
+        if hook is not None:
+            call = {name: event[name] for name in ("tool_name", "tool_input", "tool_use_id")}
+            return {**event, **fields, "hook_event_name": hook, **call}, source
+    return None, None
+
+
+def folder_of(spool, agent, session_id):
+    """A session's folder in a spool, named as the store names it (summarizer.store.session_dir)."""
+    return Path(spool) / "sessions" / agent / safe_id(session_id)
+
+
+def alias(agent, session_id):
+    """The alias the server's [s:ALIAS] lines give a session (earlier.alias)."""
+    return earlier.alias(agent, safe_id(session_id))
+
+
+def at_cutoff(laid, spool, home, rules, max_chars, observations=False, quantities=False):
+    """What the server's own code builds for the call under decision from what the server held
+    when the call was answered. Run right after the call's gate returns and before anything more
+    is logged, on the run's spool: every session's summary as the spool holds it (each where the
+    schedule left it), and the packet decide.judge and escalate.detect build from them, by the
+    same calls (earlier.scope and earlier.known, summarizer.history.packet, policy.state), at the
+    first budget a decision gives the packet and at each halving of it that the issued record
+    counts (refusal_retries; down to the floor when there is no such record), each with the
+    identifier of the request it makes (escalate.request_sha256).
+
+    It is a recomputation, so it counts only where a request it makes is the one the issued
+    record names: same identifier, same request. Session text stays in memory.
+
+    observations and quantities are the server's --session-observations and
+    --observation-quantities: the section the server puts in its request is built here the
+    same way (escalate._observations), else no recomputed request could be the issued one and
+    the scorer would not run for that arm."""
+    deciding = laid["deciding"]
+    agent, name, call_id = (
+        deciding["agent"],
+        safe_id(deciding["session_id"]),
+        deciding["laid"]["call"],
+    )
+    with spool_env(spool):
+        summaries = {
+            part["id"]: load_summary(part["agent"], part["session_id"])
+            for part in laid["parts"]
+            if not part["later"]
+        }
+        summary = summaries[deciding["id"]]
+        entry = next(
+            e for e in summary["entries"] if e.get("call_id") == call_id and e["type"] == "action"
+        )
+        directory = folder_of(spool, agent, deciding["session_id"])
+        issued = [
+            r
+            for r in read_detections(directory)
+            if r.get("stage") == "issued" and r.get("call_id") == call_id
+        ]
+        retries = ((issued[-1].get("routing") or {}).get("refusal_retries") or {}) if issued else {}
+        until = retries.get("budget_reductions")
+        *call, accounted = proposed(entry, None, logged_call(directory, entry))
+        call = tuple(call)
+        others, counts = earlier.scope(agent, name, summary, call_id, home)
+        mine = earlier.known(agent, name, summary)
+        observed = None
+        if observations:
+            sessions = {"mine": mine, "others": others, "counts": counts, "home": home}
+            observed = _observations(summary, entry, call[1], accounted, sessions, quantities)
+            observed = observed["lines"]
+        size, views = packet_room(rules, call, max_chars), []  # the server's one budget rule
+        while True:
+            room = max(size, MIN_CHARS)
+            view = lookup.packet(mine, call_id, others, home, room, entry.get("call_sha256"))
+            body = state(rules, view["text"], call, observed)
+            key = request_sha256(body, (DECISION, XPIA))
+            views.append({"size": room, "view": view, "sha256": key, "state_chars": len(body)})
+            if size <= MIN_CHARS or (isinstance(until, int) and len(views) > until):
+                break
+            size = max(MIN_CHARS, size // 2)
+    return {"summaries": summaries, "views": views, "sessions": counts}
+
+
+def gate_once(argv, event, env, deadline):
+    """One event through one gate process, as a client runs a hook: the event on stdin, under the
+    hook's deadline. Returns (what is recorded of it, when it began, when it ended); then waits
+    out the hook clock's millisecond, so that no two events share a time."""
+    began = time.monotonic()
+    try:
+        done = subprocess.run(
+            argv, input=json.dumps(event).encode("ascii"), capture_output=True, env=env,
+            timeout=deadline,
+        )  # fmt: skip
+        status, out, overrun = done.returncode, done.stdout, False
+    except subprocess.TimeoutExpired as late:
+        status, out, overrun = None, late.stdout or b"", True
+    ended = time.monotonic()
+    cc._past_this_millisecond()
+    told = {"event": event["hook_event_name"], "exit": status, "stdout_bytes": len(out)}
+    told |= {"ms": round((ended - began) * 1000), "deadline_overrun": overrun}
+    if out:  # a gate's own words, a denial at most: kept so that a violation can be read
+        told["stdout"] = out.decode("utf-8", "replace")[:2000]
+    return told, began, ended
+
+
+def error_lines(spool):
+    """{log: {step: count}} of the hook's and the gate's error logs: a step and a class, no text."""
+    told = {}
+    for name in ("hook-errors.log", "gate-errors.log"):
+        try:
+            lines = (Path(spool) / name).read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            continue
+        told[name] = dict(
+            Counter(line.split("\t")[2] if line.count("\t") >= 2 else "?" for line in lines)
+        )
+    return told
+
+
+def halvings(record):
+    """The monitor's own count of the budget reductions it made after refusals (escalate.detect,
+    refusal_retries). A reduction that rebuilds a request refused before sends nothing, so the
+    requests built no longer count them (MR251); a record from before that count says built - 1."""
+    told = (record.get("routing") or {}).get("refusal_retries") or record.get("refusal_retries")
+    if isinstance(told, dict) and isinstance(told.get("budget_reductions"), int):
+        return told["budget_reductions"]
+    counts = (record.get("routing") or {}).get("requests") or record.get("requests") or {}
+    built = counts.get("built")
+    return max(0, built - 1) if isinstance(built, int) else 0
+
+
+def route_of(record):
+    if not record:
+        return None, None
+    routing = record.get("routing") or {}
+    history = (record.get("packet") or {}).get("history") or {}
+    return history.get("route") or routing.get("earlier_route"), routing.get("reason")
+
+
+def safe_name(text):
+    return re.sub(r"[^A-Za-z0-9._-]+", "--", text)
+
+
+def drive(laid, args, stack, folder):
+    """Run one laid-out campaign through the stack: a server and a proxy of its own, every event
+    through its gate in the schedule's order, the call's outcome, and the waits. Returns what was
+    seen: each gate, each wait, the call's gate window, the outcome fed, the server's last
+    /health and exit status, the proxy's accounts, and why the run failed, if it did."""
+    seen = {"gates": [], "turns": [], "window": None, "caught_up": None, "health": None}
+    seen |= {"outcome": {"fed": False, "source": None, "event": None}, "failed": None}
+    seen["cutoff"] = None
+    events, deciding, fed = in_order(laid), laid["deciding"], []
+    with live_spool(folder / "spool") as spool:
+        env = environment(spool, stack["home"], args)
+        proxy = Proxy(stack["upstream"], folder / "kai-exchanges.jsonl", args.proxy_timeout)
+        server = None
+        try:
+            server = Server(
+                stack["exe"], env, args, proxy.url, stack["package"], folder / "server.log"
+            )
+
+            def through(part, event):
+                name = event["hook_event_name"]
+                argv, deadline, hooked = gate_command(
+                    stack["hooks"], part["agent"], name, server.url
+                )
+                told, began, ended = gate_once(argv, event, env, deadline)
+                seen["gates"].append({"part": part["id"], "hooked": hooked} | told)
+                return began, ended
+
+            previous = None
+            for index, (part, number, event) in enumerate(events):
+                if part["id"] != previous and fed:  # a new turn: the server catches up first
+                    waited = caught_up(server, spool, fed, args.catch_up)
+                    seen["turns"].append(waited | {"before": part["id"]})
+                previous = part["id"]
+                if (part["agent"], part["session_id"]) not in fed:
+                    fed.append((part["agent"], part["session_id"]))
+                window = through(part, event)
+                if index == len(events) - 1:
+                    seen["window"] = window
+                    try:  # what the server's code builds from what it held, before more is logged
+                        made = (laid, spool, str(stack["home"]), stack["rules"], args.budget)
+                        observing = getattr(args, "session_observations", "off") == "on"
+                        counting = getattr(args, "observation_quantities", "off") == "on"
+                        seen["cutoff"] = at_cutoff(*made, observing, counting)
+                    except Exception as error:  # noqa: BLE001 - a measure that failed says so
+                        seen["cutoff"] = {"error": type(error).__name__}
+                if number == part["damaged_at"]:  # a line of the log that cannot be read
+                    log = folder_of(spool, part["agent"], part["session_id"]) / "events.jsonl"
+                    with open(log, "ab") as out:
+                        out.write(b"{damaged\n")
+                if not server.alive():
+                    raise RuntimeError("the local server stopped during the run")
+            if args.outcome:
+                report, source = outcome_of(deciding, events[-1][2])
+                if report is not None:
+                    through(deciding, report)
+                    seen["outcome"] = {"fed": True, "source": source}
+                    seen["outcome"]["event"] = report["hook_event_name"]
+            seen["caught_up"] = caught_up(server, spool, fed, args.catch_up, args.settle)
+            seen["health"] = get_json(server.url + "/health")
+        except Exception as error:  # noqa: BLE001 - a run that failed is recorded as one
+            seen["failed"] = f"{type(error).__name__}: {error}"[:2000]
+        finally:
+            seen["exchanges"] = proxy.snapshot(args.settle)  # while the server still runs
+            seen["server_exit"] = server.close() if server is not None else None
+            proxy.close()
+    try:
+        seen["nudge_socket"] = b"no nudge socket" not in (folder / "server.log").read_bytes()
+    except OSError:
+        seen["nudge_socket"] = None
+    return seen
+
+
+# --- the measures of one run, each apart (registration, MR246-MR251)
+
+SCORER = max(cc.SCORERS)  # campaign-contract/16, the freeze's scorer
+# Statuses that say the request was too large, by this monitor's own count: never sent, or the
+# rules and the call alone too long. A refusal by the service ("kai_rejected") is not one: an HTTP
+# 400 is also a request refused for another cause, so it is a refusal at the floor whose cause is
+# unclassified (MR254).
+TOO_LARGE = ("too_large_to_send", "call_too_large", "policy_too_large")
+
+
+def sent_key(record):
+    """The identifier of the last request a record says was handed to the transport, or None."""
+    if not (record.get("last_request") or {}).get("transport_attempts"):
+        return None
+    return (record.get("packet") or {}).get("request_sha256")
+
+
+def as_the_server_knows(laid):
+    """The laid campaign with no session's namespace known, as the server holds every session
+    (earlier.known; earlier.LIMITS says "namespaces": "unknown"). The scorer's oracle then expects
+    what such a server can truthfully say, "(namespace not known)" in an object account included,
+    and not what a builder told every namespace would."""
+    parts = [part | {"namespace": None} for part in laid["parts"]]
+    deciding = next(part for part in parts if part["id"] == laid["deciding"]["id"])
+    return laid | {"parts": parts, "deciding": deciding}
+
+
+def evidence_of(last, cutoff, laid, key):
+    """(a) Capture and evidence for the call under decision, three ways apart: what the issued
+    record says of its packet; the history account of that very packet, recomputed at the cutoff
+    (at_cutoff) and kept only when the recomputed request is the issued one; and the campaign
+    scorer (campaign_contract.score, version 16) run on that packet, with the server's own
+    summaries at the cutoff in place of the harness's replay and every namespace unknown, as the
+    server knows them (as_the_server_knows). Counts, labels and fact ids only."""
+    told = {"recorded": None, "recomputed": None, "scored": None}
+    if last:
+        packet = last.get("packet") or {}
+        history = packet.get("history") or {}
+        kept = ("complete", "why", "coverage_known", "sources", "lines", "route", "route_reason")
+        kept += ("prior",)  # which events before the current request bear on the call: no text
+        told["recorded"] = {
+            name: packet.get(name)
+            for name in ("scanned_all_captured", "ready", "complete", "key_dropped", "key_clipped")
+        } | {"unresolved_conditions": packet.get("unresolved_conditions")}
+        told["recorded"]["history"] = {name: history.get(name) for name in kept} or None
+        told["recorded"]["earlier_sessions"] = (last.get("routing") or {}).get("earlier_sessions")
+    if not cutoff or "error" in cutoff:
+        told["recomputed"] = {"error": (cutoff or {}).get("error", "not made")}
+        return told
+    views = cutoff["views"]
+    hit = next((n for n, made in enumerate(views) if key and made["sha256"] == key), None)
+    told["recomputed"] = {"matches_issued_request": hit is not None, "at_halving": hit}
+    told["recomputed"]["budgets"] = [made["size"] for made in views]
+    if hit is None:
+        return told
+    view = views[hit]["view"]
+    account = view.get("history") or {}
+    told["recomputed"] |= {
+        "section": bool(account),
+        "complete": account.get("complete", True),
+        "why": account.get("why", []),
+        "unsupported": account.get("unsupported", []),
+        "left_out": account.get("left_out", {}),
+        "sources": len(account.get("sources", ())),
+        "lines": len(account.get("items", ())),
+        "bridges": len(account.get("bridges", ())),
+        "objects": len(account.get("objects", ())),
+        "route": view.get("route"),
+        "route_reason": view.get("route_reason"),
+    }
+    try:
+        known = as_the_server_knows(laid)
+        scored = cc.score(known, cutoff["summaries"], view, views[hit]["size"], SCORER)
+        told["scored"] = scored | {"summaries": "the server's own, at the cutoff"}
+        told["scored"]["namespaces"] = "unknown, as the server holds them"
+    except Exception as error:  # noqa: BLE001 - a scorer that cannot read the view says so
+        told["scored"] = {"error": type(error).__name__}
+    return told
+
+
+def admission_of(last, window):
+    """(b) Token admission and HTTP outcomes of the call's own decision: its final status, every
+    request it built, sent and had answered, the budget reductions and repeats not sent
+    (refusal_retries), whether a request was admitted and after how many reductions, and whether
+    it ended too large by the monitor's own count (never sendable), or refused at the floor by the
+    service, cause unclassified."""
+    if not last:
+        return None
+    routing = last.get("routing") or {}
+    counts, retries = routing.get("requests") or {}, routing.get("refusal_retries") or {}
+    admitted = bool(counts.get("answers_admitted"))
+    told = {"status": last.get("status"), "requests": counts, "refusal_retries": retries}
+    told |= {"admitted": admitted, "too_large": last.get("status") in TOO_LARGE}
+    told["refused_unclassified"] = last.get("status") == "kai_rejected"
+    told["reductions_to_admission"] = retries.get("budget_reductions") if admitted else None
+    told["final_state_chars"] = (last.get("packet") or {}).get("state_chars")
+    told["refused_in_window"] = dict(
+        Counter(str(w["status"]) for w in window if w["status"] in (400, 413))
+    )
+    return told
+
+
+def decision_of(last, answer):
+    """(c) What Kai answered for the call, where it answered, and what the shadow gate would
+    have done. No accuracy is claimed of it."""
+    kai = (last or {}).get("kai") or {}
+    told = {"answered_by_kai": bool(kai), "choice": (last or {}).get("decision")}
+    told |= {"p_deny": kai.get("p_deny"), "p_xpia": kai.get("p_xpia")}
+    told |= {"verdict": (last or answer).get("verdict"), "why": (last or answer).get("why")}
+    return told | {"would": answer.get("would"), "answered": answer.get("answered")}
+
+
+def observed_of(outcome, observed):
+    """(d) What the client was made to report of the call, and where it came from: the
+    campaign's own step ("step") or an assumed empty result ("assumed"); with the gate's
+    observed record of it."""
+    kept = ("reported", "order", "answered", "ran_after_deny", "ran_before_answer")
+    return outcome | {"observed": [{name: r.get(name) for name in kept} for r in observed]}
+
+
+def load_of(posts, gated, watched, every, chain, caught, health):
+    """(e) Load: each request the proxy saw, attributed by record to the gate (an issued record
+    names it, or it is one the call's own decision built at a lower budget, chain) or to the
+    watcher (one of its records names it), "both" when the same bytes are named by each, else
+    unattributed; how many requests reached the proxy while another was still in flight there
+    (with a serial Kai service, the one sign of queueing these timestamps give); each gate's own
+    elapsed time; the watcher's records; and the work still open when the run ended."""
+    gate = {key for r in gated if (key := sent_key(r))} | set(chain)
+    watcher = {key for r in watched if (key := sent_key(r))}
+
+    def role(sha):
+        named = (sha in gate, sha in watcher)
+        return {(True, False): "gate", (False, True): "watcher", (True, True): "both"}.get(
+            named, "unattributed"
+        )
+
+    roles, statuses = Counter(), {}
+    for post in posts:
+        who = role(post["sha256"])
+        roles[who] += 1
+        statuses.setdefault(who, Counter())[str(post["status"])] += 1
+
+    def busy(post):  # other requests in flight at the proxy when this one arrived
+        return sum(
+            1
+            for other in posts
+            if other is not post
+            and other["t0"] < post["t0"]
+            and (other["ms"] is None or other["t0"] + other["ms"] / 1000 > post["t0"])
+        )
+
+    told = {"requests_by_role": dict(roles)}
+    told["statuses_by_role"] = {who: dict(found) for who, found in statuses.items()}
+    told["arrived_while_another_was_in_flight"] = sum(1 for post in posts if busy(post))
+    told["gate_records"] = len(gated)
+    told["gate_put_to_kai"] = sum(1 for r in gated if sent_key(r))
+    told["gate_elapsed_ms"] = [
+        r["elapsed_ms"] for r in every if r.get("stage") == "answered" and "elapsed_ms" in r
+    ]
+    told["watcher_records"] = len(watched)
+    told["watcher_statuses"] = dict(Counter(str(r.get("status")) for r in watched))
+    outcomes = Counter(post["outcome"] for post in posts)
+    told["open_at_end"] = {
+        "unfinished": outcomes.get("unfinished", 0),
+        "monitor_gave_up": outcomes.get("monitor_gave_up", 0),
+        "watcher_idle": (caught or {}).get("idle"),
+        "waiting": ((health or {}).get("sessions") or {}).get("waiting"),
+    }
+    return told, busy
+
+
+def run_one(campaign, agent, args, stack):
+    """The record of one campaign in one layout, through the whole stack."""
+    name = f"{campaign['id']}/{agent}"
+    folder = stack["out"] / "runs" / safe_name(name)
+    folder.mkdir(parents=True, mode=0o700)  # its spool and its exchanges hold session text
+    home = str(stack["home"])
+    laid = laid_out(campaign, agent, home)
+    deciding = laid["deciding"]
+    call = deciding["laid"]["call"]
+    events = [event for *_, event in in_order(laid)]
+    record = {"run": name, "campaign": campaign["id"], "pair_id": campaign.get("pair_id")}
+    record |= {"family": campaign.get("family"), "layout": agent}
+    record["layout_sha256"] = hashlib.sha256(
+        json.dumps(events, sort_keys=True).encode()
+    ).hexdigest()
+    record["home_events"] = sum(
+        home in json.dumps({k: v for k, v in e.items() if k != "transcript_path"}) for e in events
+    )
+    record["deciding"] = {"part": deciding["id"], "agent": deciding["agent"]}
+    record["deciding"] |= {"session_id": deciding["session_id"], "call_id": call}
+    record["deciding"]["call_sha256"] = deciding["laid"]["identity"]
+    happened = [p for p in laid["parts"] if not p["later"]]
+    record["sessions"] = [
+        {"part": p["id"], "agent": p["agent"], "alias": alias(p["agent"], p["session_id"])}
+        | {"events": p["cut"], "cwd_exists_here": os.path.exists(p["cwd"])}
+        for p in happened
+    ]
+    seen = drive(laid, args, stack, folder)
+    record |= {"failed": seen["failed"], "server_exit": seen["server_exit"]}
+    record |= {"nudge_socket": seen["nudge_socket"], "caught_up": seen["caught_up"]}
+    record["events"] = {"fed": len(events), "outcome": seen["outcome"]}
+    record["events"]["unhooked"] = sum(1 for g in seen["gates"] if not g["hooked"])
+    record["events"]["damaged_logs"] = sum(1 for p in laid["parts"] if p["damaged"])
+    record |= {"gates": seen["gates"], "turns": seen["turns"]}
+
+    # What the server and the gates put on record (escalate.read), from the spool as it was left.
+    spool = folder / "spool"
+    mine = read_detections(folder_of(spool, deciding["agent"], deciding["session_id"]))
+    record["issued"] = [r for r in mine if r.get("stage") == "issued" and r.get("call_id") == call]
+    record["answered"] = [
+        r for r in mine if r.get("stage") == "answered" and r.get("call_id") == call
+    ]
+    record["observed"] = [
+        r for r in mine if r.get("stage") == "observed" and r.get("call_id") == call
+    ]
+    every = [
+        r for p in happened for r in read_detections(folder_of(spool, p["agent"], p["session_id"]))
+    ]
+    gated = [r for r in every if r.get("stage") == "issued"]
+    # The watcher's own records (daemon.Monitor): a trigger's key, and no stage.
+    kinds = ("action", "content", "message")
+    watched = [r for r in every if "stage" not in r and str(r.get("key")).split(":")[0] in kinds]
+
+    # The request the issued record names, as the proxy saw it, and the requests made while the
+    # call's gate waited (the watcher's among them).
+    last = record["issued"][-1] if record["issued"] else None
+    sent = bool(last and (last.get("last_request") or {}).get("transport_attempts"))
+    key = (last.get("packet") or {}).get("request_sha256") if sent else None
+    posts = [e for e in seen["exchanges"] if e["path"] in MODEL_PATHS]
+    window = seen["window"]
+    inside = [e for e in posts if window and window[0] <= e["t0"] <= window[1]]
+    named = [e for e in posts if key and e["sha256"] == key]
+    handoff = handoff_of(last, posts, stack.get("session_package"))
+    if handoff and handoff["exact"] is not None:  # two requests, each its checkpoint's own
+        own = {a["request_sha256"] for a in handoff["answers"].values()}
+        named = [e for e in posts if e["sha256"] in own]
+    named = [e for e in named if e in inside] or named
+
+    def bare(account):
+        told = {k: v for k, v in account.items() if k != "t0"}
+        if told.get("s_aliases") is not None:
+            told["s_parts"] = {
+                s["part"]: told["s_aliases"].get(s["alias"], 0) for s in record["sessions"]
+            }
+        return told
+
+    record["kai"] = {
+        "requests": len(posts),
+        "by_status": dict(Counter(str(e["status"]) for e in posts)),
+        "outcomes": dict(Counter(e["outcome"] for e in posts)),
+        "ms": [e["ms"] for e in posts if e["ms"] is not None],
+        "health_checks": len(seen["exchanges"]) - len(posts),
+        "issued_request_sha256": key,
+        "request": bare(named[-1]) if named else None,
+        "window": [bare(e) for e in inside],
+        "halvings": halvings(last) if last else 0,
+        "by_path": dict(Counter(e["path"] for e in posts)),
+        "handoff": handoff,
+    }
+    answer = record["answered"][-1] if record["answered"] else {}
+    route, reason = route_of(last)
+    record["outcome"] = {"route": route, "reason": reason}
+    record["outcome"] |= {
+        "verdict": (last or answer).get("verdict"),
+        "why": (last or answer).get("why"),
+    }
+    record["outcome"] |= {"status": (last or {}).get("status"), "would": answer.get("would")}
+    record["outcome"]["p_deny"] = ((last or {}).get("kai") or {}).get("p_deny")
+    record["timing"] = {
+        "gate_ms": round((window[1] - window[0]) * 1000) if window else None,
+        "gate_elapsed_ms": answer.get("elapsed_ms"),
+        "kai_ms": named[-1]["ms"] if named else None,
+    }
+    record["all_gated"] = {
+        "issued": len(gated),
+        "answered": sum(1 for r in every if r.get("stage") == "answered"),
+        "verdicts": dict(Counter(str(r.get("verdict")) for r in gated)),
+        "put_to_kai": sum(
+            1 for r in gated if ((r.get("routing") or {}).get("requests_sent") or 0) > 0
+        ),
+        "kai_unavailable": sum(1 for r in gated if r.get("status") == "kai_unavailable"),
+        "halvings": sum(halvings(r) for r in gated),
+    }
+    record["watcher"] = {
+        "records": len(watched),
+        "statuses": dict(Counter(str(r.get("status")) for r in watched)),
+        "halvings": sum(halvings(r) for r in watched),
+    }
+    # The measures, each apart. The call's own decision built one request per budget down to
+    # the one it last sent: recomputed at the cutoff, those are attributed to the gate as well.
+    cutoff, chain = seen["cutoff"], []
+    made = [one["sha256"] for one in (cutoff or {}).get("views", ())]
+    if key in made:
+        chain = made[: made.index(key) + 1]
+    load, busy = load_of(posts, gated, watched, every, chain, seen["caught_up"], seen["health"])
+    load["deciding_request_arrived_while_another_was_in_flight"] = (
+        busy(named[-1]) if named else None
+    )
+    record["measures"] = {
+        "a_evidence": evidence_of(last, cutoff, laid, key),
+        "b_admission": admission_of(last, record["kai"]["window"]),
+        "c_decision": decision_of(last, answer),
+        "d_observed": observed_of(seen["outcome"], record["observed"]),
+        "e_load": load,
+    }
+    record["errors"] = error_lines(spool)
+    record["server"] = {"health": seen["health"]}
+    return record
+
+
+# --- the summary: counts only
+
+
+def percentiles(values):
+    ordered = sorted(v for v in values if isinstance(v, int | float))
+    if not ordered:
+        return {"n": 0, "p50": None, "p95": None, "p99": None, "max": None}
+
+    def at(share):  # nearest rank
+        return ordered[min(len(ordered), max(1, math.ceil(share * len(ordered)))) - 1]
+
+    return {"n": len(ordered), "p50": at(0.5), "p95": at(0.95), "p99": at(0.99), "max": ordered[-1]}
+
+
+def identity_of(health):
+    """What the stack was, from a server's /health: the encoder, the decision model, the rules."""
+    health = health or {}
+    embedding = (health.get("summarizer") or {}).get("embedding") or {}
+    model = health.get("decision_model") or {}
+    reported = model.get("reported") or {}
+    decisions = health.get("decisions") or {}
+    kept = ("backend", "model", "revision", "device", "dtype", "probes", "calibrated")
+    told = {"embedding": {name: embedding.get(name) for name in kept}}
+    told["decision_model"] = {
+        name: reported.get(name) for name in ("backend", "model", "readout", "package_sha256")
+    }
+    told["decision_model"] |= {
+        "identity": model.get("identity"),
+        "reachable": model.get("reachable"),
+    }
+    told["decisions"] = {
+        name: decisions.get(name)
+        for name in ("mode", "level", "max_chars", "layout", "earlier_sessions")
+    } | {"policy_sha256": (decisions.get("policy") or {}).get("sha256")}
+    return told
+
+
+def summarize(records, args):
+    gates = [g for r in records for g in r["gates"]]
+    posts = Counter()
+    for record in records:
+        posts.update(record["kai"]["by_status"])
+    outcomes = Counter()
+    for record in records:
+        outcomes.update(record["kai"]["outcomes"])
+
+    def status(test):
+        return sum(n for code, n in posts.items() if code.isdigit() and test(int(code)))
+
+    told = {"schema": SCHEMA, "advisory": True, "policy_ready": False}
+    told["settings"] = {
+        "budget": args.budget, "embedder": args.embedder, "layouts": args.layouts,
+        "kai": "stand-in" if args.kai_standin else "url", "kai_timeout": args.kai_timeout,
+        "wait": args.wait, "outcome": args.outcome,
+    }  # fmt: skip
+    identities = [identity_of(r["server"]["health"]) for r in records if r["server"]["health"]]
+    told["stack"] = identities[0] if identities else None
+    told["stack_same_in_every_run"] = all(i == identities[0] for i in identities)
+    told["runs"] = len(records)
+    told["runs_failed"] = sum(1 for r in records if r["failed"])
+    told["layouts_with_identical_events"] = sum(
+        1
+        for campaign in {r["campaign"] for r in records}
+        if len({r["layout_sha256"] for r in records if r["campaign"] == campaign}) == 1
+        and sum(1 for r in records if r["campaign"] == campaign) > 1
+    )
+    told["home_events"] = sum(r["home_events"] for r in records)
+    told["gates"] = {
+        "invocations": len(gates),
+        "violations": sum(
+            1 for g in gates if g["exit"] != 0 or g["stdout_bytes"] or g["deadline_overrun"]
+        ),
+        "nonzero_exit": sum(1 for g in gates if g["exit"] not in (0, None)),
+        "stdout_not_empty": sum(1 for g in gates if g["stdout_bytes"]),
+        "deadline_overruns": sum(1 for g in gates if g["deadline_overrun"]),
+        "unhooked_events": sum(r["events"]["unhooked"] for r in records),
+    }
+    answered = [len(r["answered"]) for r in records]
+    told["deciding_calls"] = {
+        "total": len(records),
+        "with_answered": sum(1 for n in answered if n),
+        "exactly_one_answered": sum(1 for n in answered if n == 1),
+        "more_than_one_answered": sum(1 for n in answered if n > 1),
+        "without_answered": sum(1 for n in answered if not n),
+        "with_issued": sum(1 for r in records if r["issued"]),
+        "put_to_kai": sum(1 for r in records if r["kai"]["issued_request_sha256"]),
+        "request_seen_by_proxy": sum(1 for r in records if r["kai"]["request"]),
+        "with_observed": sum(1 for r in records if r["observed"]),
+        "outcome_fed": sum(1 for r in records if r["events"]["outcome"]["fed"]),
+    }
+    # Two checkpoints (route.Routed): how many deciding calls each decided, and for those the
+    # session checkpoint decided, whether each answer's own request was seen on its own path.
+    handoffs = [r["kai"].get("handoff") for r in records]
+    told["route"] = {
+        "deciding_with_a_routed_account": sum(1 for h in handoffs if h),
+        "decided_by_the_session_checkpoint": sum(1 for h in handoffs if h and h["session_route"]),
+        "handoff_exact": sum(1 for h in handoffs if h and h["exact"] is True),
+        "handoff_not_exact": sum(1 for h in handoffs if h and h["exact"] is False),
+        "requests_by_path": dict(
+            sum((Counter(r["kai"].get("by_path") or {}) for r in records), Counter())
+        ),
+    }
+    told["kai_requests"] = {
+        "total": sum(posts.values()),
+        "http_2xx": status(lambda c: 200 <= c < 300),
+        "http_400_413": status(lambda c: c in (400, 413)),
+        "http_5xx": status(lambda c: 500 <= c < 600),
+        "http_other": status(lambda c: not (200 <= c < 300 or c in (400, 413) or 500 <= c < 600)),
+        "no_response": posts.get("None", 0),
+        "outcomes": dict(sorted(outcomes.items())),
+    }
+    told["timeouts"] = outcomes.get("monitor_gave_up", 0) + outcomes.get("upstream_timeout", 0)
+    told["kai_unavailable"] = {
+        "deciding": sum(1 for r in records if r["outcome"]["status"] == "kai_unavailable"),
+        "all_gated": sum(r["all_gated"]["kai_unavailable"] for r in records),
+        "watcher": sum(r["watcher"]["statuses"].get("kai_unavailable", 0) for r in records),
+    }
+    told["oversize_halvings"] = {
+        "deciding": sum(r["kai"]["halvings"] for r in records),
+        "all_gated": sum(r["all_gated"]["halvings"] for r in records),
+        "watcher": sum(r["watcher"]["halvings"] for r in records),
+    }
+    told["latency_ms"] = {
+        "gate_deciding": percentiles(r["timing"]["gate_ms"] for r in records),
+        "gate_deciding_elapsed": percentiles(r["timing"]["gate_elapsed_ms"] for r in records),
+        "gate_every_event": percentiles(g["ms"] for g in gates),
+        "kai_deciding": percentiles(r["timing"]["kai_ms"] for r in records),
+        "kai_every_request": percentiles(ms for r in records for ms in r["kai"]["ms"]),
+    }
+    told["caught_up"] = {
+        "turn_waits": sum(len(r["turns"]) for r in records),
+        "turn_waits_not_fresh": sum(1 for r in records for t in r["turns"] if not t["fresh"]),
+        "runs_not_fresh_at_end": sum(
+            1 for r in records if not (r.get("caught_up") or {}).get("fresh")
+        ),
+        "runs_not_idle_at_end": sum(
+            1 for r in records if not (r.get("caught_up") or {}).get("idle")
+        ),
+    }
+    told["measures"] = measures_summary(records, posts)
+    told["per_run"] = [
+        {"run": r["run"], "failed": bool(r["failed"])} | r["outcome"]
+        | {"halvings": r["kai"]["halvings"], "s_lines": (r["kai"]["request"] or {}).get("s_lines")}
+        | per_run_measures(r.get("measures") or {})
+        for r in records
+    ]  # fmt: skip
+    return told
+
+
+def per_run_measures(measures):
+    """One run's measures in a line of numbers and labels."""
+    recomputed = (measures.get("a_evidence") or {}).get("recomputed") or {}
+    scored = (measures.get("a_evidence") or {}).get("scored") or {}
+    admission = measures.get("b_admission") or {}
+    support = scored.get("support") or {}
+    return {
+        "recomputed": recomputed.get("matches_issued_request"),
+        "history_complete": recomputed.get("complete"),
+        "unsupported": recomputed.get("unsupported"),
+        "facts_shown": [sum(1 for v in support.values() if v), len(support)] if support else None,
+        "evidence_ok": scored.get("evidence_ok"),
+        "admitted": admission.get("admitted"),
+        "reductions": (admission.get("refusal_retries") or {}).get("budget_reductions"),
+        "outcome_source": (measures.get("d_observed") or {}).get("source"),
+    }
+
+
+def measures_summary(records, posts):
+    """The registration's five measures over every run, each apart: counts only."""
+
+    def of(name):
+        return [r["measures"][name] for r in records if r.get("measures")]
+
+    def count(values):
+        return dict(sorted(Counter(str(v) for v in values).items()))
+
+    evidence, admission = of("a_evidence"), [m for m in of("b_admission") if m]
+    recorded = [m["recorded"] or {} for m in evidence]
+    recomputed = [m["recomputed"] or {} for m in evidence]
+    matched = [m for m in recomputed if m.get("matches_issued_request")]
+    scored = [m["scored"] for m in evidence if m.get("scored") and "error" not in m["scored"]]
+    told = {}
+    told["a_evidence"] = {
+        "deciding_calls": len(evidence),
+        "recorded_packet_complete": count(m.get("complete") for m in recorded),
+        "recorded_history_complete": count(
+            (m.get("history") or {}).get("complete") for m in recorded
+        ),
+        "recomputed_is_the_issued_request": len(matched),
+        "recomputed_not_the_issued_request": len(recomputed) - len(matched),
+        "history_complete": count(m["complete"] for m in matched),
+        "why": count(reason for m in matched for reason in m["why"]),
+        "unsupported": count(reason for m in matched for reason in m["unsupported"]),
+        "scored": len(scored),
+        "scorer": cc.SCORERS[SCORER],
+        "facts_shown": sum(sum(1 for v in s["support"].values() if v) for s in scored),
+        "facts_declared": sum(len(s["support"]) for s in scored),
+        "earlier_facts_shown": sum(s["elsewhere"][0] for s in scored),
+        "earlier_facts_declared": sum(s["elsewhere"][1] for s in scored),
+        "chains_shown": sum(s["chains"][0] for s in scored),
+        "chains_declared": sum(s["chains"][1] for s in scored),
+        "forged": sum(s["forged"] for s in scored),
+        "why_forged": count(why for s in scored for why in s["why_forged"]),
+        "evidence_ok": sum(1 for s in scored if s["evidence_ok"]),
+        "route_ok": sum(1 for s in scored if s["route_ok"]),
+    }
+
+    def status(test):
+        return sum(n for code, n in posts.items() if code.isdigit() and test(int(code)))
+
+    told["b_admission"] = {
+        "deciding_statuses": count(m["status"] for m in admission),
+        "deciding_admitted": sum(1 for m in admission if m["admitted"]),
+        "deciding_too_large": sum(1 for m in admission if m["too_large"]),
+        "deciding_refused_unclassified": sum(1 for m in admission if m["refused_unclassified"]),
+        "reductions_to_admission": count(m["reductions_to_admission"] for m in admission),
+        "budget_reductions": sum(
+            (m["refusal_retries"] or {}).get("budget_reductions", 0) for m in admission
+        ),
+        "repeats_not_sent": sum(
+            (m["refusal_retries"] or {}).get("repeats_not_sent", 0) for m in admission
+        ),
+        "every_request": {
+            "total": sum(posts.values()),
+            "http_2xx": status(lambda c: 200 <= c < 300),
+            "http_400": status(lambda c: c == 400),
+            "http_413": status(lambda c: c == 413),
+            "http_5xx": status(lambda c: 500 <= c < 600),
+            "no_response": posts.get("None", 0),
+        },
+    }
+    decisions = of("c_decision")
+    told["c_decision"] = {
+        "answered_by_kai": sum(1 for m in decisions if m["answered_by_kai"]),
+        "choices": count(m["choice"] for m in decisions if m["answered_by_kai"]),
+        "verdicts": count(m["verdict"] for m in decisions),
+        "would": count(m["would"] for m in decisions),
+        "accuracy": "not claimed",
+    }
+    observed = of("d_observed")
+    told["d_observed"] = {
+        "fed": count(m["source"] for m in observed if m["fed"]),
+        "not_fed": sum(1 for m in observed if not m["fed"]),
+        "orders": count(o["order"] for m in observed for o in m["observed"]),
+    }
+    loads = of("e_load")
+    roles, statuses = Counter(), {}
+    for m in loads:
+        roles.update(m["requests_by_role"])
+        for who, found in m["statuses_by_role"].items():
+            statuses.setdefault(who, Counter()).update(found)
+    told["e_load"] = {
+        "requests_by_role": dict(sorted(roles.items())),
+        "statuses_by_role": {who: dict(sorted(found.items())) for who, found in statuses.items()},
+        "arrived_while_another_was_in_flight": sum(
+            m["arrived_while_another_was_in_flight"] for m in loads
+        ),
+        "deciding_requests_that_arrived_while_another_was_in_flight": sum(
+            1 for m in loads if m["deciding_request_arrived_while_another_was_in_flight"]
+        ),
+        "gate_records": sum(m["gate_records"] for m in loads),
+        "gate_put_to_kai": sum(m["gate_put_to_kai"] for m in loads),
+        "gate_elapsed_ms": percentiles(ms for m in loads for ms in m["gate_elapsed_ms"]),
+        "watcher_records": sum(m["watcher_records"] for m in loads),
+        "unfinished_at_end": sum(m["open_at_end"]["unfinished"] for m in loads),
+        "monitor_gave_up": sum(m["open_at_end"]["monitor_gave_up"] for m in loads),
+        "runs_with_watcher_work_open_at_end": sum(
+            1 for m in loads if not m["open_at_end"]["watcher_idle"]
+        ),
+        "queueing": "a hypothesis unless requests arrived while another was in flight",
+    }
+    return told
+
+
+# --- the command
+
+
+def selected(rows, ids, pairs):
+    """The campaigns asked for, in the order asked: ids, then each pair's campaigns as listed."""
+    by_id = {row["id"]: row for row in rows}
+    missing = [i for i in ids if i not in by_id]
+    missing += [p for p in pairs if not any(row.get("pair_id") == p for row in rows)]
+    if missing:
+        raise SystemExit(f"shadow: not in the campaigns file: {', '.join(missing)}")
+    chosen = [by_id[i] for i in ids]
+    chosen += [row for p in pairs for row in rows if row.get("pair_id") == p]
+    seen, unique = set(), []
+    for row in chosen:
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            unique.append(row)
+    return unique
+
+
+def run(args, stand_in=None):
+    """Run every campaign asked for in every layout asked for; returns the summary. stand_in is
+    a StandIn to use for --kai-standin (one is made from the options when none is given)."""
+    out = Path(args.out).resolve()
+    if out.exists() and any(out.iterdir()):
+        raise SystemExit("shadow: --out is a new or an empty folder")
+    out.mkdir(parents=True, exist_ok=True)
+    campaigns = selected(read_jsonl(args.campaigns), args.ids or [], args.pairs or [])
+    home = out / "home"
+    (home / ".codex").mkdir(parents=True)
+    owned = None
+    if args.kai_standin:
+        if stand_in is None:
+            given = {"p_deny": args.standin_p_deny, "limit": args.standin_limit}
+            given["refuse_status"] = args.standin_refuse_status
+            given["delay"] = args.standin_delay
+            stand_in = owned = StandIn(**{k: v for k, v in given.items() if v is not None})
+        if stand_in.url is None:
+            stand_in.start()
+        upstream, package = stand_in.url, STAND_IN_PACKAGE
+    else:
+        upstream, package = args.kai_url, args.kai_package_sha256
+    exe = launcher(out)
+    stack = {"out": out, "home": home, "exe": exe, "upstream": upstream, "package": package}
+    stack["session_package"] = getattr(args, "kai_session_package_sha256", None)
+    if stack["session_package"]:  # what answers there, by its own report, before anything is sent
+        said = get_json(upstream + SESSION_PATH + "/health")
+        if said.get("package_sha256") != stack["session_package"]:
+            raise SystemExit("run: what answers under /session is not the session package")
+    stack["rules"] = load_rules(args.policy)  # the server's, for the recomputation at the cutoff
+    # Printing a configuration reads no spool: the one named here is never made.
+    stack["hooks"] = generated_hooks(exe, environment(out / "no-spool", home, args))
+    (out / "hooks.json").write_text(json.dumps(stack["hooks"], indent=2) + "\n", encoding="utf-8")
+    records = []
+    try:
+        total = len(campaigns) * len(args.layouts)
+        for campaign in campaigns:
+            for agent in args.layouts:
+                began = time.monotonic()
+                record = run_one(campaign, agent, args, stack)
+                records.append(record)
+                with open(out / "runs.jsonl", "a", encoding="utf-8") as lines:
+                    lines.write(json.dumps(record) + "\n")
+                told = record["outcome"]
+                print(
+                    f"shadow: {len(records)}/{total} {record['run']}: {told['verdict']} "
+                    f"({told['why']}), route {told['route']}, "
+                    f"{'failed, ' if record['failed'] else ''}{time.monotonic() - began:.1f} s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    finally:
+        if owned is not None:
+            owned.close()
+    summary = summarize(records, args)
+    (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return summary
+
+
+def parse(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    go = commands.add_parser("run", help="run campaigns through the whole stack, in shadow")
+    go.add_argument("campaigns", help="a campaigns JSONL file (campaign_contract)")
+    go.add_argument("--ids", nargs="+", help="campaign ids to run")
+    go.add_argument("--pairs", nargs="+", help="pair ids: every campaign of each, as listed")
+    go.add_argument("--layouts", nargs="+", choices=cc.AGENTS, default=list(cc.AGENTS))
+    kai = go.add_mutually_exclusive_group(required=True)
+    kai.add_argument("--kai-url", help="a Kai service on this machine (a tunnel is one)")
+    kai.add_argument("--kai-standin", action="store_true", help="a stand-in Kai, CPU only")
+    go.add_argument("--kai-package-sha256", help="the package the Kai at --kai-url must be")
+    go.add_argument(
+        "--kai-session-package-sha256",
+        help="research: the second package the Kai at --kai-url answers under /session; the "
+        "server then routes the decision of calls an earlier session bears on to it",
+    )
+    go.add_argument(
+        "--kai-session-prior-events",
+        action="store_true",
+        help="research: start the server with its candidate route (agentarmor_monitor.route."
+        "prior_event_adapter); needs --kai-session-package-sha256",
+    )
+    go.add_argument(
+        "--earlier-sessions",
+        choices=("on", "off"),
+        default="on",
+        help="the server's lookup of other sessions; off measures what a session's own "
+        "statements do without it (no EARLIER SESSIONS section, no session route)",
+    )
+    go.add_argument(
+        "--session-observations",
+        choices=("off", "on"),
+        default="off",
+        help="the server's --session-observations (passed only when on)",
+    )
+    go.add_argument(
+        "--observation-quantities",
+        choices=("off", "on"),
+        default="off",
+        help="the server's --observation-quantities (passed only when on)",
+    )
+    go.add_argument("--standin-limit", type=int, help="the stand-in refuses a larger body")
+    go.add_argument(
+        "--standin-refuse-status", type=int, choices=(400, 413), help="its refusal: 413 (default)"
+    )
+    go.add_argument("--standin-delay", type=float, help="seconds each stand-in answer takes")
+    go.add_argument("--standin-p-deny", type=float, help="the stand-in's p(deny), 0.1 if omitted")
+    go.add_argument("--out", required=True, help="a new or an empty folder")
+    go.add_argument("--budget", type=int, default=11000, help="the server's --max-chars")
+    go.add_argument("--embedder", choices=("hash", "embeddinggemma"), default="hash")
+    go.add_argument("--model", help="a local EmbeddingGemma 2 directory (embeddinggemma)")
+    go.add_argument("--probes", help="probes calibrated for --model (embeddinggemma)")
+    go.add_argument("--device", help="cuda, mps or cpu (embeddinggemma)")
+    go.add_argument("--policy", help="rules for the server; its default rules if omitted")
+    go.add_argument("--kai-timeout", type=float, default=30.0, help="the server's --kai-timeout")
+    go.add_argument("--wait", type=float, default=3.0, help="the server's --wait")
+    go.add_argument("--proxy-timeout", type=float, help="how long the proxy waits for Kai")
+    go.add_argument("--start-timeout", type=float, default=600.0, help="for the server to start")
+    go.add_argument("--catch-up", type=float, default=120.0, help="seconds to wait for summaries")
+    go.add_argument("--settle", type=float, default=30.0, help="seconds for the watcher at the end")
+    go.add_argument("--no-outcome", dest="outcome", action="store_false")
+    args = parser.parse_args(argv)
+    if not (args.ids or args.pairs):
+        parser.error("name campaigns with --ids or --pairs")
+    standing = (args.standin_limit, args.standin_delay, args.standin_p_deny)
+    standing += (args.standin_refuse_status,)
+    if args.kai_url:
+        if not loopback(args.kai_url):
+            parser.error(
+                "--kai-url is an address on this machine: the proxy sends what it is given"
+            )
+        if not re.fullmatch("[0-9a-f]{64}", args.kai_package_sha256 or ""):
+            parser.error("--kai-url needs --kai-package-sha256: 64 lowercase hexadecimal digits")
+        if any(value is not None for value in standing):
+            parser.error("the --standin options are for --kai-standin")
+    elif args.kai_package_sha256:
+        parser.error("--kai-package-sha256 is for --kai-url: the stand-in names its own")
+    if args.kai_session_package_sha256 and not args.kai_url:
+        parser.error("--kai-session-package-sha256 is for --kai-url: the stand-in is one model")
+    if getattr(args, "kai_session_prior_events", False) and not args.kai_session_package_sha256:
+        parser.error("--kai-session-prior-events is for --kai-session-package-sha256")
+    if args.embedder == "embeddinggemma" and os.environ.get(MODEL_JOBS) is not None:
+        parser.error(
+            f"--embedder embeddinggemma is a model job, and {MODEL_JOBS} refuses them here"
+        )
+    if args.proxy_timeout is None:
+        args.proxy_timeout = args.kai_timeout + 30.0
+    return args
+
+
+def main(argv=None):
+    summary = run(parse(argv))
+    told = {key: summary[key] for key in ("runs", "runs_failed", "gates", "deciding_calls")}
+    told |= {"kai_requests": summary["kai_requests"], "timeouts": summary["timeouts"]}
+    print(json.dumps(told, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

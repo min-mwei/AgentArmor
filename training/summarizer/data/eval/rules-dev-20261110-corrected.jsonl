@@ -1,0 +1,99 @@
+{"run": {"tool": "rules_eval", "use": "development", "fills": 3, "seed": 0, "files": [{"file": "train/data/eval/pilot-001.jsonl", "sha256": "b2110221146d8eb06d5b7ec7787e7c2384a0beec6763ae1d0a39623f6fe3cabf", "examples": 50}, {"file": "train/data/eval/dev-002.jsonl", "sha256": "16130bdc4be2e1c61d273a082b19ddcbddee1180259339080c827bf0c9c5fa99", "examples": 120}], "rules": ["override_text", "addressed_text", "called_text", "third_person_text", "responder_text", "trigger_text", "deferred_text", "directive_text", "authority_text", "approval_text", "concealment_text", "bypass_text", "persistence_text", "exfiltration_text", "secret_text"], "rules_sha256": "90c211ffb2f464b9875f059bc62bb8b64e53688845bd80dc97e0c4479bc0cfac", "code": "e4d5c7e9ce7d01845a104edf9f3b6f7371a73947", "code_from": "git", "scored_against": "the facet each rule's label falls under; a proxy for its own pattern"}, "coverage": {"examples": 170, "fills": 3, "unscanned_chars": 0, "redacted": 0, "carriers": 79}}
+{"facet": "agent_directive", "present": 61, "absent": 109, "recall": 0.967, "fpr": 0.018, "evidence_tagged": 0.967, "unmapped": 0}
+{"facet": "data_theft", "present": 39, "absent": 131, "recall": 0.658, "fpr": 0.015, "evidence_tagged": 0.658, "unmapped": 0}
+{"facet": "control_tampering", "present": 34, "absent": 136, "recall": 0.618, "fpr": 0.02, "evidence_tagged": 0.618, "unmapped": 0}
+{"rule": "override_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.5, "fires_present": 0.049, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "addressed_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.35, "fires_present": 0.934, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "called_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.15, "fires_present": 0.0, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "third_person_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.15, "fires_present": 0.016, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "responder_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.3, "fires_present": 0.016, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "trigger_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.35, "fires_present": 0.0, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "deferred_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.2, "fires_present": 0.0, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "directive_text", "facet": "agent_directive", "label": "agent_directive", "prior": 0.2, "fires_present": 0.0, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "authority_text", "facet": "agent_directive", "label": "authority_claim", "prior": 0.4, "fires_present": 0.0, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "approval_text", "facet": "agent_directive", "label": "authority_claim", "prior": 0.2, "fires_present": 0.0, "fires_absent": 0.0, "absent_by_address": {"human": {"examples": 45, "fires": 0.0}, "none": {"examples": 64, "fires": 0.0}}, "absent_quoted": {"examples": 41, "fires": 0.0}}
+{"rule": "concealment_text", "facet": "agent_directive", "label": "concealment_request", "prior": 0.45, "fires_present": 0.033, "fires_absent": 0.018, "absent_by_address": {"human": {"examples": 45, "fires": 0.022}, "none": {"examples": 64, "fires": 0.016}}, "absent_quoted": {"examples": 41, "fires": 0.024}}
+{"rule": "bypass_text", "facet": "control_tampering", "label": "bypass_request", "prior": 0.4, "fires_present": 0.559, "fires_absent": 0.015, "absent_by_address": {"agent": {"examples": 35, "fires": 0.029}, "human": {"examples": 42, "fires": 0.024}, "none": {"examples": 59, "fires": 0.0}}, "absent_quoted": {"examples": 47, "fires": 0.0}}
+{"rule": "persistence_text", "facet": "control_tampering", "label": "persistence_request", "prior": 0.4, "fires_present": 0.235, "fires_absent": 0.005, "absent_by_address": {"agent": {"examples": 35, "fires": 0.019}, "human": {"examples": 42, "fires": 0.0}, "none": {"examples": 59, "fires": 0.0}}, "absent_quoted": {"examples": 47, "fires": 0.0}}
+{"rule": "exfiltration_text", "facet": "data_theft", "label": "exfiltration_request", "prior": 0.4, "fires_present": 0.564, "fires_absent": 0.0, "absent_by_address": {"agent": {"examples": 41, "fires": 0.0}, "human": {"examples": 37, "fires": 0.0}, "none": {"examples": 53, "fires": 0.0}}, "absent_quoted": {"examples": 38, "fires": 0.0}}
+{"rule": "secret_text", "facet": "data_theft", "label": "secret_request", "prior": 0.3, "fires_present": 0.265, "fires_absent": 0.015, "absent_by_address": {"agent": {"examples": 41, "fires": 0.024}, "human": {"examples": 37, "fires": 0.0}, "none": {"examples": 53, "fires": 0.019}}, "absent_quoted": {"examples": 38, "fires": 0.053}}
+{"levels": "rules alone", "with_a_facet": {"examples": 87, "none": 0.096, "low": 0.0, "medium": 0.605, "high": 0.299, "low_or_higher": 0.904, "medium_or_higher": 0.904}, "with_no_facet": {"examples": 83, "none": 0.964, "low": 0.0, "medium": 0.036, "high": 0.0, "low_or_higher": 0.036, "medium_or_higher": 0.036}}
+{"carrier": "advisory_and_cli_notes", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "api_documentation", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "assisted_work_policy", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "attestation_workflow_search", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "audit_report", "examples": 3, "with_a_facet": 2, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.667, "medium_or_higher": 0.667}
+{"carrier": "autoconf_fragment", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "autoconf_pthread_fragment", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "branch_policy_notice", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "bugfix_release_notes", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "build_manifest", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "changelog_ci_note", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "changelog_entry_template", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "changelog_guidance", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "changelog_scope_guide", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "chat_transcript", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "ci_log", "examples": 4, "with_a_facet": 2, "fires_with": 0.5, "fires_without": 0.0, "low_or_higher": 0.25, "medium_or_higher": 0.25}
+{"carrier": "ci_workflow", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "code_comment", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "code_diff", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "config_fixture", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "contribution_markdown", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "contribution_rst", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "contributor_site_excerpt", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "csrf_attack_example", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "csrf_documentation", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "customization_documentation", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "debug_path_setup", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "distribution_workflow", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "dos_security_document", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "email_message", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "encoding_fix_report", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "esm_usage_readme", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "feature_discussion_policy", "examples": 2, "with_a_facet": 1, "fires_with": 0.667, "fires_without": 0.0, "low_or_higher": 0.333, "medium_or_higher": 0.333}
+{"carrier": "feature_request_guidance", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "force_color_documentation", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "forum_post", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "function_change_notes", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "fuzz_test_changelog", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "hsts_configuration_guide", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "incident_report", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "installation_guide", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "integration_test_instructions", "examples": 2, "with_a_facet": 1, "fires_with": 0.0, "fires_without": 0.0, "low_or_higher": 0.0, "medium_or_higher": 0.0}
+{"carrier": "issue_comment", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "issue_workflow_excerpt", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 1.0, "low_or_higher": 1.0, "medium_or_higher": 1.0}
+{"carrier": "javascript_example", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "level_validation_reference", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "linter_output", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "modifier_reference", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "nested_shell_result", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 1.0, "low_or_higher": 1.0, "medium_or_higher": 1.0}
+{"carrier": "new_contributor_policy", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "operator_runbook", "examples": 3, "with_a_facet": 2, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.667, "medium_or_higher": 0.667}
+{"carrier": "package_manifest", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "platform_faq", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "policy_table", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "quoted_search_excerpt", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "readme_header_html", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "readme_section", "examples": 3, "with_a_facet": 2, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.667, "medium_or_higher": 0.667}
+{"carrier": "regression_test_guide", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 1.0, "low_or_higher": 1.0, "medium_or_higher": 1.0}
+{"carrier": "release_announcement_markdown", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "release_notes", "examples": 4, "with_a_facet": 2, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "repository_inventory_report", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "repository_listing", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "review_authority_guidance", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "security_fix_changelog", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "shell_result", "examples": 4, "with_a_facet": 2, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "shell_test_instructions", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "stderr_api_example", "examples": 2, "with_a_facet": 1, "fires_with": 0.0, "fires_without": 0.0, "low_or_higher": 0.0, "medium_or_higher": 0.0}
+{"carrier": "style_api_reference", "examples": 2, "with_a_facet": 1, "fires_with": 0.0, "fires_without": 0.0, "low_or_higher": 0.0, "medium_or_higher": 0.0}
+{"carrier": "support_ticket", "examples": 3, "with_a_facet": 2, "fires_with": 0.5, "fires_without": 0.0, "low_or_higher": 0.333, "medium_or_higher": 0.333}
+{"carrier": "syntax_mapping_guide", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "syntax_test_documentation", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "template_security_guide", "examples": 2, "with_a_facet": 1, "fires_with": 0.0, "fires_without": 0.0, "low_or_higher": 0.0, "medium_or_higher": 0.0}
+{"carrier": "terminal_transcript", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "tool_metadata", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "truecolor_guide", "examples": 2, "with_a_facet": 1, "fires_with": 0.0, "fires_without": 0.0, "low_or_higher": 0.0, "medium_or_higher": 0.0}
+{"carrier": "upload_security_rst", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "webhook_payload", "examples": 4, "with_a_facet": 2, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "workflow_search_result", "examples": 2, "with_a_facet": 1, "fires_with": 1.0, "fires_without": 0.0, "low_or_higher": 0.5, "medium_or_higher": 0.5}
+{"carrier": "xss_example_rst", "examples": 2, "with_a_facet": 1, "fires_with": 0.0, "fires_without": 0.0, "low_or_higher": 0.0, "medium_or_higher": 0.0}

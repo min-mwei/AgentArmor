@@ -18,6 +18,19 @@ vLLM 0.33.0 is an external dependency; no vLLM source is vendored.
 Kai owns checkpoint selection, merging/export, and numerical qualification.
 AgentArmor owns serving integration and application-level qualification.
 
+## Summarizer, the session core
+
+`src/summarizer` is the Summarizer proof of concept, a private repository of the same
+owner, copied on 2026-11-13 at the owner's instruction from its `dev` commit
+`362fd15831998427d8fe75b793387f965da937dc`, with the search index added on top. It is laid
+out as this repository's other components are (the package at `src/summarizer/summarizer`).
+Its history, its message boards and swarm notes, and its evaluation and training data
+(`train/data/eval`, `train/data/synthetic`) were left there: only the code, its tests, its
+tools, its documents and the hand-written starter fixtures the tests read are here. The
+proof of concept carried no licence file; it is distributed here under this repository's
+Apache-2.0 licence. No session log, seed, held-out set, model weight or training run was
+ever tracked there, and none is here.
+
 The deterministic `src/hostfacts` Python modules and their shared fixtures remain
 hash-pinned references shared with Kai. They are not automatically wired to the
 HTTP service. Their comments retain historical native-port context to preserve

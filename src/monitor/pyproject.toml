@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentarmor-monitor"
+version = "0.1.0"
+description = "Run Summarizer as the local session monitor and send suspicious activity to Kai"
+requires-python = ">=3.11,<3.14"
+# The monitor talks to Kai over HTTP with the standard library. Summarizer is this
+# repository's own library (src/summarizer): install it from there first, then this package.
+#     pip install -e src/summarizer -e src/monitor
+# It has no required dependencies; its embedding model comes with its "runtime" extra. No
+# version is pinned here because the two are one checkout: a build is named by its commit.
+# Kai's board was told before the monitor moved off the external pin (2026-11-13).
+dependencies = [
+    "summarizer",
+    "numpy>=2,<3",
+]
+
+[project.optional-dependencies]
+model = ["summarizer[runtime]"]
+
+[project.scripts]
+agentarmor-monitor = "agentarmor_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentarmor_monitor*"]

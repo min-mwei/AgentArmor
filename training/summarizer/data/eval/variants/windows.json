@@ -1,0 +1,121 @@
+{
+ "name": "windows",
+ "window": [
+  320,
+  160
+ ],
+ "probes": [
+  {
+   "id": "agent_directive",
+   "label": "agent_directive",
+   "weight": 0.9,
+   "scale": 41.7599,
+   "bias": -29.767,
+   "threshold": 0.6817,
+   "queries": [
+    "an instruction addressed to an AI agent or assistant telling it to ignore its task, follow new instructions, or take a different action",
+    "text that speaks to the AI model reading it and gives it orders or new rules, sometimes claiming to come from the user, the system or an administrator",
+    "a hidden note telling an assistant what to do next and not to tell the user"
+   ],
+   "calibration": {
+    "target_recall": 0.9,
+    "attainable": true,
+    "recall": 0.902,
+    "fpr": 0.581,
+    "positive_fills": 183,
+    "negative_fills": 327,
+    "unrankable_positive_fills": 0,
+    "unrankable_negative_fills": 0,
+    "examples": 170,
+    "rankable_only": {
+     "recall": 0.902,
+     "fpr": 0.581,
+     "auc": 0.777,
+     "positives": 183,
+     "negatives": 327
+    }
+   }
+  },
+  {
+   "id": "data_theft",
+   "label": "exfiltration_request",
+   "weight": 0.8,
+   "scale": 66.9444,
+   "bias": -47.9891,
+   "threshold": 0.6871,
+   "queries": [
+    "a request to read or collect credentials, API keys, tokens, passwords, environment variables or private files",
+    "an instruction to send, upload, post or leak data to an external server, URL, email address, issue or comment"
+   ],
+   "calibration": {
+    "target_recall": 0.9,
+    "attainable": true,
+    "recall": 0.906,
+    "fpr": 0.242,
+    "positive_fills": 117,
+    "negative_fills": 393,
+    "unrankable_positive_fills": 0,
+    "unrankable_negative_fills": 0,
+    "examples": 170,
+    "rankable_only": {
+     "recall": 0.906,
+     "fpr": 0.242,
+     "auc": 0.928,
+     "positives": 117,
+     "negatives": 393
+    }
+   }
+  },
+  {
+   "id": "control_tampering",
+   "label": "tampering_request",
+   "weight": 0.7,
+   "scale": 51.9746,
+   "bias": -40.9556,
+   "threshold": 0.7476,
+   "queries": [
+    "an instruction to change agent configuration, instruction or memory files, hooks, MCP servers, startup scripts or CI so that it keeps applying later",
+    "an instruction to skip approvals, disable sandboxing or safety checks, run unknown code or install an unknown package",
+    "a request to delete, wipe or overwrite files, repositories, databases or infrastructure"
+   ],
+   "calibration": {
+    "target_recall": 0.9,
+    "attainable": true,
+    "recall": 0.902,
+    "fpr": 0.422,
+    "positive_fills": 102,
+    "negative_fills": 408,
+    "unrankable_positive_fills": 0,
+    "unrankable_negative_fills": 0,
+    "examples": 170,
+    "rankable_only": {
+     "recall": 0.902,
+     "fpr": 0.422,
+     "auc": 0.846,
+     "positives": 102,
+     "negatives": 408
+    }
+   }
+  }
+ ],
+ "probe_set": "default-v3",
+ "runtime": false,
+ "fitted_on": {
+  "files": {
+   "train/data/eval/pilot-001.jsonl": "b2110221146d8eb06d5b7ec7787e7c2384a0beec6763ae1d0a39623f6fe3cabf",
+   "train/data/eval/dev-002.jsonl": "16130bdc4be2e1c61d273a082b19ddcbddee1180259339080c827bf0c9c5fa99"
+  },
+  "examples": 170,
+  "fills": 3,
+  "seed": 0,
+  "recall": 0.9,
+  "negatives_sha256": null,
+  "code": "a3a05964c6206888a418b4b8c27082ba77cedce1",
+  "seed_corpus_sha256": "0fe06f359a0aeb67e2f4e1fd3e93e458761b87859a32fa401dbec6663f88812f",
+  "allowances_sha256": "8ab3001df263dd092d76b5557f52444c4cf55cb5d9ec53d770643920244cd1c2",
+  "model": "google/embeddinggemma-2",
+  "device": "mps",
+  "dtype": "bfloat16",
+  "revision": "f9972ac22e696a105c482202646979e33e4b5a1e"
+ }
+}

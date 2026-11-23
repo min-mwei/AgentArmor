@@ -1,0 +1,53 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
+            "timeout": 30,
+            "statusMessage": "Checking AgentArmor policy readiness"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
+            "timeout": 120,
+            "async": true
+          }
+        ],
+        "matcher": ".*"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
+            "timeout": 120,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/ABSOLUTE/PATH/agentarmor\" hook --agent codex_code",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
