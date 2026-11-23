@@ -687,7 +687,12 @@ def detect(
     # rebuilt request that had been refused before and so was not sent again (MR251).
     retries = record["refusal_retries"] = {"budget_reductions": 0, "repeats_not_sent": 0}
     while True:
-        text, about, emitted = packet(summary, entry, max(size, MIN_CHARS), sessions, content)
+        # The default contract calls packet exactly as before the one-question mode existed.
+        room = max(size, MIN_CHARS)
+        if content:
+            text, about, emitted = packet(summary, entry, room, sessions, content)
+        else:
+            text, about, emitted = packet(summary, entry, room, sessions)
         if explain:
             record["shown"] = entries_shown(summary, emitted)
         # Whole means the call's own arguments, all of them: a display text never qualifies.

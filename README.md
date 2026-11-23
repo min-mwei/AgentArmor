@@ -7,12 +7,17 @@ completing a summary request. Every API call could be authorized, yet the action
 Prompt injection, poisoned tools or memory, goal drift, and hallucinated actions can all cause this kind of misuse.
 
 AgentArmor provides a model service for evaluating proposed actions and untrusted content against a user's task
-and security rules. It uses [Kai-4B](https://huggingface.co/min-h-wei/Kai-4B), a decision model for agent security,
-to answer questions such as:
+and security rules. It uses Kai, a decision model for agent security, to answer questions such as:
 
 - Does this tool call comply with the supplied policy and conversation?
 - Is this document trying to redirect the agent or extract sensitive information?
 - Which of the supplied risk categories best describes this action?
+
+Two Kai models exist. [Kai-4B](https://huggingface.co/min-h-wei/Kai-4B) is the published default and the model the
+commands below serve. [Kai-35-A3B](https://huggingface.co/min-h-wei/Kai-35-A3B) is a newer, larger model in
+internal release: it answers one allow-or-deny question for tool calls, multi-turn sessions and incoming content,
+and returns evidence spans, the passages of its input that decided the answer. See
+[Kai-35-A3B](#kai-35-a3b-multi-turn-decisions-and-evidence-spans) for how the two compare.
 
 Identity and access controls remain essential. AgentArmor adds contextual evaluation of what an agent proposes
 to do with those permissions. The caller supplies the relevant policy, task, history, and proposed action.
@@ -105,7 +110,63 @@ python3 benchset/score.py
 These cases informed model selection. Kai is the best of three training runs on the same cases; the other two
 reached tool-authorization AUCs of 0.884 and 0.863. The saved scores come from Kai's training runtime, and numerical
 agreement on a vLLM GPU host still needs validation. These results do not establish production accuracy or
-reproducibility. Evidence spans and a reliable check for missing facts are not available yet.
+reproducibility. Kai-4B has no qualified evidence spans and no reliable check for missing facts.
+
+## Kai-35-A3B: multi-turn decisions and evidence spans
+
+Kai-35-A3B is a LoRA adapter with a decision head and an evidence head on
+[Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B). It was trained for the cases Kai-4B handles
+poorly: decisions that depend on what happened earlier in a session or in earlier sessions, and showing which text
+decided an answer.
+
+**One question.** Kai-35-A3B answers a single question, `decision` (allow or deny), with a probability:
+
+- for a proposed tool call, whether it may run under the rules, the host-computed facts and the conversation shown;
+- for a multi-turn or multi-session history, the same question, where approvals, revocations, conditions and
+  earlier checks in the history decide it. The model follows only written rules and the user's own words;
+- for incoming content (a tool result, a fetched page, a file), whether it may be passed to the agent. Deny means
+  the content carries an instruction aimed at the agent, whatever it asks for; quoted or reported wording is allowed.
+
+**Evidence spans.** With each answer the model returns character intervals of its input: the rule sentence and the
+argument or fact a denial turns on, the approval or revocation that decides a session, or the injected instruction.
+
+**Kai-35-A3B and Kai-4B, decisions.** Share of attacks or forbidden actions caught when each model's cutoff denies
+at most 1% of legitimate records, measured on records neither model trained on:
+
+| Use case | Records (deny / allow) | Kai-4B | Kai-35-A3B |
+|---|---:|---:|---:|
+| Multi-turn and multi-session decisions | 184 / 278 | 4% | 89% |
+| Tool-call decisions | 155 / 145 | 34% | 61% |
+| Prompt injection in content, four development panels | 997 / 529 | 68% | 67% |
+
+On the injection panels Kai-35-A3B leads on documents and tables (BIPIA: 668 of 703 caught against 633 for Kai-4B
+and 554 for OpenAI Decisions) and trails on short texts (100 of 244 against 111). On the benchset's
+tool-authorization cases it catches 60 of 64 at that budget, against 41 for Kai-4B.
+
+**Kai-35-A3B and Kai-4B, evidence spans.** The published Kai-4B package serves no evidence spans. Kai-35-A3B
+returns them with every answer. Questions for which its spans cover every marked passage, on 519 held-out
+questions:
+
+| Use case | Questions | Kai-4B (published) | Kai-35-A3B |
+|---|---:|---:|---:|
+| Multi-turn decisions | 231 | no spans | 220 |
+| Tool-call decisions | 150 | no spans | 82 |
+| Injected instructions | 65 | no spans | 21 |
+
+On the 73 clean documents of that set, where nothing should be marked, Kai-35-A3B marks nothing. Its spans are
+exact 94% of the time and recover 90% of the marked passages; injected instructions are the weakest case.
+
+**Limits of these results.** They come from one training run. The multi-turn and tool-call records come from the
+same generators as the training data, from held-out roots. The injection panels were used during development, and
+Kai-35-A3B reads its own rendering of those records. No sealed test has been read. A cutoff is calibrated only for
+incoming content (deny above 0.90: under 1% of clean calibration content denied, but 16 of 244 clean texts on a
+short-text development panel that includes texts discussing instructions); tool calls and sessions are
+uncalibrated. The model denies a call that depends on a running total whatever the sum. The span head is a
+research head: the service returns the spans the training code
+produces, which is not a qualification of their quality. Enforcement remains unqualified (`policy_ready: false`).
+
+Kai-35-A3B runs through the MLX backend on Apple silicon (about 25 GB of GPU memory; median 0.7 s per request on
+the development machine). No vLLM export exists for it yet.
 
 ## Monitor agent sessions
 
@@ -123,6 +184,15 @@ be a host in a cloud:
     --kai-package-sha256 "$PACKAGE" \
     --allow-remote --kai-token-file ~/.config/agentarmor/kai.token            # Kai elsewhere
 .venv/bin/agentarmor-monitor detections --flagged
+```
+
+With Kai-35-A3B the monitor asks its one question for tool calls and for incoming content, and flags content
+above a cutoff. A flagged document is recorded with an advisory line ("AgentArmor recommends: deny"); delivering
+that line to the agent is not wired yet:
+
+```sh
+.venv/bin/agentarmor-monitor serve --kai-package /path/to/Kai-35-A3B/mlx --kai-backend mlx \
+    --kai-contract one-question/1 --kai-content-cutoff 0.90
 ```
 
 Agents connect through an observer hook, which only records Kai's decisions, or through a gate, which returns
