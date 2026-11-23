@@ -131,39 +131,38 @@ decided an answer.
 argument or fact a denial turns on, the approval or revocation that decides a session, or the injected instruction.
 
 **Kai-35-A3B and Kai-4B, decisions.** Share of attacks or forbidden actions caught when each model's cutoff denies
-at most 1% of legitimate records, measured on records neither model trained on:
+at most 1% of legitimate records, on records neither model trained on:
 
-| Use case | Records (deny / allow) | Kai-4B | Kai-35-A3B |
-|---|---:|---:|---:|
-| Multi-turn and multi-session decisions | 184 / 278 | 4% | 89% |
-| Tool-call decisions | 155 / 145 | 34% | 61% |
-| Prompt injection in content, four development panels | 997 / 529 | 68% | 67% |
+| Use case | Kai-4B | Kai-35-A3B |
+|---|---:|---:|
+| Multi-turn and multi-session decisions | 4% | 89% |
+| Tool-call decisions | 34% | 61% |
+| Prompt injection in content | 68% | 67% |
 
-On the injection panels Kai-35-A3B leads on documents and tables (BIPIA: 668 of 703 caught against 633 for Kai-4B
-and 554 for OpenAI Decisions) and trails on short texts (100 of 244 against 111). On the benchset's
-tool-authorization cases it catches 60 of 64 at that budget, against 41 for Kai-4B.
+Within prompt injection, Kai-35-A3B leads on documents and tables (95%, against 90% for Kai-4B and 79% for OpenAI
+Decisions) and trails on short texts (41% against 45%). On the benchset's tool-authorization cases it catches 94%
+at that budget, against 64% for Kai-4B.
 
-**Kai-35-A3B and Kai-4B, evidence spans.** The published Kai-4B package serves no evidence spans. Kai-35-A3B
-returns them with every answer. Questions for which its spans cover every marked passage, on 519 held-out
-questions:
+**Kai-35-A3B and Kai-4B, evidence spans.** The published Kai-4B serves no evidence spans. Kai-35-A3B returns them
+with every answer. Share of held-out questions where its spans cover every marked passage:
 
-| Use case | Questions | Kai-4B (published) | Kai-35-A3B |
-|---|---:|---:|---:|
-| Multi-turn decisions | 231 | no spans | 220 |
-| Tool-call decisions | 150 | no spans | 82 |
-| Injected instructions | 65 | no spans | 21 |
+| Use case | Kai-4B | Kai-35-A3B |
+|---|---:|---:|
+| Multi-turn decisions | no spans | 95% |
+| Tool-call decisions | no spans | 55% |
+| Injected instructions | no spans | 32% |
 
-On the 73 clean documents of that set, where nothing should be marked, Kai-35-A3B marks nothing. Its spans are
-exact 94% of the time and recover 90% of the marked passages; injected instructions are the weakest case.
+Its spans are exact 94% of the time and recover 90% of the marked passages. On clean documents, where nothing
+should be marked, it marks nothing.
 
 **Limits of these results.** They come from one training run. The multi-turn and tool-call records come from the
 same generators as the training data, from held-out roots. The injection panels were used during development, and
 Kai-35-A3B reads its own rendering of those records. No sealed test has been read. A cutoff is calibrated only for
-incoming content (deny above 0.90: under 1% of clean calibration content denied, but 16 of 244 clean texts on a
-short-text development panel that includes texts discussing instructions); tool calls and sessions are
+incoming content: denying above 0.90 denies under 1% of clean calibration content, but about 7% of clean short
+texts on a development panel that includes texts discussing instructions. Tool calls and sessions are
 uncalibrated. The model denies a call that depends on a running total whatever the sum. The span head is a
-research head: the service returns the spans the training code
-produces, which is not a qualification of their quality. Enforcement remains unqualified (`policy_ready: false`).
+research head: the service returns the spans the training code produces, which is not a qualification of their
+quality. Enforcement remains unqualified (`policy_ready: false`).
 
 Kai-35-A3B runs through the MLX backend on Apple silicon (about 25 GB of GPU memory; median 0.7 s per request on
 the development machine). No vLLM export exists for it yet.
