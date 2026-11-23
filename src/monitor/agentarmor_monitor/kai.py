@@ -55,6 +55,58 @@ QUESTIONS = {
 }
 MAX_BYTES = 1_000_000  # the service's own request limit
 
+# What is asked of the decision model, as a contract the operator selects for the process
+# (cli: --kai-contract), never a caller, a hook payload or session text:
+#
+#   two-question/1   the default, and what Kai-4B was trained for: an action is asked DECISION
+#                    and XPIA, content and messages XPIA alone, and a second checkpoint may
+#                    answer some decisions (route.py).
+#   one-question/1   what the next Kai line is trained for: DECISION alone, of one checkpoint,
+#                    for a proposed call and for content with no call of its own (a "content
+#                    decision": policy.content_layout). XPIA is never asked.
+#
+# A request's identity names any contract but the default (escalate.request_sha256), so the
+# same state asked under two contracts is two requests. An unknown name refuses.
+TWO_QUESTION, ONE_QUESTION = "two-question/1", "one-question/1"
+CONTRACTS = (TWO_QUESTION, ONE_QUESTION)
+CONTRACT = TWO_QUESTION
+
+
+def use(name):
+    """Select the contract for this process. ValueError for a name that is not one of
+    CONTRACTS; nothing changes then."""
+    if name not in CONTRACTS:
+        raise ValueError(f"unknown Kai contract {name!r}: one of {', '.join(CONTRACTS)}")
+    global CONTRACT
+    CONTRACT = name
+    return name
+
+
+# Where a one-question decision flags, by route: a cutoff on P(deny) for content decisions and
+# one for calls, the operator's (cli: --kai-content-cutoff, --kai-call-cutoff). 0.5 is no
+# qualified cutoff, and none is adopted. A cutoff moves "flagged" in a record and nothing else:
+# the record's decision stays the model's own choice, and a gate answers by that decision.
+ROUTES = ("content", "call")
+CUTOFFS = dict.fromkeys(ROUTES, 0.5)
+
+
+def cutoffs(content=0.5, call=0.5):
+    """Set the two cutoffs for this process. ValueError unless each is a number in [0, 1];
+    nothing changes then."""
+    given = {"content": content, "call": call}
+    for value in given.values():
+        if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
+            raise ValueError("a cutoff is a probability of deny: a number from 0 to 1")
+    CUTOFFS.update({route: float(value) for route, value in given.items()})
+    return dict(CUTOFFS)
+
+
+def confidence(decision):
+    """The probability of the option a decision chose: max(p_deny, 1 - p_deny), for an answer
+    _decision() admitted. It says how far the model's own two options are apart and nothing
+    more: it is not calibrated, and no cutoff is adopted on it."""
+    return max(decision["p_deny"], 1.0 - decision["p_deny"])
+
 
 class KaiUnavailable(Exception):
     """The service could not be reached or could not complete the request; try again later."""

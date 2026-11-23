@@ -32,6 +32,7 @@ from summarizer.store import AGENTS, EVENTS, load_summary, read_events, session_
 from summarizer import history
 
 from . import earlier as earlier_sessions
+from . import kai as _kai
 from . import policy as _policy
 from .escalate import LEVELS, detect, selector
 from .gate import keep, note, outcome
@@ -424,6 +425,12 @@ class Decider:
                 else (self.earlier.about() if self.earlier else "off"),
             }
             | ({"session_observations": OBSERVATIONS} if self.observations else {})
+            # What is asked of the decision model, said when it is not the default contract.
+            | (
+                {"contract": _kai.CONTRACT, "flag_cutoffs": dict(_kai.CUTOFFS)}
+                if _kai.CONTRACT != _kai.TWO_QUESTION
+                else {}
+            )
             | ({"observation_quantities": QUANTITIES} if self.quantities else {})
         )
 

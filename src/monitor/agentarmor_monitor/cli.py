@@ -33,7 +33,10 @@ import threading
 from .escalate import LEVELS, append, detect, key_of, latest, read, settled, triggers
 from .kai import (
     ADAPTERS,
+    CONTRACTS,
+    ONE_QUESTION,
     TOKEN_ENV,
+    TWO_QUESTION,
     KaiClient,
     KaiMismatch,
     KaiUnavailable,
@@ -41,7 +44,9 @@ from .kai import (
     bearer,
     loopback,
 )
+from .kai import cutoffs as kai_cutoffs
 from .kai import profile as kai_profile
+from .kai import use as kai_contract
 from .local import PORT
 from .policy import writable
 
@@ -203,6 +208,7 @@ def _with_session(args, asks, place):
     from .route import Routed
     from .server import Front, InProcess, Relay
 
+    one_checkpoint(args)
     url, named = args.kai_session_url, args.kai_session_package_sha256
     prior = getattr(args, "kai_session_prior_events", False) is True  # the operator's, or off
     if not url and not named:
@@ -230,6 +236,20 @@ def _with_session(args, asks, place):
     return both
 
 
+def one_checkpoint(args):
+    """Refuse a session model under the one-question contract, which has one checkpoint. Asked
+    before any model loads, and again where the second checkpoint would be set up."""
+    named = ("kai_session_url", "kai_session_package_sha256", "kai_session_prior_events")
+    if getattr(args, "kai_contract", None) == ONE_QUESTION and any(
+        getattr(args, name, None) for name in named
+    ):
+        raise SystemExit(
+            f"kai: --kai-contract {ONE_QUESTION} has one checkpoint: --kai-session-url, "
+            "--kai-session-package-sha256 and --kai-session-prior-events are for "
+            f"{TWO_QUESTION}"
+        )
+
+
 def mode_of(args):
     return "shadow" if getattr(args, "shadow", False) else "enforce"
 
@@ -252,6 +272,7 @@ def _serve(args):
     from .server import Front, InProcess, free, listen
 
     rules = _rules(args)
+    one_checkpoint(args)
     if args.at_once < 1:
         raise SystemExit("serve: --at-once is how many calls are decided at once, at least 1")
     if not free(args.port):  # asked first: a model takes a while to load
@@ -360,7 +381,9 @@ def _requests(args):
         record = detect(unsent, summary, entry, args.max_chars, rules, directory=directory)
         kept = ("key", "trigger", "layout", "summary_embedding", "summary_detector")
         kept += ("packet", "review", "rules")
-        shown = {key: record[key] for key in kept}
+        shown = {key: record[key] for key in kept} | (
+            {"contract": record["contract"]} if "contract" in record else {}
+        )
         # Sendable means a request was built. A trigger refused for its size has none, and
         # says why, so nothing counts it as input the service could be given.
         shown |= {"sendable": unsent.request is not None, "request": unsent.request}
@@ -660,6 +683,26 @@ def main(argv=None):
             help="the decision model that package is of (default kai-4b): an answer naming "
             "another model is not used",
         )
+        contract(command)
+
+    def contract(command):
+        """What is asked of the decision model: the operator's choice, for the process."""
+        command.add_argument(
+            "--kai-contract",
+            choices=CONTRACTS,
+            default=TWO_QUESTION,
+            help=f"what Kai is asked. {TWO_QUESTION} (default): the decision and the "
+            f"redirection question, as Kai-4B was trained. {ONE_QUESTION}: the decision alone, "
+            "for calls and for content (a content decision), of one checkpoint",
+        )
+        for route, what in (("content", "a content decision"), ("call", "a proposed call")):
+            command.add_argument(
+                f"--kai-{route}-cutoff",
+                type=float,
+                default=0.5,
+                help=f"with {ONE_QUESTION}: the P(deny) from which {what} is flagged in its "
+                "record (default 0.5; not a qualified cutoff). It changes no gate's answer",
+            )
 
     def server(command):
         """The way to the local server: a gate has this, and no way to a decision model."""
@@ -860,6 +903,7 @@ def main(argv=None):
         "requests", help="print what a session's triggers would send to Kai, without sending"
     )
     trigger(unsent, "low")
+    contract(unsent)
     unsent.add_argument("--agent", choices=("claude_code", "codex_code"))
     unsent.add_argument("--session")
     unsent.set_defaults(run=_requests)
@@ -958,6 +1002,15 @@ def main(argv=None):
     doctor.set_defaults(run=_doctor)
 
     args = parser.parse_args(argv)
+    if hasattr(args, "kai_contract"):  # the process's, set once before anything is asked
+        given = (args.kai_content_cutoff, args.kai_call_cutoff)
+        if args.kai_contract != ONE_QUESTION and given != (0.5, 0.5):
+            parser.error(f"--kai-content-cutoff and --kai-call-cutoff are for {ONE_QUESTION}")
+        try:
+            kai_cutoffs(*given)
+        except ValueError as error:
+            parser.error(str(error))
+        kai_contract(args.kai_contract)
     return args.run(args)
 
 

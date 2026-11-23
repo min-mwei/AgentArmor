@@ -41,7 +41,9 @@ from summarizer.events import call_words
 from summarizer.redact import compact
 from summarizer.store import EVENTS, read_events
 
+from . import kai as _kai
 from . import policy as _policy
+from .hostfacts_profile import allows, resolve
 from .kai import (
     DECISION,
     MAX_BYTES,
@@ -53,7 +55,16 @@ from .kai import (
     request,
     wire_bytes,
 )
-from .policy import layout, load_rules, packet_room, state, writable
+from .policy import (
+    CONTENT_LAYOUT,
+    CONTENT_RULES,
+    content_layout,
+    layout,
+    load_rules,
+    packet_room,
+    state,
+    writable,
+)
 from .route import chosen_for
 
 SCHEMA = "agentarmor-detection/v1"
@@ -61,6 +72,46 @@ DETECTIONS = "detections.jsonl"
 LEVELS = {"low": 1, "medium": 2, "high": 3}
 FLAG_AT = 0.5  # where the redirection answer counts as flagged. Not a qualified cutoff.
 MIN_CHARS = 1000  # the smallest packet tried when the service refuses a larger one
+ADVISORY = "AgentArmor recommends:"  # how every advisory begins: it is AgentArmor's, by name
+QUOTE_CHARS = 120  # the most of the flagged content an advisory quotes
+
+
+def advisory(decision, confidence, quote=None):
+    """The advisory for a content decision, as one line an agent could be told:
+
+        AgentArmor recommends: deny (confidence 0.93). Flagged content: "<quote>"
+
+    quote is the text the decision's evidence marked, or the start of the marked content; at
+    most QUOTE_CHARS of it are given, written as a JSON string so that nothing in it can end
+    the quotation or begin a line of its own. It stays untrusted content inside the quotes.
+    Nothing here delivers the line: no hook of this monitor returns text to an agent after a
+    tool result, and a record only says that the line was made (detect).
+    """
+    told = f"{ADVISORY} {decision} (confidence {confidence:.2f})."
+    if quote:
+        # ASCII escapes: U+2028, U+2029 and U+0085 would otherwise begin a line of their own
+        told += f" Flagged content: {json.dumps(quote[:QUOTE_CHARS], ensure_ascii=True)}"
+    return writable(told)
+
+
+def _advised(record, entry, body, room, heard):
+    """A flagged content decision's advisory: what the record keeps of it, which is no session
+    text (the line without its quote, and where the quote is from), and, in heard when the
+    caller gave it, the whole line under the record's key. The quote is the first interval the
+    decision's evidence marked inside the content when its spans resolved, else the start of
+    the marked entry's own text as Summarizer holds it."""
+    sure = record["kai"]["p_deny"]  # of deny, which is what is recommended, whatever was chosen
+    spans = (record.get("spans") or {}).get(DECISION) or {}
+    marked = [one["at"] for one in spans.get("spans", ()) if spans.get("status") == "spans"]
+    inside = [at for at in marked if room[0] <= at[0] and at[1] <= room[1]]
+    if inside:
+        quote, source = body[inside[0][0] : inside[0][1]], {"from": "span", "at": inside[0]}
+    else:
+        quote, source = str(entry.get("text") or ""), {"from": "entry"}
+    kept = {"message": advisory("deny", sure), "quote": source if quote else None}
+    record["content_advisory"] = kept | {"delivered": False}
+    if heard is not None:
+        heard[record["key"]] = advisory("deny", sure, quote)
 
 
 def key_of(entry):
@@ -80,8 +131,23 @@ def triggers(summary, minimum="low"):
     return sorted(found, key=lambda entry: entry["seq"])
 
 
-def packet(summary, entry, max_chars, sessions=None):
+# Content decision packet v1: the conversation part of a content decision, pinned to the
+# rendering Kai's content decisions were trained on (source p8, parent `xpia-decision`: packets
+# of AgentArmor 9e62846 whose call under decision, a later proposed call, was taken out). It is
+# Summarizer's digest of the session with no call in focus (summarizer.text.digest, focus None),
+# as it is written today: the call a content came back from stands in the timeline as an action
+# line, there is no CALL UNDER DECISION section and so no "nearest by embedding" line, and there
+# is no coverage block (MR414, added after 9e62846). The only call in a content decision's state
+# is the frame's own step.
+CONTENT_PACKET = "content-decision-packet/1"
+
+
+def packet(summary, entry, max_chars, sessions=None, content=False):
     """(text, account, entries shown): Summarizer's digest for the call a trigger belongs to.
+
+    content says the packet is for a content decision (kai.ONE_QUESTION): it is then
+    CONTENT_PACKET, this session's digest with no call in focus and no coverage lines, and
+    sessions is refused, since no training content decision was built from a lookup.
 
     The account is Summarizer's own, of what the text holds and what found no room. The
     entries are the ones the text shows, as digest() reports them: no text, only what each is.
@@ -96,7 +162,13 @@ def packet(summary, entry, max_chars, sessions=None):
     more bears on the call.
     """
     focus = entry.get("call_id") or None
-    if sessions is None:
+    if content:
+        if sessions is not None:
+            raise ValueError("a content decision's packet is its own session's, unfocused")
+        from summarizer.text import digest as unfocused
+
+        shown = unfocused(summary, max_chars)
+    elif sessions is None:
         from summarizer.coverage import digest as covered
 
         shown = covered(summary, max_chars, focus, entry.get("call_sha256"))
@@ -176,24 +248,26 @@ def packet(summary, entry, max_chars, sessions=None):
     return text, about, shown["shown"]
 
 
-def source_map(rules, summary, entry, max_chars, sessions, call, body, observed=None):
+def source_map(rules, summary, entry, max_chars, sessions, call, body, observed=None, frame=None):
     """The map of one state to its sources (summarizer.sourcemap), or None.
 
     For the state `body` as detect() built it from these same arguments: which characters
     are a session's (and whose, with the trust Summarizer gave them), which a rule's, a host
     fact's, the call's, and which this server wrote. The packet is rendered once more under
-    trace; a map is returned only if that gives the very state that was sent. It is local:
+    trace; a map is returned only if that gives the very state that was sent. frame, when
+    given, lays a packet out in place of layout() (a content decision's own). It is local:
     it holds no text, it is not sent to any model, and it says who wrote an interval, never
     that what the interval claims is so.
     """
     from summarizer import sourcemap
 
-    text = packet(summary, entry, max_chars, sessions)[0]
+    content = frame is not None  # a content decision's packet, as detect() built it
+    text = packet(summary, entry, max_chars, sessions, content)[0]
     found = sourcemap.map_of(
-        lambda: packet(summary, entry, max_chars, sessions)[0],
+        lambda: packet(summary, entry, max_chars, sessions, content)[0],
         plain=text,
         cutoff={"session": summary["session"].get("session_id"), "seq": entry["seq"]},
-        frame=lambda shown: layout(rules, shown, call, observed),
+        frame=frame or (lambda shown: layout(rules, shown, call, observed)),
     )
     same = found is not None and found.sha256 == hashlib.sha256(body.encode()).hexdigest()
     return found if same else None
@@ -447,8 +521,15 @@ def request_sha256(body, questions):
     ASCII. Two requests have the same identifier exactly when they are the same object. It is
     not a hash of the bytes on the wire: the client serializes the same object in its own key
     order.
+
+    Under any contract but the default (kai.CONTRACT) the object hashed also names the
+    contract, which the wire does not carry: the same state and questions asked under two
+    contracts are two requests. Identifiers of the default contract are as they always were.
     """
-    canonical = json.dumps(request(body, questions), sort_keys=True)
+    told = request(body, questions)
+    if _kai.CONTRACT != _kai.TWO_QUESTION:
+        told = told | {"contract": _kai.CONTRACT}
+    canonical = json.dumps(told, sort_keys=True)
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
@@ -466,8 +547,27 @@ def detect(
     maps=None,
     observations=False,
     quantities=False,
+    advisories=None,
 ):
     """Send one trigger's packet to Kai and return the detection record.
+
+    Under the one-question contract (kai.ONE_QUESTION, the operator's --kai-contract) only
+    the decision is asked. An action is asked it on the state described below. Content or a
+    message with no call of its own becomes a content decision: the trained frame around the
+    packet (policy.content_layout), with none of the operator's rules and no host facts, the
+    packet being CONTENT_PACKET (no call in focus, no coverage block). Its
+    "deny" says the content carries an instruction aimed at the agent; it flags, and blocks
+    nothing. What flags is the operator's cutoff on P(deny) for the route (kai.CUTOFFS, 0.5
+    unless set): the record says "route" ("content" or "call"), "flag_cutoff", and "flagged"
+    as p_deny >= flag_cutoff, while "decision" stays the model's own choice. A gate reads
+    "decision" and never "flagged", so no cutoff changes what a gate answers.
+    A flagged content decision keeps "content_advisory": the advisory line without
+    its quote, where the quote is from, and delivered false, since nothing delivers it.
+    advisories, when given, receives the whole line (advisory()) under the record's key; it
+    holds session text and never enters a record. The record names the contract, keeps
+    kai.confidence beside p_deny and has no p_xpia; evidence is spans["decision"]. A call
+    whose required host facts are not there is not sent (status "host_facts_required"), as
+    the gate already refuses it (decide.judge). A client of two checkpoints is refused.
 
     observations (the operator's `serve --session-observations on`) adds to a decision
     request the section of session observations this server computes for the call
@@ -543,11 +643,28 @@ def detect(
     # What embedded and what marked this summary, by its own report. Kept beside the request,
     # never inside it.
     record |= provenance(summary)
-    call, account, questions = None, {}, (XPIA,)
+    one = _kai.CONTRACT == _kai.ONE_QUESTION
+    if one and getattr(client, "routed", False):
+        raise ValueError("the one-question contract has one checkpoint: no session model")
+    call, account, questions = None, {}, (DECISION,) if one else (XPIA,)
     if entry["type"] == "action":
         logged = logged_call(directory, entry) if arguments is None else None
         tool, shown, account = proposed(entry, arguments, logged)
-        call, questions = (tool, shown), (DECISION, XPIA)
+        call, questions = (tool, shown), (DECISION,) if one else (DECISION, XPIA)
+    content = one and call is None  # a content decision: its own frame, and its own rules
+    if one:
+        record["contract"], record["route"] = _kai.CONTRACT, "content" if content else "call"
+        record["flag_cutoff"] = _kai.CUTOFFS[record["route"]]
+    if content:
+        record["rules"] = [rule["id"] for rule in CONTENT_RULES]
+        record["layout"] |= {"state": CONTENT_LAYOUT, "content_packet": CONTENT_PACKET}
+
+    def pieces(text, seen=None):
+        return content_layout(text) if content else layout(rules, text, call, seen)
+
+    def built(text, seen=None):
+        return "".join(piece for _, _, piece in pieces(text, seen))
+
     observed = None
     if observations and call is not None:
         observed = _observations(summary, entry, shown, account, sessions, quantities)
@@ -559,7 +676,7 @@ def detect(
         observed = observed["lines"]
     # What the rules and the call leave. The observation section is outside this budget, so a
     # packet is the same with the option on as off (observe.py).
-    size = packet_room(rules, call, max_chars)
+    size = max_chars - len(built("")) if content else packet_room(rules, call, max_chars)
     counts = dict.fromkeys(COUNTED, 0)
     record |= {"requests_sent": 0, "requests": counts}
     # The requests this one decision had refused, when no record of earlier ones is given (a
@@ -570,7 +687,7 @@ def detect(
     # rebuilt request that had been refused before and so was not sent again (MR251).
     retries = record["refusal_retries"] = {"budget_reductions": 0, "repeats_not_sent": 0}
     while True:
-        text, about, emitted = packet(summary, entry, max(size, MIN_CHARS), sessions)
+        text, about, emitted = packet(summary, entry, max(size, MIN_CHARS), sessions, content)
         if explain:
             record["shown"] = entries_shown(summary, emitted)
         # Whole means the call's own arguments, all of them: a display text never qualifies.
@@ -581,23 +698,29 @@ def detect(
             record["packet"]["proposal_observed"] = proposal_seen(entry)
         record["review"] = review_of(entry, about)
         if size < MIN_CHARS:  # no room for the session: refused, not cut
-            fits_alone = max_chars - len(state(rules, "")) >= MIN_CHARS
+            bare = built("") if content else state(rules, "")
+            fits_alone = max_chars - len(bare) >= MIN_CHARS
             return record | {"status": "call_too_large" if fits_alone else "policy_too_large"}
-        body = state(rules, text, call, observed)
+        if one and call is not None:  # as the gate refuses it, with nobody asked (decide.judge)
+            host = resolve(rules, call)
+            if not allows(host):
+                return record | {"status": "host_facts_required", "host_facts": host}
+        body = built(text, observed)
         key = request_sha256(body, questions)
         record["packet"] |= {"state_chars": len(body), "request_sha256": key}
         # The state is measured too, without the observation section, which is outside the
         # budget (MR311 P1): one longer than max_chars is over budget, does not fit, and is
         # sent only as incomplete.
         # The limit is max_chars plus at most the coverage block's cap (MR414).
-        if len(state(rules, text, call)) - about.get("coverage_chars", 0) > max_chars:
+        if len(built(text)) - about.get("coverage_chars", 0) > max_chars:
             record["packet"] |= {"fits": False, "ready": False, "complete": False}
             record["packet"]["over_budget"] = True
 
         room = max(size, MIN_CHARS)
 
         def mapped(body=body, room=room):
-            return source_map(rules, summary, entry, room, sessions, call, body, observed)
+            frame = pieces if content else None
+            return source_map(rules, summary, entry, room, sessions, call, body, observed, frame)
 
         if maps is not None:
             maps[key] = mapped()
@@ -624,7 +747,7 @@ def detect(
             status = "too_large_to_send" if here else "kai_rejected"
             # What must be sent whole (the rules and the call) may alone be too many bytes:
             # then no smaller packet will pass either, and none is tried.
-            alone = here and wire_bytes(request(state(rules, "", call, observed), questions))
+            alone = here and wire_bytes(request(built("", observed), questions))
             alone = alone > MAX_BYTES
             if size <= MIN_CHARS or alone:
                 return record | {"status": status}
@@ -647,13 +770,22 @@ def detect(
         elif asked is not None:
             asked[key] = {"key": record["key"], "reply": reply}
         answers = reply["answers"]
-        record["kai"] = {"p_xpia": answers[XPIA], **reply["service"]}
+        record["kai"] = ({} if one else {"p_xpia": answers[XPIA]}) | reply["service"]
         if DECISION in answers:
             record["kai"]["p_deny"] = answers[DECISION]["p_deny"]
             record["decision"] = answers[DECISION]["choice"]  # Kai's answer: allow or deny
+        if one:  # how sure the model was of the option it chose; no cutoff is adopted on it
+            record["kai"]["confidence"] = _kai.confidence(answers[DECISION])
         if reply.get("evidence"):  # spans, or why there are none; never part of the verdict
             record["spans"] = spans_record(reply["evidence"], mapped, body)
-        record["flagged"] = record["decision"] == "deny" or answers[XPIA] >= FLAG_AT
+        if one:  # the operator's cutoff for the route; the decision above is the model's own
+            record["flagged"] = record["kai"]["p_deny"] >= record["flag_cutoff"]
+        else:
+            record["flagged"] = record["decision"] == "deny" or answers[XPIA] >= FLAG_AT
+        if content and record["flagged"]:  # flagged, never blocked: a line a host may be told
+            step = len(_policy.CONTENT_STEP)  # the content lies between the frame's two parts
+            inside = (len(built("")) - step, len(body) - step)
+            _advised(record, entry, body, inside, advisories)
         # Summarizer marked it and Kai cleared it: kept apart from "nothing was found".
         marked = LEVELS.get(entry.get("level"), 0) >= LEVELS["medium"]
         record["disagreement"] = bool(marked and not record["flagged"])
@@ -739,6 +871,7 @@ def read(directory):
 
 # Statuses that need no further attempt.
 FINAL = ("scored", "kai_rejected", "call_too_large", "policy_too_large", "too_large_to_send")
+FINAL += ("host_facts_required",)  # one-question contract: refused here, as the gate refuses it
 
 
 def settled(records):
