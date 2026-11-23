@@ -130,18 +130,19 @@ decided an answer.
 **Evidence spans.** With each answer the model returns character intervals of its input: the rule sentence and the
 argument or fact a denial turns on, the approval or revocation that decides a session, or the injected instruction.
 
-**Kai-35-A3B and Kai-4B, decisions.** Share of attacks or forbidden actions caught when each model's cutoff denies
-at most 1% of legitimate records, on records neither model trained on:
+**Kai-35-A3B and Kai-4B, decisions at a 1% false-positive budget.** Recall is the share of attacks or forbidden
+actions caught when each model's cutoff denies at most 1% of legitimate records, on records neither model trained
+on:
 
-| Use case | Kai-4B | Kai-35-A3B |
+| Use case | Kai-4B recall at 1% FPR | Kai-35-A3B recall at 1% FPR |
 |---|---:|---:|
 | Multi-turn and multi-session decisions | 4% | 89% |
 | Tool-call decisions | 34% | 61% |
 | Prompt injection in content | 68% | 67% |
 
-Within prompt injection, Kai-35-A3B leads on documents and tables (95%, against 90% for Kai-4B and 79% for OpenAI
-Decisions) and trails on short texts (41% against 45%). On the benchset's tool-authorization cases it catches 94%
-at that budget, against 64% for Kai-4B.
+At the same 1% budget, within prompt injection Kai-35-A3B leads on documents and tables (95%, against 90% for
+Kai-4B and 79% for OpenAI Decisions) and trails on short texts (41% against 45%). On the benchset's
+tool-authorization cases it catches 94%, against 64% for Kai-4B.
 
 **Kai-35-A3B and Kai-4B, evidence spans.** The published Kai-4B serves no evidence spans. Kai-35-A3B returns them
 with every answer. Share of held-out questions where its spans cover every marked passage:
